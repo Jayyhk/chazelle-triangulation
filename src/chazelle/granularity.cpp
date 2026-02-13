@@ -1,0 +1,124 @@
+#include "chazelle/granularity.h"
+
+#include <algorithm>
+#include <cassert>
+#include <vector>
+
+namespace chazelle {
+
+void enforce_granularity(Submap& submap, std::size_t gamma,
+                         bool protect_null_length,
+                         std::size_t max_chord_idx) {
+    // §3.3: Single-pass chord removal.  Chords need be processed only
+    // once since removals cannot make any chord removable if it was not
+    // already so before (see paper).
+    //
+    // A chord is removable if:
+    //   1. At least one of its endpoint regions has degree < 3.
+    //   2. Merging the two regions would produce weight ≤ γ.
+    //   3. If protect_null_length is set, null-length chords are exempt.
+
+    std::size_t chord_limit = (max_chord_idx != NONE)
+                              ? std::min(max_chord_idx, submap.num_chords())
+                              : submap.num_chords();
+
+    // §3.3: "Chords need be processed only once since the removals
+    // cannot make any chord removable if it was not already so
+    // before."  A single pass suffices.
+    for (std::size_t ci = 0; ci < chord_limit; ++ci) {
+        auto& c = submap.chord(ci);
+        if (c.region[0] == NONE || c.region[1] == NONE) continue;
+
+        if (protect_null_length && c.is_null_length) continue;
+
+        auto& n0 = submap.node(c.region[0]);
+        auto& n1 = submap.node(c.region[1]);
+        if (n0.deleted || n1.deleted) continue;
+
+        // Condition 1: at least one endpoint has degree < 3.
+        if (n0.degree() >= 3 && n1.degree() >= 3) continue;
+
+        // Condition 2: merged weight ≤ γ.
+        // When a chord is removed, arcs that were separated by the chord
+        // may merge into a single larger arc.  Per §2.3, "one or both
+        // endpoints of the chord might not be vertices of ∂C and might
+        // thus disappear," causing adjacent arcs to merge.  The true
+        // merged weight must account for these potential merges.
+        //
+        // We iterate over the *current* arcs of both regions (not the
+        // chord's adj_arcs, which may be stale after prior removals in
+        // this pass).  For each chord endpoint vertex v, we check if v
+        // is still used by another chord in the survivor's incident
+        // list.  If not, v would disappear and arcs meeting at v would
+        // merge — their edge_counts sum.
+        //
+        // merged_weight = max over all resulting (merged or individual)
+        // arc edge_counts.
+
+        // Determine which chord endpoint vertices would disappear.
+        // A vertex disappears if it is not referenced by any other
+        // chord in either region.
+        auto vertex_survives = [&](std::size_t v) -> bool {
+            if (v == NONE) return false;
+            for (std::size_t oci : n0.incident_chords) {
+                if (oci == ci) continue;
+                const auto& oc = submap.chord(oci);
+                if (oc.region[0] == NONE) continue;
+                if (oc.left_vertex == v || oc.right_vertex == v) return true;
+            }
+            for (std::size_t oci : n1.incident_chords) {
+                if (oci == ci) continue;
+                const auto& oc = submap.chord(oci);
+                if (oc.region[0] == NONE) continue;
+                if (oc.left_vertex == v || oc.right_vertex == v) return true;
+            }
+            return false;
+        };
+
+        bool lv_disappears = (c.left_vertex != NONE && !vertex_survives(c.left_vertex));
+        bool rv_disappears = (c.right_vertex != NONE && !vertex_survives(c.right_vertex));
+
+        // For each disappearing vertex, find the two arcs (across both
+        // regions) that meet at it and sum their edge_counts.  For
+        // non-disappearing endpoints, arcs remain separate.
+        //
+        // We accumulate groups: arcs touching a disappearing vertex get
+        // their edge_counts summed; all others contribute individually.
+        std::size_t left_group = 0;
+        std::size_t right_group = 0;
+        std::size_t merged_weight = 0;
+
+        auto scan_arcs = [&](const SubmapNode& nd) {
+            for (std::size_t ai : nd.arcs) {
+                const auto& a = submap.arc(ai);
+                if (a.first_edge == NONE) continue;
+                std::size_t ec = a.edge_count;
+
+                std::size_t alo = std::min(a.first_edge, a.last_edge);
+                std::size_t ahi = std::max(a.first_edge, a.last_edge);
+
+                bool touches_left = lv_disappears && (
+                    c.left_vertex == alo || c.left_vertex == ahi + 1);
+                bool touches_right = rv_disappears && (
+                    c.right_vertex == alo || c.right_vertex == ahi + 1);
+
+                if (touches_left)  left_group  += ec;
+                if (touches_right) right_group += ec;
+                if (!touches_left && !touches_right) {
+                    merged_weight = std::max(merged_weight, ec);
+                }
+            }
+        };
+        scan_arcs(n0);
+        scan_arcs(n1);
+
+        merged_weight = std::max(merged_weight,
+                                 std::max(left_group, right_group));
+
+        if (merged_weight > gamma) continue;
+
+        submap.remove_chord(ci);
+    }
+}
+
+} // namespace chazelle
