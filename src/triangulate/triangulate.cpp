@@ -11,25 +11,32 @@ namespace {
 std::size_t diagonal(std::vector<VertexNode>& nodes,
                      std::vector<Trapezoid>& traps,
                      std::size_t v) {
-    std::size_t ti = nodes[v].trapezoid_idx;
-    if (ti == FM_NONE) return FM_NONE;
+    // Per FM Algorithm 1: type-2 vertices (local y-minima) can have
+    // two trapezoids.  Check both slots.
+    for (int slot = 0; slot < 2; ++slot) {
+        std::size_t& ti_ref = (slot == 0) ? nodes[v].trapezoid_idx
+                                          : nodes[v].trapezoid_idx2;
+        std::size_t ti = ti_ref;
+        if (ti == FM_NONE) continue;
 
-    const Trapezoid& trap = traps[ti];
-    std::size_t top = trap.top_vertex;
-    std::size_t bot = trap.bottom_vertex;
+        const Trapezoid& trap = traps[ti];
+        std::size_t top = trap.top_vertex;
+        std::size_t bot = trap.bottom_vertex;
 
-    // Determine which vertex is `v` and which is the "other."
-    std::size_t other = (top == v) ? bot : top;
+        // Determine which vertex is `v` and which is the "other."
+        std::size_t other = (top == v) ? bot : top;
 
-    // Class A check: are top and bottom adjacent in the polygon?
-    if (nodes[top].next == bot || nodes[bot].next == top) {
-        // Class A — no diagonal needed.
-        return FM_NONE;
+        // Class A check: are top and bottom adjacent in the polygon?
+        if (nodes[top].next == bot || nodes[bot].next == top) {
+            // Class A — no diagonal needed from this slot.
+            continue;
+        }
+
+        // Class B — insert diagonal.  Clear this trapezoid slot.
+        ti_ref = FM_NONE;
+        return other;
     }
-
-    // Class B — insert diagonal.  Clear the trapezoid pointer.
-    nodes[v].trapezoid_idx = FM_NONE;
-    return other;
+    return FM_NONE;
 }
 
 /// Recursive Algorithm 2 (Fournier-Montuno §4.2).

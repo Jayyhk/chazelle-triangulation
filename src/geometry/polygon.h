@@ -86,6 +86,12 @@ public:
     /// (under symbolic perturbation).  Endpoints are never extrema.
     bool is_y_extremum(std::size_t vertex_index) const noexcept;
 
+    /// Compute the x-coordinate of the point on edge `edge_idx` at
+    /// height `y`.  Used for chord endpoint positions: a chord stores
+    /// (edge, y) and this gives the exact x.  If the edge is
+    /// horizontal, returns the midpoint x.
+    double edge_x_at_y(std::size_t edge_idx, double y) const noexcept;
+
 private:
     std::vector<Point> vertices_;
     std::vector<Edge>  edges_;

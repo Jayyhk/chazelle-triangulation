@@ -21,7 +21,10 @@ struct VertexNode {
     std::size_t prev = 0;    ///< Index into the VertexNode array.
     std::size_t next = 0;    ///< Index into the VertexNode array.
 
-    std::size_t trapezoid_idx = std::numeric_limits<std::size_t>::max();
+    /// Per FM Algorithm 1 output: "some vertices (of type 2) may
+    /// point to two trapezoids."  We store up to 2 trapezoid indices.
+    std::size_t trapezoid_idx  = std::numeric_limits<std::size_t>::max();
+    std::size_t trapezoid_idx2 = std::numeric_limits<std::size_t>::max();
     bool done = false;       ///< Visited flag for Algorithm 2.
 };
 

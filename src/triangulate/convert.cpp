@@ -72,19 +72,25 @@ ConvertResult convert_submap_to_fm(const Submap& vp,
         std::size_t right_e = FM_NONE;
 
         // Scan chords incident on this region for top/bottom.
+        // Per §3.1 Remark 1, chord endpoints are (edge, y) pairs.
+        // We use the edge's vertex endpoints to approximate the
+        // vertex positions for trapezoid top/bottom determination.
         for (std::size_t ci : nd.incident_chords) {
             const auto& c = vp.chord(ci);
-            if (c.left_vertex == NONE && c.right_vertex == NONE) continue;
+            if (c.left_edge == NONE && c.right_edge == NONE) continue;
 
-            for (std::size_t cv_raw : {c.left_vertex, c.right_vertex}) {
-                if (cv_raw == NONE) continue;
-                std::size_t cv = map_to_original(cv_raw);
-                Point cp = pts[cv];
-                if (top_v == FM_NONE || perturbed_y_compare(cp, pts[top_v]) > 0) {
-                    top_v = cv;
-                }
-                if (bot_v == FM_NONE || perturbed_y_compare(cp, pts[bot_v]) < 0) {
-                    bot_v = cv;
+            for (std::size_t ce : {c.left_edge, c.right_edge}) {
+                if (ce == NONE || ce >= polygon.num_edges()) continue;
+                const auto& edge = polygon.edge(ce);
+                for (std::size_t vi_raw : {edge.start_idx, edge.end_idx}) {
+                    std::size_t vi = map_to_original(vi_raw);
+                    Point vp_pt = pts[vi];
+                    if (top_v == FM_NONE || perturbed_y_compare(vp_pt, pts[top_v]) > 0) {
+                        top_v = vi;
+                    }
+                    if (bot_v == FM_NONE || perturbed_y_compare(vp_pt, pts[bot_v]) < 0) {
+                        bot_v = vi;
+                    }
                 }
             }
         }
@@ -128,13 +134,21 @@ ConvertResult convert_submap_to_fm(const Submap& vp,
         std::size_t ti = result.traps.size();
         result.traps.push_back(t);
 
-        if (top_v < result.nodes.size() &&
-            result.nodes[top_v].trapezoid_idx == std::numeric_limits<std::size_t>::max()) {
-            result.nodes[top_v].trapezoid_idx = ti;
+        // Per FM Algorithm 1 output: "some vertices (of type 2) may
+        // point to two trapezoids."  Assign to the first free slot.
+        if (top_v < result.nodes.size()) {
+            auto& nd_top = result.nodes[top_v];
+            if (nd_top.trapezoid_idx == std::numeric_limits<std::size_t>::max())
+                nd_top.trapezoid_idx = ti;
+            else if (nd_top.trapezoid_idx2 == std::numeric_limits<std::size_t>::max())
+                nd_top.trapezoid_idx2 = ti;
         }
-        if (bot_v < result.nodes.size() &&
-            result.nodes[bot_v].trapezoid_idx == std::numeric_limits<std::size_t>::max()) {
-            result.nodes[bot_v].trapezoid_idx = ti;
+        if (bot_v < result.nodes.size()) {
+            auto& nd_bot = result.nodes[bot_v];
+            if (nd_bot.trapezoid_idx == std::numeric_limits<std::size_t>::max())
+                nd_bot.trapezoid_idx = ti;
+            else if (nd_bot.trapezoid_idx2 == std::numeric_limits<std::size_t>::max())
+                nd_bot.trapezoid_idx2 = ti;
         }
     }
 

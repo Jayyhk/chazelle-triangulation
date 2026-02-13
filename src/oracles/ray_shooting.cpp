@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <set>
 #include <unordered_set>
+#include <vector>
 
 namespace chazelle {
 
@@ -90,12 +92,11 @@ void RayShootingOracle::build_dual_graph() {
     // contain v.  Any two such regions that are not already
     // chord-adjacent get a type (b) edge.
     //
-    // Per the paper (§3.4): the dual graph has O(m/γ + 1) nodes.
-    // Construction must be O(m/γ), so we avoid allocating polygon-sized
-    // structures.  For each of the O(m/γ) chord endpoints, we check
-    // all O(m/γ) arcs with an O(1) range test, giving O((m/γ)²) total
-    // which is bounded by O(m/γ) since the submap is conformal (each
-    // vertex touches ≤ 2 arcs from at most 2 regions).
+    // Per the paper (§3.4): "The latter can be done by double
+    // identification, as discussed in Section 2.4, followed by
+    // sorting along ∂C, which takes O(μ log m) time."  We use
+    // double_identify (O(log m) per endpoint) for each of the O(μ)
+    // chord endpoints, giving O(μ log m) total.
     {
         // Hash-based dedup for O(1) per edge check.
         struct PairHash {
@@ -119,31 +120,47 @@ void RayShootingOracle::build_dual_graph() {
         }
 
         // For each chord endpoint, find all regions whose arcs contain
-        // that vertex.  We check each arc's edge range directly — no
-        // polygon-sized allocation needed.  Since arcs partition ∂C,
-        // each vertex belongs to at most 2 arcs (at arc boundaries).
+        // that vertex via double identification (§2.4).  Per the paper
+        // (§3.4): "The latter can be done by double identification, as
+        // discussed in Section 2.4, followed by sorting along ∂C, which
+        // takes O(μ log m) time."  Each double_identify call is O(log m)
+        // and there are O(μ) chord endpoints, giving O(μ log m) total.
         for (std::size_t ci = 0; ci < submap_->num_chords(); ++ci) {
             const auto& c = submap_->chord(ci);
-            for (std::size_t vx : {c.left_vertex, c.right_vertex}) {
-                if (vx == NONE) continue;
+            for (std::size_t ex : {c.left_edge, c.right_edge}) {
+                if (ex == NONE) continue;
 
-                // Collect regions whose arcs contain vertex vx.
-                // O(m/γ) arcs total, each check is O(1).
-                std::vector<std::size_t> regs;
-                for (std::size_t ri = 0; ri < submap_->num_nodes(); ++ri) {
-                    if (submap_->node(ri).deleted) continue;
-                    for (std::size_t ai : submap_->node(ri).arcs) {
-                        const auto& a = submap_->arc(ai);
-                        if (a.first_edge == NONE || a.edge_count == 0)
-                            continue;
-                        std::size_t lo = std::min(a.first_edge, a.last_edge);
-                        std::size_t hi = std::max(a.first_edge, a.last_edge);
-                        // Arc covers vertices [lo, hi+1].
-                        if (vx >= lo && vx <= hi + 1) {
-                            regs.push_back(ri);
-                            break; // one match per region suffices
-                        }
+                // Use double_identify on the chord's endpoint edge
+                // to find all arcs passing through this point.
+                // Per §3.1 Remark 1, endpoints are on edges, not
+                // vertices.  O(log m) binary search.
+                std::size_t edge_for_ex = ex;
+                if (edge_for_ex >= polygon_->num_edges() && edge_for_ex > 0)
+                    edge_for_ex = polygon_->num_edges() - 1;
+
+                auto arcs = submap_->double_identify(edge_for_ex, c.y);
+
+                // Also check the adjacent edge (the endpoint sits
+                // at the boundary between edges).
+                if (ex > 0) {
+                    auto arcs2 = submap_->double_identify(ex - 1, c.y);
+                    for (std::size_t ai2 : arcs2) {
+                        bool dup = false;
+                        for (std::size_t ai : arcs)
+                            if (ai == ai2) { dup = true; break; }
+                        if (!dup) arcs.push_back(ai2);
                     }
+                }
+
+                // Collect distinct regions from the identified arcs.
+                std::vector<std::size_t> regs;
+                for (std::size_t ai : arcs) {
+                    std::size_t rn = submap_->arc(ai).region_node;
+                    if (rn == NONE || submap_->node(rn).deleted) continue;
+                    bool dup = false;
+                    for (std::size_t r : regs)
+                        if (r == rn) { dup = true; break; }
+                    if (!dup) regs.push_back(rn);
                 }
                 // Add edges between all region pairs sharing vx.
                 for (std::size_t i = 0; i < regs.size(); ++i) {
@@ -336,6 +353,25 @@ RayHit RayShootingOracle::shoot_from_region(std::size_t region_idx,
     best.start_region = region_idx;
     double best_dist = std::numeric_limits<double>::infinity();
 
+    // Helper: naively check all regions in a piece, updating best.
+    auto check_piece = [&](std::size_t pi) {
+        if (pi == NONE || pi >= separator_hierarchy_.pieces.size()) return;
+        for (std::size_t dv : separator_hierarchy_.pieces[pi]) {
+            std::size_t rgn = dual_to_region(dv);
+            if (rgn == NONE) continue;
+
+            auto hit = local_shoot(rgn, origin_x, y, shoot_right);
+            if (hit.type != RayHit::Type::NONE) {
+                double dist = shoot_right ? (hit.hit_x - origin_x)
+                                          : (origin_x - hit.hit_x);
+                if (dist > -1e-12 && dist < best_dist) {
+                    best_dist = dist;
+                    best = hit;
+                }
+            }
+        }
+    };
+
     // Step 1: Shoot in all D* (separator) regions.
     for (std::size_t v = 0; v < separator_hierarchy_.separator_nodes.size(); ++v) {
         if (!separator_hierarchy_.separator_nodes[v]) continue;
@@ -354,34 +390,111 @@ RayHit RayShootingOracle::shoot_from_region(std::size_t region_idx,
         }
     }
 
-    // Step 3: Find the piece D_i containing region_idx and check it.
-    std::size_t start_dual = region_to_dual(region_idx);
-    std::size_t piece_idx = NONE;
-    if (start_dual != NONE &&
-        start_dual < separator_hierarchy_.vertex_piece.size()) {
-        piece_idx = separator_hierarchy_.vertex_piece[start_dual];
-    }
+    if (best.type != RayHit::Type::NONE) {
+        // Step 2: A D* hit was found.  Per §3.4: "Let R be the last
+        // region of S traversed before the first hit.  To identify R
+        // can be done by double identification, followed by checking
+        // the local orientation of the hit."
+        //
+        // R is the region on the ray-origin side of the hit boundary
+        // element.  We find it by double-identifying at the hit point.
+        // If the hit is on an arc, we identify which edge was hit and
+        // look up the arc on the opposite side of ∂C (the side facing
+        // the ray).  If on a chord, R is whichever of the chord's two
+        // regions faces the ray origin.
 
-    if (piece_idx != NONE && piece_idx < separator_hierarchy_.pieces.size()) {
-        // Check all regions in this piece.
-        for (std::size_t dv : separator_hierarchy_.pieces[piece_idx]) {
-            std::size_t rgn = dual_to_region(dv);
-            if (rgn == NONE) continue;
+        std::size_t R = NONE;
+        std::vector<std::size_t> R_candidates;
 
-            auto hit = local_shoot(rgn, origin_x, y, shoot_right);
-            if (hit.type != RayHit::Type::NONE) {
-                double dist = shoot_right ? (hit.hit_x - origin_x)
-                                          : (origin_x - hit.hit_x);
-                if (dist > -1e-12 && dist < best_dist) {
-                    best_dist = dist;
-                    best = hit;
+        if (best.type == RayHit::Type::ARC && best.arc_idx != NONE) {
+            // The hit arc belongs to a D* region (the "far" side).
+            // R is on the "near" side — the region the ray was
+            // travelling through when it hit.  Use double_identify
+            // on the hit edge to find the companion arc on the
+            // opposite side of ∂C.  Per the paper: "To identify R
+            // can be done by double identification, followed by
+            // checking the local orientation of the hit."
+            // The hit edge is already tracked by local_shoot per §3
+            // item (i): O(log m) via double_identify.
+            if (best.hit_edge != NONE) {
+                auto arcs = submap_->double_identify(best.hit_edge, y);
+                // Among the identified arcs, R is the one that is
+                // NOT the hit arc (i.e., the companion on the
+                // other side of ∂C).
+                for (std::size_t ai : arcs) {
+                    if (ai == best.arc_idx) continue;
+                    std::size_t candidate = submap_->arc(ai).region_node;
+                    if (candidate != NONE && !submap_->node(candidate).deleted) {
+                        R = candidate;
+                        break;
+                    }
+                }
+                // If double_identify returned only one arc (the
+                // hit arc itself), R is that arc's own region —
+                // meaning the ray started inside the same region.
+                if (R == NONE && !arcs.empty()) {
+                    R = submap_->arc(arcs[0]).region_node;
+                }
+            }
+        } else if (best.type == RayHit::Type::CHORD && best.chord_idx != NONE) {
+            // The chord separates region[0] and region[1].  Per the
+            // paper: "To identify R can be done by double
+            // identification, followed by checking the local
+            // orientation of the hit."  For a horizontal ray hitting
+            // a horizontal chord, the local orientation is degenerate.
+            // We treat both adjacent regions as candidates for R and
+            // check both their pieces below.
+            const auto& c = submap_->chord(best.chord_idx);
+            if (c.region[0] != NONE &&
+                !submap_->node(c.region[0]).deleted)
+                R_candidates.push_back(c.region[0]);
+            if (c.region[1] != NONE &&
+                !submap_->node(c.region[1]).deleted)
+                R_candidates.push_back(c.region[1]);
+        }
+
+        if (R != NONE) R_candidates.push_back(R);
+        if (R_candidates.empty()) R_candidates.push_back(region_idx);
+
+        // For each candidate R, check if it is in D*.  If not,
+        // find its piece D_i and naively check all regions in D_i.
+        // Per §3.4: "If R is a region dual to a node v of D*, then
+        // the starting point of the ray lies in R (otherwise an
+        // earlier hit would have been detected) and we are trivially
+        // done."  Otherwise: "We can find w [...] by first finding
+        // D_i, which takes constant time since we know R, and then
+        // naively checking all the regions dual to nodes in D_i."
+        std::set<std::size_t> checked_pieces;
+        for (std::size_t cand_R : R_candidates) {
+            std::size_t cand_dual = region_to_dual(cand_R);
+            bool cand_in_Dstar =
+                (cand_dual != NONE &&
+                 cand_dual < separator_hierarchy_.separator_nodes.size() &&
+                 separator_hierarchy_.separator_nodes[cand_dual]);
+
+            if (!cand_in_Dstar) {
+                std::size_t cand_piece = NONE;
+                if (cand_dual != NONE &&
+                    cand_dual < separator_hierarchy_.vertex_piece.size()) {
+                    cand_piece = separator_hierarchy_.vertex_piece[cand_dual];
+                }
+                if (cand_piece != NONE &&
+                    checked_pieces.insert(cand_piece).second) {
+                    check_piece(cand_piece);
                 }
             }
         }
-    } else if (best.type == RayHit::Type::NONE) {
-        // Step 4: No separator hit and start region not in any piece.
-        // Use vertical-line structure with binary search (O(log μ))
-        // to identify the correct piece D_i.
+    } else {
+        // Step 4: No D* hit at all.  Per §3.4: "Then the ray-
+        // shooting takes place entirely within the regions dual to
+        // the nodes of a single D_i.  To find out which one, we
+        // shoot toward the vertical line and find which segment of
+        // the line is hit.  This takes O(log μ) time by binary
+        // search.  We can now identify the region R immediately.
+        // The remainder of the algorithm is unchanged."
+        //
+        // Binary search the vertical-line structure to find the
+        // region at height y, then check its piece D_i.
         auto it = std::lower_bound(
             vertical_line_.begin(), vertical_line_.end(), y,
             [](const VerticalEntry& entry, double val) {
@@ -394,31 +507,24 @@ RayHit RayShootingOracle::shoot_from_region(std::size_t region_idx,
             vline_region = prev_it->region_above;
         } else if (!vertical_line_.empty()) {
             vline_region = vertical_line_.front().region_below;
+        } else if (submap_->num_nodes() > 0) {
+            // No chords → single region.
+            for (std::size_t ri = 0; ri < submap_->num_nodes(); ++ri) {
+                if (!submap_->node(ri).deleted) {
+                    vline_region = ri;
+                    break;
+                }
+            }
         }
 
         if (vline_region != NONE) {
             std::size_t vdual = region_to_dual(vline_region);
+            std::size_t vpiece = NONE;
             if (vdual != NONE &&
                 vdual < separator_hierarchy_.vertex_piece.size()) {
-                std::size_t pi = separator_hierarchy_.vertex_piece[vdual];
-                if (pi != NONE && pi < separator_hierarchy_.pieces.size()) {
-                    for (std::size_t dv : separator_hierarchy_.pieces[pi]) {
-                        std::size_t rgn = dual_to_region(dv);
-                        if (rgn == NONE) continue;
-
-                        auto hit = local_shoot(rgn, origin_x, y, shoot_right);
-                        if (hit.type != RayHit::Type::NONE) {
-                            double dist = shoot_right
-                                              ? (hit.hit_x - origin_x)
-                                              : (origin_x - hit.hit_x);
-                            if (dist > -1e-12 && dist < best_dist) {
-                                best_dist = dist;
-                                best = hit;
-                            }
-                        }
-                    }
-                }
+                vpiece = separator_hierarchy_.vertex_piece[vdual];
             }
+            check_piece(vpiece);
         }
     }
 
@@ -446,13 +552,13 @@ RayHit RayShootingOracle::local_shoot(std::size_t region_idx,
         const auto& c = submap_->chord(ci);
         if (std::abs(c.y - y) > 1e-12) continue;
 
-        // The chord spans between left_vertex and right_vertex.
+        // The chord spans between left_edge and right_edge.
         // Check if the chord's x-span is in the ray's direction.
-        if (c.left_vertex != NONE && c.right_vertex != NONE &&
-            c.left_vertex < polygon_->num_vertices() &&
-            c.right_vertex < polygon_->num_vertices()) {
-            double lx = polygon_->vertex(c.left_vertex).x;
-            double rx = polygon_->vertex(c.right_vertex).x;
+        if (c.left_edge != NONE && c.right_edge != NONE &&
+            c.left_edge < polygon_->num_edges() &&
+            c.right_edge < polygon_->num_edges()) {
+            double lx = polygon_->edge_x_at_y(c.left_edge, c.y);
+            double rx = polygon_->edge_x_at_y(c.right_edge, c.y);
             // Use the chord endpoint nearest to the ray origin in the
             // shooting direction (the first point the ray would hit).
             double chord_x = shoot_right ? std::min(lx, rx)
@@ -501,6 +607,7 @@ RayHit RayShootingOracle::local_shoot(std::size_t region_idx,
                 best.type = RayHit::Type::ARC;
                 best.arc_idx = ai;
                 best.hit_x = x;
+                best.hit_edge = ei;
             }
         }
     }

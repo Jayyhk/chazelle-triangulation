@@ -60,8 +60,8 @@ static void test_submap_add_chord() {
     c.region[0] = 0;
     c.region[1] = 1;
     c.y = 5.0;
-    c.left_vertex = 3;
-    c.right_vertex = 7;
+    c.left_edge = 3;
+    c.right_edge = 7;
     auto ci = sm.add_chord(c);
 
     assert(ci == 0);
@@ -294,7 +294,7 @@ static void run_full_pipeline(const char* name,
             for (std::size_t i = 0; i < vp.num_chords(); ++i) {
                 const auto& c = vp.chord(i);
                 std::printf("    chord %zu: y=%.3f lv=%zu rv=%zu r0=%zu r1=%zu null=%d\n",
-                            i, c.y, c.left_vertex, c.right_vertex,
+                            i, c.y, c.left_edge, c.right_edge,
                             c.region[0], c.region[1], (int)c.is_null_length);
             }
             for (std::size_t i = 0; i < vp.num_nodes(); ++i) {

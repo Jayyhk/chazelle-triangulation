@@ -58,25 +58,28 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
         // Determine which chord endpoint vertices would disappear.
         // A vertex disappears if it is not referenced by any other
         // chord in either region.
-        auto vertex_survives = [&](std::size_t v) -> bool {
-            if (v == NONE) return false;
+        // Determine which chord endpoint edges would disappear.
+        // An edge endpoint disappears if it is not referenced by any other
+        // chord in either region.
+        auto edge_survives = [&](std::size_t e) -> bool {
+            if (e == NONE) return false;
             for (std::size_t oci : n0.incident_chords) {
                 if (oci == ci) continue;
                 const auto& oc = submap.chord(oci);
                 if (oc.region[0] == NONE) continue;
-                if (oc.left_vertex == v || oc.right_vertex == v) return true;
+                if (oc.left_edge == e || oc.right_edge == e) return true;
             }
             for (std::size_t oci : n1.incident_chords) {
                 if (oci == ci) continue;
                 const auto& oc = submap.chord(oci);
                 if (oc.region[0] == NONE) continue;
-                if (oc.left_vertex == v || oc.right_vertex == v) return true;
+                if (oc.left_edge == e || oc.right_edge == e) return true;
             }
             return false;
         };
 
-        bool lv_disappears = (c.left_vertex != NONE && !vertex_survives(c.left_vertex));
-        bool rv_disappears = (c.right_vertex != NONE && !vertex_survives(c.right_vertex));
+        bool le_disappears = (c.left_edge != NONE && !edge_survives(c.left_edge));
+        bool re_disappears = (c.right_edge != NONE && !edge_survives(c.right_edge));
 
         // For each disappearing vertex, find the two arcs (across both
         // regions) that meet at it and sum their edge_counts.  For
@@ -97,10 +100,10 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
                 std::size_t alo = std::min(a.first_edge, a.last_edge);
                 std::size_t ahi = std::max(a.first_edge, a.last_edge);
 
-                bool touches_left = lv_disappears && (
-                    c.left_vertex == alo || c.left_vertex == ahi + 1);
-                bool touches_right = rv_disappears && (
-                    c.right_vertex == alo || c.right_vertex == ahi + 1);
+                bool touches_left = le_disappears && (
+                    c.left_edge >= alo && c.left_edge <= ahi + 1);
+                bool touches_right = re_disappears && (
+                    c.right_edge >= alo && c.right_edge <= ahi + 1);
 
                 if (touches_left)  left_group  += ec;
                 if (touches_right) right_group += ec;

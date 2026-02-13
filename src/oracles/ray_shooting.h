@@ -42,6 +42,11 @@ struct RayHit {
 
     /// X-coordinate of the hit point.
     double hit_x = 0.0;
+
+    /// The polygon edge index containing the hit point.
+    /// Per §3 item (i): "the report should also include the name
+    /// of the edge of P that contains [the hit point]."
+    std::size_t hit_edge = NONE;
 };
 
 /// Preprocessed ray-shooting structure for a single submap.

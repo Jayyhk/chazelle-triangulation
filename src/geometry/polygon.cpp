@@ -3,6 +3,7 @@
 
 #include <bit>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 
@@ -125,6 +126,20 @@ bool Polygon::is_y_extremum(std::size_t vertex_index) const noexcept {
         vertices_[vertex_index - 1],
         vertices_[vertex_index],
         vertices_[vertex_index + 1]);
+}
+
+double Polygon::edge_x_at_y(std::size_t edge_idx, double y) const noexcept {
+    if (edge_idx >= edges_.size()) return 0.0;
+    const auto& e = edges_[edge_idx];
+    const auto& p1 = vertices_[e.start_idx];
+    const auto& p2 = vertices_[e.end_idx];
+    double dy = p2.y - p1.y;
+    if (std::abs(dy) < 1e-15) {
+        // Horizontal edge — return midpoint x.
+        return (p1.x + p2.x) * 0.5;
+    }
+    double t = (y - p1.y) / dy;
+    return p1.x + t * (p2.x - p1.x);
 }
 
 } // namespace chazelle

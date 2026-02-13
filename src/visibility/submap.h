@@ -122,6 +122,17 @@ public:
     /// Max degree of any node in the tree.
     std::size_t max_degree() const;
 
+    // --- Normal Form (§2.3) ---
+
+    /// Re-sort the arc-sequence table into canonical ∂C traversal order
+    /// and update all arc index references (in nodes, chords, and
+    /// start_arc / end_arc).  This restores normal-form condition (iii)
+    /// after operations that may have appended arcs out of order
+    /// (e.g. split_arc_at_vertex during conformality restoration).
+    ///
+    /// Sort key: min(first_edge, last_edge), i.e., position along ∂C.
+    void normalize();
+
     // --- Double Identification (§2.4) ---
 
     /// Given an edge index in the input table and a y-coordinate,
@@ -139,6 +150,21 @@ public:
     std::size_t start_arc = NONE;
     /// Index of the arc passing through the end endpoint of C.
     std::size_t end_arc = NONE;
+
+    // --- Chain / polygon info (§2.2) ---
+
+    /// Set the vertex range of C and the polygon pointer.
+    /// Vertices in [c_start, c_end] are vertices of C and must
+    /// never disappear when a chord is removed (§2.2).
+    void set_chain_info(std::size_t c_start, std::size_t c_end,
+                        const class Polygon* poly = nullptr);
+
+    /// First vertex of C.
+    std::size_t c_start_vertex = NONE;
+    /// Last vertex of C.
+    std::size_t c_end_vertex = NONE;
+    /// Pointer to the input polygon (for y-coordinate lookups).
+    const class Polygon* polygon_ = nullptr;
 
 private:
     std::vector<SubmapNode> nodes_;

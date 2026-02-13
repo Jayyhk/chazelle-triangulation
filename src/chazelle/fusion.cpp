@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <limits>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace chazelle {
@@ -14,33 +15,34 @@ namespace chazelle {
 namespace {
 
 /// A discovered chord from one fusion pass.
+/// Per §3.1 Remark 1: "the chords of S reflect the visibility of the
+/// chord endpoints of S₁ and S₂ [and] they need not be incident upon
+/// any vertex of ∂C."  Endpoints are stored as (edge, y) pairs.
 struct DiscoveredChord {
     double y;                  ///< Y-coordinate of the chord.
-    std::size_t left_vertex;   ///< Left endpoint (polygon vertex idx).
-    std::size_t right_vertex;  ///< Right endpoint (polygon vertex idx).
+    std::size_t left_edge;     ///< Edge where the left endpoint lies.
+    std::size_t right_edge;    ///< Edge where the right endpoint lies.
     bool is_null_length = false;
 };
 
-/// Given a ray hit on an arc of a submap, resolve the polygon vertex
-/// at the hit point.
+/// Given a ray hit on an arc of a submap, resolve which polygon edge
+/// the hit point lies on.  Returns the edge index.
 ///
-/// Per the paper, chords connect arbitrary visible points on dC — not
-/// just polygon vertices.  However, our representation stores chord
-/// endpoints as vertex indices.  We resolve by finding the edge that
-/// the ray actually crosses and returning the vertex endpoint of that
-/// edge that is nearest (in x) to the hit point.
-std::size_t resolve_hit_vertex(const Submap& submap,
-                                const Polygon& polygon,
-                                std::size_t arc_idx,
-                                double ray_y,
-                                double ray_hit_x) {
+/// Per §3.1 Remark 1, chord endpoints are arbitrary points on ∂C,
+/// identified by their edge index.  The y-coordinate of the chord
+/// determines the exact position on that edge.
+std::size_t resolve_hit_edge(const Submap& submap,
+                              const Polygon& polygon,
+                              std::size_t arc_idx,
+                              double ray_y,
+                              double ray_hit_x) {
     const auto& arc = submap.arc(arc_idx);
     if (arc.first_edge == NONE) return NONE;
 
     std::size_t lo = std::min(arc.first_edge, arc.last_edge);
     std::size_t hi = std::max(arc.first_edge, arc.last_edge);
 
-    std::size_t best_vertex = NONE;
+    std::size_t best_edge = NONE;
     double best_x_dist = std::numeric_limits<double>::infinity();
 
     for (std::size_t ei = lo; ei <= hi && ei < polygon.num_edges(); ++ei) {
@@ -60,29 +62,14 @@ std::size_t resolve_hit_vertex(const Submap& submap,
         double dx = std::abs(edge_x - ray_hit_x);
         if (dx < best_x_dist) {
             best_x_dist = dx;
-            // Pick the vertex nearest to the hit point in both x and y.
-            double d1 = std::abs(p1.x - ray_hit_x) + std::abs(p1.y - ray_y);
-            double d2 = std::abs(p2.x - ray_hit_x) + std::abs(p2.y - ray_y);
-            best_vertex = (d1 <= d2) ? edge.start_idx : edge.end_idx;
+            best_edge = ei;
         }
     }
 
-    if (best_vertex == NONE) {
-        double best_dist = std::numeric_limits<double>::infinity();
-        for (std::size_t v = lo; v <= hi + 1 && v < polygon.num_vertices(); ++v) {
-            double dx = std::abs(polygon.vertex(v).x - ray_hit_x) +
-                        std::abs(polygon.vertex(v).y - ray_y);
-            if (dx < best_dist) {
-                best_dist = dx;
-                best_vertex = v;
-            }
-        }
-    }
-
-    return best_vertex;
+    return best_edge;
 }
 
-/// Compute the x-coordinate of a point on dC at height y, on the
+/// Compute the x-coordinate of a point on ∂C at height y, on the
 /// polygon edge incident on vertex v.
 double origin_x_for_vertex(const Polygon& polygon, std::size_t v) {
     if (v >= polygon.num_vertices()) return 0.0;
@@ -106,7 +93,7 @@ double origin_x_for_vertex(const Polygon& polygon, std::size_t v) {
 /// of a submap.  Checks all arcs (at most 4 by conformality) and chords
 /// bounding the region.  Returns the nearest hit.
 ///
-/// This is the core primitive of S3.1: "local shooting".
+/// This is the core primitive of §3.1: "local shooting".
 RayHit local_shoot_in_region(const Submap& submap,
                               const Polygon& polygon,
                               std::size_t region_idx,
@@ -120,11 +107,11 @@ RayHit local_shoot_in_region(const Submap& submap,
     for (std::size_t ci : nd.incident_chords) {
         const auto& c = submap.chord(ci);
         if (std::abs(c.y - y) > 1e-12) continue;
-        if (c.left_vertex != NONE && c.right_vertex != NONE &&
-            c.left_vertex < polygon.num_vertices() &&
-            c.right_vertex < polygon.num_vertices()) {
-            double lx = polygon.vertex(c.left_vertex).x;
-            double rx = polygon.vertex(c.right_vertex).x;
+        if (c.left_edge != NONE && c.right_edge != NONE &&
+            c.left_edge < polygon.num_edges() &&
+            c.right_edge < polygon.num_edges()) {
+            double lx = polygon.edge_x_at_y(c.left_edge, c.y);
+            double rx = polygon.edge_x_at_y(c.right_edge, c.y);
             double chord_x = shoot_right ? std::min(lx, rx)
                                          : std::max(lx, rx);
             double dist = shoot_right ? (chord_x - origin_x)
@@ -168,14 +155,12 @@ RayHit local_shoot_in_region(const Submap& submap,
 
 /// Determine which region of dst contains the junction vertex.
 ///
-/// S3.1 Start-Up: "using the information about the endpoints of C2
+/// §3.1 Start-Up: "using the information about the endpoints of C2
 /// encoded in the normal-form representation of S2 (namely, pointers
 /// to incident arcs), we can find, in constant time, in which region
 /// of S2 the point a0 lies."
 std::size_t find_junction_region(const Submap& dst,
                                   std::size_t junction_vertex) {
-    // The junction vertex is at one endpoint of dst's chain.  Find the
-    // arc whose edge range touches junction_vertex and return its region.
     for (std::size_t ai = 0; ai < dst.num_arcs(); ++ai) {
         const auto& a = dst.arc(ai);
         if (a.first_edge == NONE) continue;
@@ -185,7 +170,6 @@ std::size_t find_junction_region(const Submap& dst,
             if (a.region_node != NONE) return a.region_node;
         }
     }
-    // Fallback: check if junction_vertex is within an arc's range.
     for (std::size_t ai = 0; ai < dst.num_arcs(); ++ai) {
         const auto& a = dst.arc(ai);
         if (a.first_edge == NONE) continue;
@@ -195,25 +179,20 @@ std::size_t find_junction_region(const Submap& dst,
             if (a.region_node != NONE) return a.region_node;
         }
     }
-    // Final fallback: first non-deleted region.
     for (std::size_t i = 0; i < dst.num_nodes(); ++i) {
         if (!dst.node(i).deleted) return i;
     }
     return NONE;
 }
 
-/// One pass of fusion (S3.1): fuse src (S1) into dst (S2).
+/// One pass of fusion (§3.1): fuse src (S₁) into dst (S₂).
 ///
-/// Implements the paper's algorithm:
-///   - Start-up phase to initialize p and current region R of dst
-///   - Main loop with cases (i), (ii), (iii)
-///   - Current-region tracking through dst
+/// Per §3.1: "To fuse S1 into S2 we let a variable p run through
+/// ∂C₁ in clockwise order, stopping at a0, ..., a_{m+1}, as well as
+/// at some other places to be specified."
 ///
-/// Per S3.1: "To fuse S1 into S2 we let a variable p run through
-/// dC1 in clockwise order, stopping at a0, ..., a_{m+1}, as well as
-/// at some other places to be specified.  We determine what p sees
-/// along the way, while keeping track of the current region of S2
-/// in which p lies."
+/// Stops are at polygon vertices (arc boundaries) and chord endpoints.
+/// Chord endpoints may lie at interior points of edges (§3.1 Remark 1).
 void fuse_pass(const Submap& src,
                const RayShootingOracle& src_oracle,
                const Submap& dst,
@@ -239,26 +218,46 @@ void fuse_pass(const Submap& src,
                      a.last_side == Side::LEFT ? "L" : "R",
                      a.region_node, a.edge_count);
     }
-    // -- Collect stop vertices --
-    // a1..am = chord endpoints of src
-    // a0, a_{m+1} = companion vertices at junction
-    struct StopVertex {
-        std::size_t vertex_idx;
-    };
-    std::vector<StopVertex> stops;
-    std::set<std::size_t> stop_set;
 
-    auto add_stop = [&](std::size_t v) {
+    // -- Collect stop points --
+    // Each stop has an edge index and y-coordinate defining its exact
+    // position on ∂C.  Vertex-based stops (arc boundaries) and
+    // edge-based stops (chord endpoints) coexist.
+    struct StopPoint {
+        std::size_t edge_idx;   ///< Edge on which the stop lies.
+        double y;               ///< Y-coordinate.
+        bool is_vertex;         ///< True if this stop is a polygon vertex.
+        std::size_t vertex_idx; ///< Vertex index (if is_vertex), else NONE.
+    };
+    std::vector<StopPoint> stops;
+
+    auto is_dup = [&](std::size_t edge, double y) -> bool {
+        for (auto& s : stops) {
+            if (s.edge_idx == edge && std::abs(s.y - y) < 1e-12) return true;
+        }
+        return false;
+    };
+
+    auto add_vertex_stop = [&](std::size_t v) {
         if (v == NONE || v >= polygon.num_vertices()) return;
-        if (stop_set.insert(v).second)
-            stops.push_back({v});
+        std::size_t e = v;
+        if (e >= polygon.num_edges()) e = polygon.num_edges() - 1;
+        double y = polygon.vertex(v).y;
+        if (!is_dup(e, y))
+            stops.push_back({e, y, true, v});
     };
 
-    // Chord endpoints.
+    auto add_edge_stop = [&](std::size_t edge, double y) {
+        if (edge == NONE || edge >= polygon.num_edges()) return;
+        if (!is_dup(edge, y))
+            stops.push_back({edge, y, false, NONE});
+    };
+
+    // Chord endpoints of src (may be interior to edges).
     for (std::size_t ci = 0; ci < src.num_chords(); ++ci) {
         const auto& c = src.chord(ci);
-        add_stop(c.left_vertex);
-        add_stop(c.right_vertex);
+        if (c.left_edge != NONE) add_edge_stop(c.left_edge, c.y);
+        if (c.right_edge != NONE) add_edge_stop(c.right_edge, c.y);
     }
 
     // Companion vertices: arc boundary vertices.
@@ -267,23 +266,41 @@ void fuse_pass(const Submap& src,
         if (arc.first_edge == NONE) continue;
         std::size_t lo = std::min(arc.first_edge, arc.last_edge);
         std::size_t hi = std::max(arc.first_edge, arc.last_edge);
-        add_stop(lo);
-        if (hi + 1 < polygon.num_vertices()) add_stop(hi + 1);
+        add_vertex_stop(lo);
+        if (hi + 1 < polygon.num_vertices()) add_vertex_stop(hi + 1);
     }
 
     // Always include the junction vertex.
-    add_stop(junction_vertex);
+    add_vertex_stop(junction_vertex);
 
-    // Sort by vertex index (clockwise order = increasing vertex index).
+    // Sort by position along ∂C: primary key = edge index, then by
+    // parametric position along that edge.
     std::sort(stops.begin(), stops.end(),
-              [](const StopVertex& a, const StopVertex& b) {
-                  return a.vertex_idx < b.vertex_idx;
+              [&](const StopPoint& a, const StopPoint& b) {
+                  if (a.edge_idx != b.edge_idx) return a.edge_idx < b.edge_idx;
+                  if (a.edge_idx < polygon.num_edges()) {
+                      const auto& e = polygon.edge(a.edge_idx);
+                      const auto& p1 = polygon.vertex(e.start_idx);
+                      const auto& p2 = polygon.vertex(e.end_idx);
+                      double dy = p2.y - p1.y;
+                      if (std::abs(dy) > 1e-15) {
+                          double ta = (a.y - p1.y) / dy;
+                          double tb = (b.y - p1.y) / dy;
+                          return ta < tb;
+                      }
+                  }
+                  return a.y < b.y;
               });
 
     if (stops.empty()) return;
 
     std::fprintf(stderr, "    stops(%zu):", stops.size());
-    for (auto& s : stops) std::fprintf(stderr, " %zu", s.vertex_idx);
+    for (auto& s : stops) {
+        if (s.is_vertex)
+            std::fprintf(stderr, " (e%zu,v%zu)", s.edge_idx, s.vertex_idx);
+        else
+            std::fprintf(stderr, " (e%zu,y%.3f)", s.edge_idx, s.y);
+    }
     std::fprintf(stderr, "\n");
 
     // -- Start-up phase --
@@ -293,31 +310,44 @@ void fuse_pass(const Submap& src,
     // Find index of a0 (junction vertex) in the stops.
     std::size_t a0_idx = 0;
     for (std::size_t i = 0; i < stops.size(); ++i) {
-        if (stops[i].vertex_idx == junction_vertex) {
+        if (stops[i].is_vertex && stops[i].vertex_idx == junction_vertex) {
             a0_idx = i;
             break;
         }
     }
 
-    // S3.1 Start-Up: shoot from a0 to find c0.
-    std::size_t p_vertex = stops[a0_idx].vertex_idx;
+    // Helper: compute origin x for any stop point.
+    auto stop_ox = [&](const StopPoint& s) -> double {
+        if (s.is_vertex) return origin_x_for_vertex(polygon, s.vertex_idx);
+        return polygon.edge_x_at_y(s.edge_idx, s.y);
+    };
+
+    // Helper: get edge index for shooting from a stop point.
+    auto stop_shoot_edge = [&](const StopPoint& s) -> std::size_t {
+        if (s.is_vertex) {
+            std::size_t v = s.vertex_idx;
+            return (v > 0) ? v - 1 : 0;
+        }
+        return s.edge_idx;
+    };
+
+    std::size_t p_edge = stops[a0_idx].edge_idx;
+    double p_y = stops[a0_idx].y;
     std::size_t start_k = a0_idx;
 
     {
-        double y = polygon.vertex(p_vertex).y;
-        double ox = origin_x_for_vertex(polygon, p_vertex);
+        double y = p_y;
+        double ox = stop_ox(stops[a0_idx]);
+        std::size_t shoot_e = stop_shoot_edge(stops[a0_idx]);
 
         // Shoot from a0 in src to find what it sees w.r.t. C1.
         double dist_src = std::numeric_limits<double>::infinity();
         for (bool dir : {true, false}) {
-            std::size_t ei = (p_vertex > 0) ? p_vertex - 1 : 0;
-            RayHit h = src_oracle.shoot(ei, y, Side::LEFT, dir);
+            RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, dir);
             std::fprintf(stderr, "    startup src shoot edge=%zu y=%.3f dir=%s type=%d hit_x=%.3f arc=%zu\n",
-                         ei, y, dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
+                         shoot_e, y, dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
             if (h.type == RayHit::Type::ARC) {
                 double d = dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                // Require d > 1e-9 to exclude self-hits (ray hitting
-                // the arc at the origin vertex itself, distance ≈ 0).
                 if (d > 1e-9 && d < dist_src) dist_src = d;
             }
         }
@@ -343,44 +373,73 @@ void fuse_pass(const Submap& src,
 
         if (hit_dst.type == RayHit::Type::ARC &&
             dist_dst <= dist_src + 1e-12) {
-            // Case 1: c0 in dC2.  Record cross-chain chord a0->c0.
-            std::size_t rv = resolve_hit_vertex(
+            // Case 1: c0 in ∂C₂.  Record cross-chain chord a0→c0.
+            std::size_t re = resolve_hit_edge(
                 dst, polygon, hit_dst.arc_idx, y, hit_dst.hit_x);
-            std::fprintf(stderr, "    startup Case1: a0=%zu sees dC2 at rv=%zu dist_dst=%.3f dist_src=%.3f\n",
-                         p_vertex, rv, dist_dst, dist_src);
-            if (rv != NONE && rv != p_vertex) {
+            std::size_t a0_edge = stops[a0_idx].edge_idx;
+            std::fprintf(stderr, "    startup Case1: a0 edge=%zu sees dC2 at re=%zu\n",
+                         a0_edge, re);
+            if (re != NONE && re != a0_edge) {
                 DiscoveredChord dc;
                 dc.y = y;
-                dc.left_vertex = p_vertex;
-                dc.right_vertex = rv;
+                dc.left_edge = a0_edge;
+                dc.right_edge = re;
                 discovered.push_back(dc);
             }
-            // p stays at a0, R stays.
+        } else {
+            // Case 2: c0 in ∂C₁.
+            std::size_t c0_edge = NONE;
+            double best_src_dist = std::numeric_limits<double>::infinity();
+            for (bool dir : {true, false}) {
+                RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, dir);
+                if (h.type == RayHit::Type::ARC) {
+                    double d = dir ? (h.hit_x - ox) : (ox - h.hit_x);
+                    if (d > 1e-9 && d < best_src_dist) {
+                        best_src_dist = d;
+                        c0_edge = resolve_hit_edge(
+                            src, polygon, h.arc_idx, y, h.hit_x);
+                    }
+                }
+            }
+
+            if (c0_edge != NONE && c0_edge != stops[a0_idx].edge_idx) {
+                std::fprintf(stderr, "    startup Case2: a0 edge=%zu sees dC1 at c0 edge=%zu\n",
+                             p_edge, c0_edge);
+
+                DiscoveredChord dc;
+                dc.y = y;
+                dc.left_edge = c0_edge;
+                dc.right_edge = stops[a0_idx].edge_idx;
+                discovered.push_back(dc);
+
+                p_edge = c0_edge;
+                p_y = y;
+
+                for (std::size_t i = 0; i < stops.size(); ++i) {
+                    if (stops[i].edge_idx >= c0_edge) {
+                        start_k = i;
+                        break;
+                    }
+                }
+            }
         }
-        // Case 2: c0 in dC1 -- skip forward handled by main loop.
     }
 
     // -- Main loop --
-    // Per §3.1: p runs from a₀ to a_{m+1} in clockwise order.  a₀
-    // and a_{m+1} are companion vertices at the junction, so the
-    // traversal wraps around the full boundary of ∂C₁.  In our
-    // representation, stops are sorted by vertex index (= clockwise
-    // order).  We iterate from start_k through the end, then wrap
-    // around to process stops before start_k.
     std::size_t total_stops = stops.size();
     for (std::size_t jj = 0; jj < total_stops; ++jj) {
         std::size_t j = (start_k + jj) % total_stops;
-        std::size_t aj = stops[j].vertex_idx;
+        const auto& stop_j = stops[j];
         if (current_region == NONE) break;
 
-        // --- Case (i): aj lies in R and sees dC2 ---
-        // Per the paper: shoot from aj within R's arcs.  If we get
-        // a hit on an arc of R, aj is "in R" and sees dC2.
-        double y = polygon.vertex(aj).y;
-        double ox = origin_x_for_vertex(polygon, aj);
-        std::fprintf(stderr, "    main_loop jj=%zu aj=%zu y=%.3f ox=%.3f p_vertex=%zu R=%zu\n",
-                     jj, aj, y, ox, p_vertex, current_region);
+        double y = stop_j.y;
+        double ox = stop_ox(stop_j);
+        std::size_t aj_edge = stop_j.edge_idx;
+        std::size_t shoot_e = stop_shoot_edge(stop_j);
+        std::fprintf(stderr, "    main_loop jj=%zu edge=%zu y=%.3f ox=%.3f p_edge=%zu R=%zu\n",
+                     jj, aj_edge, y, ox, p_edge, current_region);
 
+        // --- Case (i): aj lies in R and sees ∂C₂ ---
         bool aj_in_R = false;
         RayHit best_dst_hit;
         double best_dst_dist = std::numeric_limits<double>::infinity();
@@ -406,67 +465,60 @@ void fuse_pass(const Submap& src,
         if (aj_in_R) {
             std::fprintf(stderr, "      aj_in_R: best_dst_dist=%.6f hit_x=%.3f arc=%zu\n",
                          best_dst_dist, best_dst_hit.hit_x, best_dst_hit.arc_idx);
-            // aj sees dC2 at best_dst_hit.
-            // Now check if dC2 is nearer than dC1 (what aj sees w.r.t. C1).
             double dist_src = std::numeric_limits<double>::infinity();
-            std::size_t ei = (aj > 0) ? aj - 1 : 0;
             for (bool dir : {true, false}) {
-                RayHit h = src_oracle.shoot(ei, y, Side::LEFT, dir);
+                RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, dir);
                 std::fprintf(stderr, "      src shoot edge=%zu y=%.3f dir=%s type=%d hit_x=%.3f arc=%zu\n",
-                             ei, y, dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
+                             shoot_e, y, dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
                 if (h.type == RayHit::Type::ARC) {
                     double d = dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                    // Require d > 1e-9 to exclude self-hits.
                     if (d > 1e-9 && d < dist_src) dist_src = d;
                 }
             }
 
             if (best_dst_dist <= dist_src + 1e-12) {
-                // aj sees dC2 w.r.t. C.  Record cross-chain chord.
-                std::size_t rv = resolve_hit_vertex(
+                std::size_t re = resolve_hit_edge(
                     dst, polygon, best_dst_hit.arc_idx, y,
                     best_dst_hit.hit_x);
-                std::fprintf(stderr, "      Case(i) CHORD: aj=%zu rv=%zu dist_dst=%.6f dist_src=%.6f\n",
-                             aj, rv, best_dst_dist, dist_src);
-                if (rv != NONE && rv != aj) {
+                std::fprintf(stderr, "      Case(i) CHORD: aj edge=%zu re=%zu\n",
+                             aj_edge, re);
+                if (re != NONE && re != aj_edge) {
                     DiscoveredChord dc;
                     dc.y = y;
-                    dc.left_vertex = aj;
-                    dc.right_vertex = rv;
+                    dc.left_edge = aj_edge;
+                    dc.right_edge = re;
                     discovered.push_back(dc);
                 }
-                p_vertex = aj;
-                // R stays the same per case (i).
+                p_edge = aj_edge;
+                p_y = y;
                 continue;
             }
-            // dC1 is nearer: aj sees dC1 -- fall through to case (ii).
         }
 
-        // --- Case (ii): exit chord endpoint of R sees Aj past p ---
-        // For each exit chord of R, check if either endpoint sees
-        // the arc segment between p and aj on dC1.
+        // --- Case (ii): exit chord endpoint of R sees segment past p ---
         if (current_region >= dst.num_nodes()) continue;
         const auto& nd_R = dst.node(current_region);
         if (nd_R.deleted) continue;
 
         bool case_ii_found = false;
-        std::size_t best_p_prime = NONE;
-        std::size_t best_chord_endpt = NONE;
+        std::size_t best_p_prime_edge = NONE;
+        double best_p_prime_y = 0.0;
+        std::size_t best_chord_endpt_edge = NONE;
+        double best_chord_endpt_y = 0.0;
         std::size_t best_new_region = NONE;
 
         for (std::size_t ci : nd_R.incident_chords) {
             const auto& c = dst.chord(ci);
 
-            for (std::size_t endpt_v : {c.left_vertex, c.right_vertex}) {
-                if (endpt_v == NONE || endpt_v >= polygon.num_vertices())
+            for (std::size_t endpt_e : {c.left_edge, c.right_edge}) {
+                if (endpt_e == NONE || endpt_e >= polygon.num_edges())
                     continue;
 
-                double y_e = polygon.vertex(endpt_v).y;
-                std::size_t ei_e = (endpt_v > 0) ? endpt_v - 1 : 0;
+                double y_e = c.y;
+                double ox_e = polygon.edge_x_at_y(endpt_e, y_e);
 
-                // Shoot from this dst chord endpoint toward dC1.
                 for (bool dir : {true, false}) {
-                    RayHit h = src_oracle.shoot(ei_e, y_e, Side::LEFT, dir);
+                    RayHit h = src_oracle.shoot(endpt_e, y_e, Side::LEFT, dir);
                     if (h.type != RayHit::Type::ARC) continue;
 
                     const auto& hit_arc = src.arc(h.arc_idx);
@@ -476,21 +528,20 @@ void fuse_pass(const Submap& src,
                     std::size_t h_hi = std::max(hit_arc.first_edge,
                                                  hit_arc.last_edge);
 
-                    // Check: hit on arc segment [p_vertex, aj]?
-                    std::size_t seg_lo = std::min(p_vertex, aj);
-                    std::size_t seg_hi = std::max(p_vertex, aj);
+                    std::size_t seg_lo = std::min(p_edge, aj_edge);
+                    std::size_t seg_hi = std::max(p_edge, aj_edge);
                     if (h_lo > seg_hi || h_hi < seg_lo) continue;
 
-                    // Resolve the hit point on dC1.
-                    std::size_t p_prime = resolve_hit_vertex(
+                    std::size_t p_prime_e = resolve_hit_edge(
                         src, polygon, h.arc_idx, y_e, h.hit_x);
-                    if (p_prime == NONE) continue;
-                    if (p_prime <= p_vertex) continue; // must follow p
+                    if (p_prime_e == NONE) continue;
+                    if (p_prime_e <= p_edge) continue;
 
-                    // Per the paper: pick the "last" p' (largest index).
-                    if (best_p_prime == NONE || p_prime > best_p_prime) {
-                        best_p_prime = p_prime;
-                        best_chord_endpt = endpt_v;
+                    if (best_p_prime_edge == NONE || p_prime_e > best_p_prime_edge) {
+                        best_p_prime_edge = p_prime_e;
+                        best_p_prime_y = y_e;
+                        best_chord_endpt_edge = endpt_e;
+                        best_chord_endpt_y = y_e;
                         best_new_region = (c.region[0] == current_region)
                                           ? c.region[1] : c.region[0];
                         case_ii_found = true;
@@ -499,38 +550,36 @@ void fuse_pass(const Submap& src,
             }
         }
 
-        if (case_ii_found && best_p_prime != NONE) {
-            // Record cross-chain chord: chord_endpoint <-> p_prime
-            double y_c = polygon.vertex(best_chord_endpt).y;
+        if (case_ii_found && best_p_prime_edge != NONE) {
             DiscoveredChord dc;
-            dc.y = y_c;
-            dc.left_vertex = best_chord_endpt;
-            dc.right_vertex = best_p_prime;
+            dc.y = best_chord_endpt_y;
+            dc.left_edge = best_chord_endpt_edge;
+            dc.right_edge = best_p_prime_edge;
             discovered.push_back(dc);
 
-            p_vertex = best_p_prime;
+            p_edge = best_p_prime_edge;
+            p_y = best_p_prime_y;
             current_region = best_new_region;
             continue;
         }
 
-        // --- Case (iii): no match --- aj sees dC1, continue.
+        // --- Case (iii): no match --- aj sees ∂C₁, continue.
     }
 }
 
 /// Rebuild the submap in normal form from the union of all chords and arcs.
 ///
-/// Per S3.1: "Sort the endpoints of these chords along dC (by edge name,
+/// Per §3.1: "Sort the endpoints of these chords along ∂C (by edge name,
 /// then y-coordinate)."
 Submap rebuild_submap(const Submap& s1, const Submap& s2,
                       const std::vector<DiscoveredChord>& discovered,
                       const Polygon& /*polygon*/) {
     Submap result;
 
-    // -- Collect ALL unique chords --
     struct ChordRecord {
         double y;
-        std::size_t left_vertex;
-        std::size_t right_vertex;
+        std::size_t left_edge;
+        std::size_t right_edge;
         bool is_null_length;
         std::size_t sort_key;
     };
@@ -538,44 +587,40 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     std::set<std::pair<std::size_t, std::size_t>> seen;
     std::vector<ChordRecord> all_chords;
 
-    auto add_chord_rec = [&](double y, std::size_t lv, std::size_t rv,
+    auto add_chord_rec = [&](double y, std::size_t le, std::size_t re,
                              bool is_null) {
-        if (lv == NONE || rv == NONE) return;
-        if (lv == rv && !is_null) return;
-        auto key = std::make_pair(std::min(lv, rv), std::max(lv, rv));
+        if (le == NONE || re == NONE) return;
+        if (le == re && !is_null) return;
+        auto key = std::make_pair(std::min(le, re), std::max(le, re));
         if (!seen.insert(key).second) return;
-        // Sort key: minimum vertex index (consistent with arc sort keys).
-        std::size_t sk = std::min(lv, rv);
-        all_chords.push_back({y, lv, rv, is_null, sk});
+        std::size_t sk = std::min(le, re);
+        all_chords.push_back({y, le, re, is_null, sk});
     };
 
     for (std::size_t ci = 0; ci < s1.num_chords(); ++ci) {
         const auto& c = s1.chord(ci);
         if (c.region[0] == NONE && c.region[1] == NONE) continue;
-        add_chord_rec(c.y, c.left_vertex, c.right_vertex, c.is_null_length);
+        add_chord_rec(c.y, c.left_edge, c.right_edge, c.is_null_length);
     }
     for (std::size_t ci = 0; ci < s2.num_chords(); ++ci) {
         const auto& c = s2.chord(ci);
         if (c.region[0] == NONE && c.region[1] == NONE) continue;
-        add_chord_rec(c.y, c.left_vertex, c.right_vertex, c.is_null_length);
+        add_chord_rec(c.y, c.left_edge, c.right_edge, c.is_null_length);
     }
     for (const auto& dc : discovered) {
-        add_chord_rec(dc.y, dc.left_vertex, dc.right_vertex, dc.is_null_length);
+        add_chord_rec(dc.y, dc.left_edge, dc.right_edge, dc.is_null_length);
     }
 
-    // Sort along dC: by edge name (sort_key), then y.
     std::sort(all_chords.begin(), all_chords.end(),
               [](const ChordRecord& a, const ChordRecord& b) {
                   if (a.sort_key != b.sort_key) return a.sort_key < b.sort_key;
                   return a.y < b.y;
               });
 
-    // -- Build the submap tree --
     std::size_t num_regions = all_chords.size() + 1;
     for (std::size_t i = 0; i < num_regions; ++i)
         result.add_node();
 
-    // -- Build arcs --
     struct ArcRecord {
         ArcStructure arc;
         std::size_t sort_key;
@@ -600,7 +645,6 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
                   return a.sort_key < b.sort_key;
               });
 
-    // Assign each arc to a region.
     for (auto& arec : all_arcs) {
         auto it = std::upper_bound(
             all_chords.begin(), all_chords.end(), arec.sort_key,
@@ -616,18 +660,17 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         result.node(region).arcs.push_back(ai);
     }
 
-    // Add chords as tree edges.
     for (std::size_t ci = 0; ci < all_chords.size(); ++ci) {
         Chord chord;
         chord.y = all_chords[ci].y;
-        chord.left_vertex = all_chords[ci].left_vertex;
-        chord.right_vertex = all_chords[ci].right_vertex;
+        chord.left_edge = all_chords[ci].left_edge;
+        chord.right_edge = all_chords[ci].right_edge;
         chord.is_null_length = all_chords[ci].is_null_length;
         chord.region[0] = ci;
         chord.region[1] = ci + 1;
         result.add_chord(chord);
-        std::fprintf(stderr, "    rebuild chord %zu: lv=%zu rv=%zu null=%d regions=[%zu,%zu]\n",
-                     ci, chord.left_vertex, chord.right_vertex,
+        std::fprintf(stderr, "    rebuild chord %zu: le=%zu re=%zu null=%d regions=[%zu,%zu]\n",
+                     ci, chord.left_edge, chord.right_edge,
                      (int)chord.is_null_length, ci, ci + 1);
     }
 
@@ -649,23 +692,18 @@ Submap fuse(const Submap& s1, const RayShootingOracle& oracle1,
             std::size_t junction_vertex) {
     std::vector<DiscoveredChord> discovered;
 
-    // Pass 1: fuse S1 into S2 -- walk S1's canonical vertices,
-    // tracking the current region of S2.
     fuse_pass(s1, oracle1, s2, oracle2, polygon, junction_vertex, discovered);
-
-    // Pass 2: fuse S2 into S1 -- walk S2's canonical vertices,
-    // tracking the current region of S1.
     fuse_pass(s2, oracle2, s1, oracle1, polygon, junction_vertex, discovered);
 
-    // S3.1 / Lemma 3.1, category (4): If the junction vertex is a
-    // local y-extremum, it creates null-length chords.
     if (junction_vertex != NONE && junction_vertex < polygon.num_vertices() &&
         polygon.is_y_extremum(junction_vertex)) {
         double jy = polygon.vertex(junction_vertex).y;
         DiscoveredChord dc;
         dc.y = jy;
-        dc.left_vertex = junction_vertex;
-        dc.right_vertex = junction_vertex;
+        std::size_t je = junction_vertex;
+        if (je >= polygon.num_edges()) je = polygon.num_edges() - 1;
+        dc.left_edge = je;
+        dc.right_edge = je;
         dc.is_null_length = true;
         discovered.push_back(dc);
     }

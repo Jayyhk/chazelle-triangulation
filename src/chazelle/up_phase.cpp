@@ -49,6 +49,16 @@ static CanonicalSubmap build_grade0_submap(
     std::size_t rai = cs.submap.add_arc(right_arc);
     cs.submap.node(region).arcs.push_back(rai);
 
+    // §2.3: The arc-sequence table records which arcs pass through
+    // the endpoints of C.  For a grade-0 chain (single edge), both
+    // endpoints are covered by both arcs.
+    cs.submap.start_arc = lai;
+    cs.submap.end_arc   = rai;
+
+    // Store chain vertex range and polygon pointer for §2.2 / §2.4.
+    cs.submap.set_chain_info(range.start_vertex, range.end_vertex,
+                             &polygon);
+
     cs.submap.recompute_weight(region);
 
     // Build ray-shooting oracle (trivial for one region).

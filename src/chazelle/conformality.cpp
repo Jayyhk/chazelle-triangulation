@@ -15,8 +15,8 @@ namespace {
 
 struct ChordCandidate {
     double y = 0.0;
-    std::size_t left_vertex = NONE;
-    std::size_t right_vertex = NONE;
+    std::size_t left_edge = NONE;
+    std::size_t right_edge = NONE;
     std::size_t region_above = NONE;
     std::size_t region_below = NONE;
     bool valid = false;
@@ -57,11 +57,11 @@ RayHit shoot_in_region(const Submap& submap,
     for (std::size_t ci : nd.incident_chords) {
         const auto& c = submap.chord(ci);
         if (std::abs(c.y - y) > 1e-12) continue;
-        if (c.left_vertex != NONE && c.right_vertex != NONE &&
-            c.left_vertex < polygon.num_vertices() &&
-            c.right_vertex < polygon.num_vertices()) {
-            double lx = polygon.vertex(c.left_vertex).x;
-            double rx = polygon.vertex(c.right_vertex).x;
+        if (c.left_edge != NONE && c.right_edge != NONE &&
+            c.left_edge < polygon.num_edges() &&
+            c.right_edge < polygon.num_edges()) {
+            double lx = polygon.edge_x_at_y(c.left_edge, c.y);
+            double rx = polygon.edge_x_at_y(c.right_edge, c.y);
             // Use the chord endpoint nearest in the shooting direction.
             double chord_x = shoot_right ? std::min(lx, rx)
                                          : std::max(lx, rx);
@@ -130,42 +130,32 @@ int lemma24_test(
     std::size_t alpha_end,    // end vertex of subarc α
     ChordCandidate& cand) {
 
-    // Centroid chord endpoints: vertices a, b.
-    std::size_t va = centroid_chord.left_vertex;
-    std::size_t vb = centroid_chord.right_vertex;
-    if (va == NONE || vb == NONE) return 2;
-    if (va >= polygon.num_vertices() || vb >= polygon.num_vertices())
+    // Centroid chord endpoints: edge indices a, b.
+    std::size_t ea = centroid_chord.left_edge;
+    std::size_t eb = centroid_chord.right_edge;
+    if (ea == NONE || eb == NONE) return 2;
+    if (ea >= polygon.num_edges() || eb >= polygon.num_edges())
         return 2;
 
     // Check if a lies on α = [alpha_start, alpha_end).
-    bool a_on_alpha = (va >= alpha_start && va < alpha_end);
-    bool b_on_alpha = (vb >= alpha_start && vb < alpha_end);
+    bool a_on_alpha = (ea >= alpha_start && ea < alpha_end);
+    bool b_on_alpha = (eb >= alpha_start && eb < alpha_end);
 
     // If a is on α, shoot from a to see if it hits A₂.
     if (a_on_alpha) {
-        const auto& pa = polygon.vertex(va);
-        std::size_t ea = (va > 0) ? va - 1 : 0;
-        // Compute origin_x on the polygon edge at height pa.y.
-        double origin_x = pa.x;
-        if (ea < polygon.num_edges()) {
-            const auto& edge = polygon.edge(ea);
-            const auto& p1 = polygon.vertex(edge.start_idx);
-            const auto& p2 = polygon.vertex(edge.end_idx);
-            if (std::abs(p2.y - p1.y) > 1e-15) {
-                double t = (pa.y - p1.y) / (p2.y - p1.y);
-                origin_x = p1.x + t * (p2.x - p1.x);
-            }
-        }
+        // Compute origin_x on the polygon edge ea at centroid chord y.
+        double pa_y = polygon.vertex(ea).y;
+        double origin_x = polygon.edge_x_at_y(ea, pa_y);
         // Shoot in both directions from a in the parent submap's region.
         for (bool dir : {true, false}) {
             auto hit = shoot_in_region(parent_submap, region_idx, polygon,
-                                       origin_x, pa.y, dir);
+                                       origin_x, pa_y, dir);
             if (hit_lands_on_arc(hit, parent_submap, arc_j)) {
-                cand.y = pa.y;
-                cand.left_vertex = va;
-                // Resolve right_vertex: find the vertex on the hit
-                // arc nearest in x to the hit point.
-                cand.right_vertex = NONE;
+                cand.y = pa_y;
+                cand.left_edge = ea;
+                // Resolve right_edge: find the edge on the hit
+                // arc whose x-intercept at y is closest to hit_x.
+                cand.right_edge = NONE;
                 if (hit.arc_idx != NONE && hit.arc_idx < parent_submap.num_arcs()) {
                     const auto& ha = parent_submap.arc(hit.arc_idx);
                     if (ha.first_edge != NONE) {
@@ -178,30 +168,20 @@ int lemma24_test(
                             const auto& ep2 = polygon.vertex(e2.end_idx);
                             double ey_lo = std::min(ep1.y, ep2.y);
                             double ey_hi = std::max(ep1.y, ep2.y);
-                            if (pa.y < ey_lo - 1e-12 || pa.y > ey_hi + 1e-12) continue;
+                            if (pa_y < ey_lo - 1e-12 || pa_y > ey_hi + 1e-12) continue;
                             if (std::abs(ey_hi - ey_lo) < 1e-15) continue;
-                            double t2 = (pa.y - ep1.y) / (ep2.y - ep1.y);
+                            double t2 = (pa_y - ep1.y) / (ep2.y - ep1.y);
                             double ex = ep1.x + t2 * (ep2.x - ep1.x);
                             double dx = std::abs(ex - hit.hit_x);
                             if (dx < best_xd) {
                                 best_xd = dx;
-                                double dx1 = std::abs(ep1.x - hit.hit_x);
-                                double dx2 = std::abs(ep2.x - hit.hit_x);
-                                cand.right_vertex = (dx1 <= dx2) ? e2.start_idx : e2.end_idx;
+                                cand.right_edge = ei2;
                             }
                         }
-                        if (cand.right_vertex == NONE) {
-                            double best_d = std::numeric_limits<double>::infinity();
-                            for (std::size_t vv = hlo; vv <= hhi + 1 && vv < polygon.num_vertices(); ++vv) {
-                                if (vv == va) continue;
-                                double d2 = std::abs(polygon.vertex(vv).x - hit.hit_x) +
-                                            std::abs(polygon.vertex(vv).y - pa.y);
-                                if (d2 < best_d) { best_d = d2; cand.right_vertex = vv; }
-                            }
-                        }
+                        // No vertex fallback needed; right_edge is set to the hit edge.
                     }
                 }
-                if (cand.right_vertex != NONE) {
+                if (cand.right_edge != NONE) {
                     cand.valid = true;
                     return 0; // success
                 }
@@ -211,25 +191,16 @@ int lemma24_test(
 
     // If b is on α, shoot from b to see if it hits A₂.
     if (b_on_alpha) {
-        const auto& pb = polygon.vertex(vb);
-        std::size_t eb = (vb > 0) ? vb - 1 : 0;
-        double origin_x = pb.x;
-        if (eb < polygon.num_edges()) {
-            const auto& edge = polygon.edge(eb);
-            const auto& p1 = polygon.vertex(edge.start_idx);
-            const auto& p2 = polygon.vertex(edge.end_idx);
-            if (std::abs(p2.y - p1.y) > 1e-15) {
-                double t = (pb.y - p1.y) / (p2.y - p1.y);
-                origin_x = p1.x + t * (p2.x - p1.x);
-            }
-        }
+        // Compute origin_x on the polygon edge eb at centroid chord y.
+        double pb_y = polygon.vertex(eb).y;
+        double origin_x = polygon.edge_x_at_y(eb, pb_y);
         for (bool dir : {true, false}) {
             auto hit = shoot_in_region(parent_submap, region_idx, polygon,
-                                       origin_x, pb.y, dir);
+                                       origin_x, pb_y, dir);
             if (hit_lands_on_arc(hit, parent_submap, arc_j)) {
-                cand.y = pb.y;
-                cand.left_vertex = vb;
-                cand.right_vertex = NONE;
+                cand.y = pb_y;
+                cand.left_edge = eb;
+                cand.right_edge = NONE;
                 if (hit.arc_idx != NONE && hit.arc_idx < parent_submap.num_arcs()) {
                     const auto& ha = parent_submap.arc(hit.arc_idx);
                     if (ha.first_edge != NONE) {
@@ -242,30 +213,20 @@ int lemma24_test(
                             const auto& ep2 = polygon.vertex(e2.end_idx);
                             double ey_lo = std::min(ep1.y, ep2.y);
                             double ey_hi = std::max(ep1.y, ep2.y);
-                            if (pb.y < ey_lo - 1e-12 || pb.y > ey_hi + 1e-12) continue;
+                            if (pb_y < ey_lo - 1e-12 || pb_y > ey_hi + 1e-12) continue;
                             if (std::abs(ey_hi - ey_lo) < 1e-15) continue;
-                            double t2 = (pb.y - ep1.y) / (ep2.y - ep1.y);
+                            double t2 = (pb_y - ep1.y) / (ep2.y - ep1.y);
                             double ex = ep1.x + t2 * (ep2.x - ep1.x);
                             double dx = std::abs(ex - hit.hit_x);
                             if (dx < best_xd) {
                                 best_xd = dx;
-                                double dx1 = std::abs(ep1.x - hit.hit_x);
-                                double dx2 = std::abs(ep2.x - hit.hit_x);
-                                cand.right_vertex = (dx1 <= dx2) ? e2.start_idx : e2.end_idx;
+                                cand.right_edge = ei2;
                             }
                         }
-                        if (cand.right_vertex == NONE) {
-                            double best_d = std::numeric_limits<double>::infinity();
-                            for (std::size_t vv = hlo; vv <= hhi + 1 && vv < polygon.num_vertices(); ++vv) {
-                                if (vv == vb) continue;
-                                double d2 = std::abs(polygon.vertex(vv).x - hit.hit_x) +
-                                            std::abs(polygon.vertex(vv).y - pb.y);
-                                if (d2 < best_d) { best_d = d2; cand.right_vertex = vv; }
-                            }
-                        }
+                        // No vertex fallback needed; right_edge is set to the hit edge.
                     }
                 }
-                if (cand.right_vertex != NONE) {
+                if (cand.right_edge != NONE) {
                     cand.valid = true;
                     return 0; // success
                 }
@@ -299,16 +260,16 @@ int lemma24_test(
     std::size_t j_lo = std::min(arc_j.first_edge, arc_j.last_edge);
     std::size_t j_hi = std::max(arc_j.first_edge, arc_j.last_edge);
 
-    // Exact topological test: in the linear ordering of vertices
-    // along ∂C, if va < vb, then vertices in [va, vb) go to one
+    // Exact topological test: in the linear ordering of edges
+    // along ∂C, if ea < eb, then edges in [ea, eb) go to one
     // subtree and those outside go to the other.  If arc_j's edge
-    // range overlaps [va, vb), the shielded side is the other half,
-    // so descend into the [va, vb) side.
+    // range overlaps [ea, eb), the shielded side is the other half,
+    // so descend into the [ea, eb) side.
     //
     // This is exact (not a heuristic) because ∂C is an open curve
-    // with a linear vertex ordering, not circular.
-    std::size_t c_lo = std::min(va, vb);
-    std::size_t c_hi = std::max(va, vb);
+    // with a linear edge ordering, not circular.
+    std::size_t c_lo = std::min(ea, eb);
+    std::size_t c_hi = std::max(ea, eb);
 
     // Does A₂'s edge range overlap the [c_lo, c_hi) interval?
     bool j_overlaps_inner = (j_lo < c_hi && j_hi >= c_lo);
@@ -433,10 +394,10 @@ ChordCandidate search_tree_decomposition(
                         if (hit_lands_on_arc(hit, parent_submap, arc_j)) {
                             ChordCandidate cand;
                             cand.y = pt.y;
-                            cand.left_vertex = v;
-                            // Resolve right_vertex: find the vertex on
-                            // the hit arc nearest in x to the hit point.
-                            cand.right_vertex = NONE;
+                            cand.left_edge = v;
+                            // Resolve right_edge: find the edge on
+                            // the hit arc whose x-intercept is closest to hit_x.
+                            cand.right_edge = NONE;
                             if (hit.arc_idx != NONE &&
                                 hit.arc_idx < parent_submap.num_arcs()) {
                                 const auto& ha = parent_submap.arc(hit.arc_idx);
@@ -457,23 +418,14 @@ ChordCandidate search_tree_decomposition(
                                         double dx = std::abs(ex - hit.hit_x);
                                         if (dx < best_xd) {
                                             best_xd = dx;
-                                            double dx1 = std::abs(ep1.x - hit.hit_x);
-                                            double dx2 = std::abs(ep2.x - hit.hit_x);
-                                            cand.right_vertex = (dx1 <= dx2) ? e2.start_idx : e2.end_idx;
+                                            cand.right_edge = ei2;
                                         }
                                     }
-                                    if (cand.right_vertex == NONE) {
-                                        double best_d = std::numeric_limits<double>::infinity();
-                                        for (std::size_t vv = hlo; vv <= hhi + 1 && vv < polygon.num_vertices(); ++vv) {
-                                            double d2 = std::abs(polygon.vertex(vv).x - hit.hit_x) +
-                                                        std::abs(polygon.vertex(vv).y - pt.y);
-                                            if (d2 < best_d) { best_d = d2; cand.right_vertex = vv; }
-                                        }
-                                    }
+                                    // No vertex fallback needed; right_edge is set to the hit edge.
                                 }
                             }
                             // Skip if we couldn't resolve or got a self-loop.
-                            if (cand.right_vertex != NONE && cand.right_vertex != v) {
+                            if (cand.right_edge != NONE && cand.right_edge != v) {
                                 cand.valid = true;
                                 return cand;
                             }
@@ -557,8 +509,8 @@ ChordCandidate search_tree_decomposition(
                                 if (hit_lands_on_arc(hit2, parent_submap, arc_j)) {
                                     ChordCandidate cand2;
                                     cand2.y = pt2.y;
-                                    cand2.left_vertex = v;
-                                    cand2.right_vertex = NONE;
+                                    cand2.left_edge = v;
+                                    cand2.right_edge = NONE;
                                     if (hit2.arc_idx != NONE &&
                                         hit2.arc_idx < parent_submap.num_arcs()) {
                                         const auto& ha2 = parent_submap.arc(hit2.arc_idx);
@@ -579,22 +531,13 @@ ChordCandidate search_tree_decomposition(
                                                 double dx = std::abs(ex - hit2.hit_x);
                                                 if (dx < best_xd2) {
                                                     best_xd2 = dx;
-                                                    double dx1 = std::abs(ep1.x - hit2.hit_x);
-                                                    double dx2 = std::abs(ep2.x - hit2.hit_x);
-                                                    cand2.right_vertex = (dx1 <= dx2) ? e3.start_idx : e3.end_idx;
+                                                    cand2.right_edge = ei3;
                                                 }
                                             }
-                                            if (cand2.right_vertex == NONE) {
-                                                double best_d = std::numeric_limits<double>::infinity();
-                                                for (std::size_t vv = hlo2; vv <= hhi2 + 1 && vv < polygon.num_vertices(); ++vv) {
-                                                    double d2 = std::abs(polygon.vertex(vv).x - hit2.hit_x) +
-                                                                std::abs(polygon.vertex(vv).y - pt2.y);
-                                                    if (d2 < best_d) { best_d = d2; cand2.right_vertex = vv; }
-                                                }
-                                            }
+                                            // No vertex fallback needed; right_edge is set to the hit edge.
                                         }
                                     }
-                                    if (cand2.right_vertex != NONE && cand2.right_vertex != v) {
+                                    if (cand2.right_edge != NONE && cand2.right_edge != v) {
                                         cand2.valid = true;
                                         return cand2;
                                     }
@@ -657,64 +600,91 @@ ChordCandidate find_splitting_chord(
                                   submap.arc(a2).last_edge);
               });
 
+    // §3.2: "apply Lemma 3.2 to every pair of nonconsecutive arcs
+    // until we find a chord which we can add to S."
+    //
     // Two arcs are consecutive if they are adjacent in the sorted
-    // (boundary-order) sequence.  With k ≥ 5 arcs, picking indices
-    // 0 and k/2 guarantees non-consecutiveness (mod k) since
-    // |0 - k/2| ≥ 2 and k - |0 - k/2| ≥ 2.
+    // (boundary-order) sequence.  We iterate over ALL non-consecutive
+    // pairs, trying each until we find a splitting chord.
     std::size_t k = sorted_arcs.size();
-    std::size_t ai = sorted_arcs[0];
-    std::size_t aj = sorted_arcs[k / 2];
 
-    const auto& arc_i = submap.arc(ai);
-    const auto& arc_j = submap.arc(aj);
-
-    if (arc_i.first_edge == NONE || arc_j.first_edge == NONE) return {};
-
-    // Verify non-consecutiveness (indices differ by > 1 mod k).
-    // If k/2 == 1 (only possible when k < 4, but we checked k >= 5),
-    // fall back to an exhaustive search.
     auto index_distance = [&](std::size_t idx_a, std::size_t idx_b) -> std::size_t {
         std::size_t d = (idx_b >= idx_a) ? (idx_b - idx_a) : (idx_a - idx_b);
         return std::min(d, k - d);
     };
 
-    if (index_distance(0, k / 2) <= 1) {
-        // Exhaustive search for any non-consecutive pair.
-        bool found = false;
-        for (std::size_t ii = 0; ii < k && !found; ++ii) {
-            for (std::size_t jj = ii + 2; jj < k && !found; ++jj) {
-                if (index_distance(ii, jj) > 1) {
-                    ai = sorted_arcs[ii];
-                    aj = sorted_arcs[jj];
-                    found = true;
-                }
-            }
-        }
-        if (!found) return {};
+    // Collect all non-consecutive pairs.  Try (0, k/2) first as a
+    // likely candidate, then all remaining non-consecutive pairs.
+    struct ArcPair { std::size_t ii; std::size_t jj; };
+    std::vector<ArcPair> pairs;
+
+    // Preferred pair first (maximally separated).
+    if (index_distance(0, k / 2) > 1) {
+        pairs.push_back({0, k / 2});
     }
 
-    // Decompose A₁ into O(log γ) dyadic pieces.
-    const auto& arc_i_final = submap.arc(ai);
-    const auto& arc_j_final = submap.arc(aj);
-    std::size_t start = std::min(arc_i_final.first_edge, arc_i_final.last_edge);
-    std::size_t end   = std::max(arc_i_final.first_edge, arc_i_final.last_edge) + 1;
-    auto pieces = cut_arc(start, end, polygon);
+    // All other non-consecutive pairs.
+    for (std::size_t ii = 0; ii < k; ++ii) {
+        for (std::size_t jj = ii + 2; jj < k; ++jj) {
+            if (index_distance(ii, jj) <= 1) continue;
+            // Skip the preferred pair already added above.
+            if (ii == 0 && jj == k / 2) continue;
+            pairs.push_back({ii, jj});
+        }
+    }
 
-    // §3.2: For each piece α, retrieve its canonical submap and binary
-    // search through the tree decomposition.
-    for (auto& piece : pieces) {
-        if (piece.grade >= storage.num_grades()) continue;
-        if (piece.chain_index >= storage.num_chains(piece.grade)) continue;
+    for (const auto& [pi, pj] : pairs) {
+        std::size_t ai = sorted_arcs[pi];
+        std::size_t aj = sorted_arcs[pj];
 
-        const auto& cs = storage.get(piece.grade, piece.chain_index);
-        if (!cs.oracle.is_built()) continue;
+        const auto& arc_i_final = submap.arc(ai);
+        const auto& arc_j_final = submap.arc(aj);
+        if (arc_i_final.first_edge == NONE || arc_j_final.first_edge == NONE)
+            continue;
 
-        // Binary search through tree decomposition of Sα.
-        auto cand = search_tree_decomposition(
-            submap, region_idx, polygon, cs,
-            piece.start_vertex, piece.end_vertex,
-            arc_j_final);
-        if (cand.valid) return cand;
+        // Decompose A₁ into O(log γ) dyadic pieces.
+        std::size_t start = std::min(arc_i_final.first_edge, arc_i_final.last_edge);
+        std::size_t end   = std::max(arc_i_final.first_edge, arc_i_final.last_edge) + 1;
+        auto pieces = cut_arc(start, end, polygon);
+
+        // §3.2: For each piece α, retrieve its canonical submap and binary
+        // search through the tree decomposition.
+        for (auto& piece : pieces) {
+            if (piece.grade >= storage.num_grades()) continue;
+            if (piece.chain_index >= storage.num_chains(piece.grade)) continue;
+
+            const auto& cs = storage.get(piece.grade, piece.chain_index);
+            if (!cs.oracle.is_built()) continue;
+
+            // Binary search through tree decomposition of Sα.
+            auto cand = search_tree_decomposition(
+                submap, region_idx, polygon, cs,
+                piece.start_vertex, piece.end_vertex,
+                arc_j_final);
+            if (cand.valid) return cand;
+        }
+
+        // Also try with the roles swapped: search A₂ for a vertex
+        // that sees A₁.  The paper says "apply Lemma 3.2 to every
+        // pair," and the lemma is stated with A₁ containing the
+        // vertex — so we must try both directions.
+        std::size_t start2 = std::min(arc_j_final.first_edge, arc_j_final.last_edge);
+        std::size_t end2   = std::max(arc_j_final.first_edge, arc_j_final.last_edge) + 1;
+        auto pieces2 = cut_arc(start2, end2, polygon);
+
+        for (auto& piece : pieces2) {
+            if (piece.grade >= storage.num_grades()) continue;
+            if (piece.chain_index >= storage.num_chains(piece.grade)) continue;
+
+            const auto& cs = storage.get(piece.grade, piece.chain_index);
+            if (!cs.oracle.is_built()) continue;
+
+            auto cand = search_tree_decomposition(
+                submap, region_idx, polygon, cs,
+                piece.start_vertex, piece.end_vertex,
+                arc_i_final);
+            if (cand.valid) return cand;
+        }
     }
 
     (void)granularity;
@@ -765,8 +735,8 @@ void restore_conformality(Submap& submap,
                 // Skip degenerate self-loop chords (left == right).
                 // These arise when vertex resolution fails to find a
                 // distinct target on the opposite arc.
-                if (cand.right_vertex == NONE ||
-                    cand.left_vertex == cand.right_vertex)
+                if (cand.right_edge == NONE ||
+                    cand.left_edge == cand.right_edge)
                     continue;
 
                 // Split region i by inserting a new chord.
@@ -775,14 +745,14 @@ void restore_conformality(Submap& submap,
 
                 Chord new_chord;
                 new_chord.y = cand.y;
-                new_chord.left_vertex = cand.left_vertex;
-                new_chord.right_vertex = cand.right_vertex;
+                new_chord.left_edge = cand.left_edge;
+                new_chord.right_edge = cand.right_edge;
                 new_chord.region[0] = i;
                 new_chord.region[1] = new_region;
 
                 std::size_t new_ci = submap.add_chord(new_chord);
-                std::fprintf(stderr, "    CONF add chord %zu: lv=%zu rv=%zu r0=%zu r1=%zu\n",
-                             new_ci, new_chord.left_vertex, new_chord.right_vertex, i, new_region);
+                std::fprintf(stderr, "    CONF add chord %zu: le=%zu re=%zu r0=%zu r1=%zu\n",
+                             new_ci, new_chord.left_edge, new_chord.right_edge, i, new_region);
 
                 // Partition arcs between region i and new_region.
                 //
@@ -793,12 +763,12 @@ void restore_conformality(Submap& submap,
                 // vertex as the first boundary piece or the second.
                 //
                 // Topological classification: arcs whose first_edge index
-                // lies between left_vertex and right_vertex (in the
+                // lies between left_edge and right_edge (in the
                 // circular edge ordering) go to one region; the rest go to
                 // the other.
-                std::size_t lv = cand.left_vertex;
-                std::size_t rv = (cand.right_vertex != NONE)
-                                    ? cand.right_vertex : lv;
+                std::size_t lv = cand.left_edge;
+                std::size_t rv = (cand.right_edge != NONE)
+                                    ? cand.right_edge : lv;
 
                 // Normalise so lo ≤ hi in the edge index space.
                 std::size_t lo = std::min(lv, rv);
@@ -897,8 +867,8 @@ void restore_conformality(Submap& submap,
                     }
                     auto& c = submap.chord(ci);
                     // Classify by both endpoints' positions.
-                    std::size_t lv = c.left_vertex;
-                    std::size_t rv = c.right_vertex;
+                    std::size_t lv = c.left_edge;
+                    std::size_t rv = c.right_edge;
                     bool lv_inner = (lv != NONE && lv >= lo && lv < hi);
                     bool rv_inner = (rv != NONE && rv >= lo && rv < hi);
                     if (lv_inner || rv_inner) {

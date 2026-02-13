@@ -39,10 +39,12 @@ struct Chord {
     /// implicit from the arc-structures.
     double y = 0.0;
 
-    /// The two endpoint vertex indices on ∂C (into the polygon's vertex array).
-    /// left_vertex is the left endpoint, right_vertex is the right endpoint.
-    std::size_t left_vertex  = NONE;
-    std::size_t right_vertex = NONE;
+    /// The two endpoint edge indices on ∂C (into the polygon's edge array).
+    /// Each endpoint of the chord lies on the interior (or at a vertex) of
+    /// this edge at height y.  Per §3.1 Remark 1: fusion chords "need not
+    /// be incident upon any vertex of ∂C".
+    std::size_t left_edge  = NONE;
+    std::size_t right_edge = NONE;
 };
 
 } // namespace chazelle

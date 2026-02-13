@@ -72,7 +72,7 @@ struct BoundaryElement {
     Kind kind;
     std::size_t arc_idx;    // valid when kind == ARC
     std::size_t chord_idx;  // valid when kind == EXIT_CHORD
-    std::size_t sort_key;   // first_edge for arcs, left_vertex for chords
+    std::size_t sort_key;   // first_edge for arcs, left_edge for chords
 };
 
 /// Walk the boundary of region R in ∂C order.
@@ -95,7 +95,7 @@ walk_region_boundary(const Submap& submap, std::size_t region_idx) {
                   return a.sort_key < b.sort_key;
               });
 
-    // Collect chords with sort keys (using left_vertex).
+    // Collect chords with sort keys (using left_edge).
     struct ChordEntry { std::size_t chord_idx; std::size_t sort_key; };
     std::vector<ChordEntry> chords;
     for (std::size_t ci : nd.incident_chords) {
@@ -104,7 +104,7 @@ walk_region_boundary(const Submap& submap, std::size_t region_idx) {
         if (c.region[0] == NONE || c.region[1] == NONE) continue;
         if (submap.node(c.region[0]).deleted ||
             submap.node(c.region[1]).deleted) continue;
-        std::size_t sk = (c.left_vertex != NONE) ? c.left_vertex : 0;
+        std::size_t sk = (c.left_edge != NONE) ? c.left_edge : 0;
         chords.push_back({ci, sk});
     }
     std::sort(chords.begin(), chords.end(),
@@ -113,9 +113,9 @@ walk_region_boundary(const Submap& submap, std::size_t region_idx) {
               });
 
     // Merge arcs and chords in ∂C order.
-    // A chord at left_vertex = v goes BEFORE the arc starting at
-    // first_edge = v (since the chord endpoint is vertex v, which
-    // lies between edge v-1 and edge v).
+    // A chord at left_edge = e goes BEFORE the arc starting at
+    // first_edge = e (since the chord endpoint is on edge e, which
+    // lies at the beginning of that edge's range).
     std::vector<BoundaryElement> boundary;
     std::size_t ci = 0;
     for (auto& ae : arcs) {
@@ -157,8 +157,8 @@ walk_region_boundary(const Submap& submap, std::size_t region_idx) {
 //    storage.  Build trivial 1-edge submaps for exit-chord edges
 //    and for single-edge stubs from arc-cutting.
 //
-// 3. Merge all pieces LEFT-TO-RIGHT in R*'s boundary order using
-//    fuse (§3.1) + restore_conformality (§3.2).
+// 3. Merge all pieces via balanced binary tree (Lemma 4.1)
+//    using fuse (§3.1) + restore_conformality (§3.2).
 //    This is where cross-chain visibility chords are discovered.
 //
 // 4. Extract chords from V(R*) whose both endpoints lie on the
@@ -172,7 +172,7 @@ void refine_region(Submap& submap,
                    std::size_t region_idx,
                    GradeStorage& storage,
                    const Polygon& polygon,
-                   [[maybe_unused]] std::size_t current_grade) {
+                   std::size_t current_grade) {
     auto& nd = submap.node(region_idx);
     if (nd.deleted || nd.is_empty()) return;
 
@@ -272,33 +272,32 @@ void refine_region(Submap& submap,
             // §4.2: "we treat the edges a₁b₁ and a₂b₂ as part of
             // the input curve although they are not part of P."
             //
-            // An exit chord connects left_vertex to right_vertex.
+            // An exit chord connects left_edge to right_edge.
             // As a "curve edge" it doesn't correspond to an actual
             // polygon edge, but we model it as a single-arc submap
             // whose arc covers the edge range between the chord's
-            // two endpoint vertices.  This allows the fusion pass
+            // two endpoint edges.  This allows the fusion pass
             // to shoot through it and discover cross-chain chords.
             //
-            // We use the edge index of left_vertex (the edge
-            // starting at that vertex) as the arc's edge index.
+            // We use the edge index of left_edge as the arc's edge index.
             const auto& chord = submap.chord(be.chord_idx);
-            std::size_t lv = chord.left_vertex;
-            std::size_t rv = chord.right_vertex;
-            if (lv == NONE || rv == NONE) continue;
-            if (lv == rv) continue; // null-length chord → skip
+            std::size_t le = chord.left_edge;
+            std::size_t re = chord.right_edge;
+            if (le == NONE || re == NONE) continue;
+            if (le == re) continue; // null-length chord → skip
 
-            // The exit chord spans from lv to rv.  Use the edge at
-            // lv as the representative polygon edge.
-            std::size_t edge_idx = (lv < polygon.num_edges()) ? lv
-                                   : (lv > 0 ? lv - 1 : 0);
+            // The exit chord spans from le to re.  Use le as the
+            // representative polygon edge.
+            std::size_t edge_idx = (le < polygon.num_edges()) ? le
+                                   : (le > 0 ? le - 1 : 0);
 
             auto tp = std::make_unique<TrivialPiece>(
-                make_trivial_submap(edge_idx, lv, rv, polygon));
+                make_trivial_submap(edge_idx, le, re, polygon));
             tp->oracle.rebind_submap(tp->submap);
             MergePiece mp;
             mp.trivial = tp.get();
-            mp.start_vertex = lv;
-            mp.end_vertex   = rv;
+            mp.start_vertex = le;
+            mp.end_vertex   = re;
             trivial_pieces.push_back(std::move(tp));
             merge_pieces.push_back(mp);
         }
@@ -306,65 +305,90 @@ void refine_region(Submap& submap,
 
     if (merge_pieces.size() < 2) return; // nothing to merge
 
-    // ── Step 3: Left-to-right merge in R* boundary order ────────
+    // ── Step 3: Balanced binary tree merge (§4.2 / Lemma 4.1) ───
     //
-    // Per §4.2 / Lemma 4.1: merge submaps pairwise, left to right.
-    // The junction vertex between consecutive pieces is
-    // piece[i].end_vertex == piece[i+1].start_vertex.
+    // Per the paper: "we consider a perfectly balanced binary tree
+    // whose leaves are in bijection with the D_i and we merge
+    // submaps bottom-up by following the tree pattern."
+    //
+    // We merge pairs bottom-up: (0,1), (2,3), … then merge those
+    // results pairwise, etc., until one submap remains.
 
     auto get_submap = [](const MergePiece& mp) -> const Submap& {
         return mp.stored ? mp.stored->submap : mp.trivial->submap;
     };
-    auto get_oracle = [](const MergePiece& mp) -> const RayShootingOracle& {
-        return mp.stored ? mp.stored->oracle : mp.trivial->oracle;
+
+    // §4.2: the pieces have granularity at most 2^⌈β⌈βλ⌉⌉ = fine_gamma.
+    // The merged submap of V(R*) should be fine_gamma-granular conformal.
+    std::size_t coarse_exp = (current_grade + 4) / 5;       // ⌈βλ⌉
+    std::size_t fine_exp   = (coarse_exp + 4) / 5;          // ⌈β⌈βλ⌉⌉
+    std::size_t gamma_merge = std::size_t(1) << fine_exp;   // 2^⌈β⌈βλ⌉⌉
+
+    // Layer 0: copy each piece's submap+oracle into the working set.
+    // Per Lemma 4.1: "trivially reset the granularity of each S_i to γ"
+    // — enforce granularity with gamma_merge on each piece before merging.
+    struct TreeNode {
+        Submap submap;
+        RayShootingOracle oracle;
+        std::size_t start_vertex;
+        std::size_t end_vertex;
     };
-
-    Submap merged_submap = get_submap(merge_pieces[0]);
-    RayShootingOracle merged_oracle;
-
-    std::size_t gamma_merge = compute_granularity(current_grade);
-    merged_oracle.build(merged_submap, polygon, gamma_merge);
-
-    std::size_t merged_end = merge_pieces[0].end_vertex;
-
-    for (std::size_t i = 1; i < merge_pieces.size(); ++i) {
-        const Submap& right_sm = get_submap(merge_pieces[i]);
-        const RayShootingOracle& right_or = get_oracle(merge_pieces[i]);
-
-        std::fprintf(stderr, "    merge step %zu: left(%zu chords, %zu arcs) + right(%zu chords, %zu arcs)\n",
-                     i, merged_submap.num_chords(), merged_submap.num_arcs(),
-                     right_sm.num_chords(), right_sm.num_arcs());
-
-        // Junction vertex = shared vertex between accumulated left
-        // part and piece[i].
-        std::size_t junction = merged_end;
-
-        // Fuse the accumulated submap with the next piece.
-        Submap fused = fuse(merged_submap, merged_oracle,
-                            right_sm, right_or,
-                            polygon, junction);
-
-        std::fprintf(stderr, "    fused: %zu chords, %zu arcs\n",
-                     fused.num_chords(), fused.num_arcs());
-        for (std::size_t ci2 = 0; ci2 < fused.num_chords(); ++ci2) {
-            const auto& fc = fused.chord(ci2);
-            std::fprintf(stderr, "      fchord %zu: lv=%zu rv=%zu null=%d\n",
-                         ci2, fc.left_vertex, fc.right_vertex, (int)fc.is_null_length);
-        }
-
-        // Restore conformality on the fused result.
-        restore_conformality(fused, storage, polygon, gamma_merge);
-
-        // Update accumulated state.
-        merged_submap = std::move(fused);
-        merged_end = merge_pieces[i].end_vertex;
-
-        // Build oracle for the next iteration (if needed).
-        if (i + 1 < merge_pieces.size()) {
-            merged_oracle = RayShootingOracle();
-            merged_oracle.build(merged_submap, polygon, gamma_merge);
-        }
+    std::vector<TreeNode> layer;
+    layer.reserve(merge_pieces.size());
+    for (auto& mp : merge_pieces) {
+        TreeNode tn;
+        tn.submap = get_submap(mp);
+        enforce_granularity(tn.submap, gamma_merge, /*protect_null_length=*/false);
+        tn.oracle.build(tn.submap, polygon, gamma_merge);
+        tn.start_vertex = mp.start_vertex;
+        tn.end_vertex = mp.end_vertex;
+        layer.push_back(std::move(tn));
     }
+
+    // Bottom-up pairwise merge until one node remains.
+    while (layer.size() > 1) {
+        std::vector<TreeNode> next_layer;
+        for (std::size_t i = 0; i + 1 < layer.size(); i += 2) {
+            // Junction vertex between layer[i] and layer[i+1].
+            std::size_t junction = layer[i].end_vertex;
+
+            std::fprintf(stderr, "    merge step: left(%zu chords, %zu arcs) + right(%zu chords, %zu arcs)\n",
+                         layer[i].submap.num_chords(), layer[i].submap.num_arcs(),
+                         layer[i+1].submap.num_chords(), layer[i+1].submap.num_arcs());
+
+            // Ensure oracles are built.
+            if (!layer[i].oracle.is_built())
+                layer[i].oracle.build(layer[i].submap, polygon, gamma_merge);
+            if (!layer[i+1].oracle.is_built())
+                layer[i+1].oracle.build(layer[i+1].submap, polygon, gamma_merge);
+
+            // Fuse the two submaps.
+            Submap fused = fuse(layer[i].submap, layer[i].oracle,
+                                layer[i+1].submap, layer[i+1].oracle,
+                                polygon, junction);
+
+            std::fprintf(stderr, "    fused: %zu chords, %zu arcs\n",
+                         fused.num_chords(), fused.num_arcs());
+
+            // Restore conformality on the fused result.
+            restore_conformality(fused, storage, polygon, gamma_merge);
+
+            TreeNode merged;
+            merged.submap = std::move(fused);
+            merged.start_vertex = layer[i].start_vertex;
+            merged.end_vertex = layer[i+1].end_vertex;
+            // Build oracle for the next level.
+            merged.oracle.build(merged.submap, polygon, gamma_merge);
+            next_layer.push_back(std::move(merged));
+        }
+        // If odd number of nodes, carry the last one up unchanged.
+        if (layer.size() % 2 == 1) {
+            next_layer.push_back(std::move(layer.back()));
+        }
+        layer = std::move(next_layer);
+    }
+
+    Submap& merged_submap = layer[0].submap;
 
     // ── Step 4: Extract chords from V(R*) internal to R ─────────
     //
@@ -374,14 +398,14 @@ void refine_region(Submap& submap,
     // keeping only those both of whose endpoints lie on the arcs
     // (in the double boundary sense) of the region R."
     //
-    // A chord is internal to R if BOTH its left_vertex and
-    // right_vertex edges fall within R's actual arcs (not within
+    // A chord is internal to R if BOTH its left_edge and
+    // right_edge edges fall within R's actual arcs (not within
     // the exit-chord-turned-curve-edges).
 
     struct InternalChord {
         double y;
-        std::size_t left_vertex;
-        std::size_t right_vertex;
+        std::size_t left_edge;
+        std::size_t right_edge;
     };
     std::vector<InternalChord> internal_chords;
 
@@ -390,37 +414,31 @@ void refine_region(Submap& submap,
 
     for (std::size_t ci = 0; ci < merged_submap.num_chords(); ++ci) {
         const auto& chord = merged_submap.chord(ci);
-        if (chord.left_vertex == NONE || chord.right_vertex == NONE)
+        if (chord.left_edge == NONE || chord.right_edge == NONE)
             continue;
 
-        // Skip self-loop chords (lv == rv) that are NOT null-length.
+        // Skip self-loop chords (le == re) that are NOT null-length.
         // These are degenerate artefacts that can't partition arcs.
         // Genuine null-length chords (at y-extrema) are handled
         // separately by add_missing_null_length_chords().
-        if (chord.left_vertex == chord.right_vertex &&
+        if (chord.left_edge == chord.right_edge &&
             !chord.is_null_length)
             continue;
 
-        // Deduplicate by vertex pair.
+        // Deduplicate by edge pair.
         auto key = std::make_pair(
-            std::min(chord.left_vertex, chord.right_vertex),
-            std::max(chord.left_vertex, chord.right_vertex));
+            std::min(chord.left_edge, chord.right_edge),
+            std::max(chord.left_edge, chord.right_edge));
         if (!seen.insert(key).second) continue;
 
         // Check both endpoints lie on R's actual arcs.
-        bool left_in = false;
-        if (chord.left_vertex > 0)
-            left_in = left_in || edge_in_region(chord.left_vertex - 1);
-        left_in = left_in || edge_in_region(chord.left_vertex);
+        bool left_in = edge_in_region(chord.left_edge);
 
-        bool right_in = false;
-        if (chord.right_vertex > 0)
-            right_in = right_in || edge_in_region(chord.right_vertex - 1);
-        right_in = right_in || edge_in_region(chord.right_vertex);
+        bool right_in = edge_in_region(chord.right_edge);
 
         if (left_in && right_in) {
             internal_chords.push_back(
-                {chord.y, chord.left_vertex, chord.right_vertex});
+                {chord.y, chord.left_edge, chord.right_edge});
         }
     }
 
@@ -434,20 +452,20 @@ void refine_region(Submap& submap,
                   return a.y < b.y;
               });
 
-    // Build a set of vertex pairs already present in the parent submap.
+    // Build a set of edge pairs already present in the parent submap.
     // This prevents re-inserting chords that are still active.
     // Chords removed by granularity enforcement are fully invalidated
-    // (left_vertex = NONE) by remove_chord(), so they are naturally
+    // (left_edge = NONE) by remove_chord(), so they are naturally
     // excluded.  This allows them to be rediscovered at finer grades.
     std::set<std::pair<std::size_t, std::size_t>> parent_chords;
     for (std::size_t ci = 0; ci < submap.num_chords(); ++ci) {
         const auto& c = submap.chord(ci);
-        if (c.left_vertex == NONE || c.right_vertex == NONE) continue;
+        if (c.left_edge == NONE || c.right_edge == NONE) continue;
         if (c.region[0] == NONE || c.region[1] == NONE) continue;
         if (submap.node(c.region[0]).deleted ||
             submap.node(c.region[1]).deleted) continue;
-        parent_chords.emplace(std::min(c.left_vertex, c.right_vertex),
-                              std::max(c.left_vertex, c.right_vertex));
+        parent_chords.emplace(std::min(c.left_edge, c.right_edge),
+                              std::max(c.left_edge, c.right_edge));
     }
 
     // Track all sub-regions created from the original region_idx.
@@ -458,14 +476,14 @@ void refine_region(Submap& submap,
     for (auto& ic : internal_chords) {
         // Skip chords that already exist in the parent submap.
         auto key = std::make_pair(
-            std::min(ic.left_vertex, ic.right_vertex),
-            std::max(ic.left_vertex, ic.right_vertex));
+            std::min(ic.left_edge, ic.right_edge),
+            std::max(ic.left_edge, ic.right_edge));
         if (parent_chords.count(key)) continue;
 
-        std::size_t lv_edge = (ic.left_vertex > 0) ? ic.left_vertex - 1 : 0;
+        std::size_t le_edge = ic.left_edge;
 
         // Find which sub-region currently holds the arc containing
-        // this chord's left vertex edge.
+        // this chord's left endpoint edge.
         std::size_t target = NONE;
         for (std::size_t sr : live_subregions) {
             for (std::size_t ai : submap.node(sr).arcs) {
@@ -473,7 +491,7 @@ void refine_region(Submap& submap,
                 if (a.first_edge == NONE) continue;
                 std::size_t a_lo = std::min(a.first_edge, a.last_edge);
                 std::size_t a_hi = std::max(a.first_edge, a.last_edge);
-                if (lv_edge >= a_lo && lv_edge <= a_hi) {
+                if (le_edge >= a_lo && le_edge <= a_hi) {
                     target = sr;
                     break;
                 }
@@ -486,8 +504,8 @@ void refine_region(Submap& submap,
 
         Chord new_chord;
         new_chord.y = ic.y;
-        new_chord.left_vertex = ic.left_vertex;
-        new_chord.right_vertex = ic.right_vertex;
+        new_chord.left_edge = ic.left_edge;
+        new_chord.right_edge = ic.right_edge;
         new_chord.region[0] = target;
         new_chord.region[1] = new_region;
 
@@ -495,22 +513,22 @@ void refine_region(Submap& submap,
         parent_chords.insert(key);
 
         // Null-length chords create an empty region; no arc partition.
-        if (ic.left_vertex == ic.right_vertex) {
-            std::fprintf(stderr, "    Step5 null-chord lv=%zu: skip partition\n", ic.left_vertex);
+        if (ic.left_edge == ic.right_edge) {
+            std::fprintf(stderr, "    Step5 null-chord le=%zu: skip partition\n", ic.left_edge);
             submap.recompute_weight(target);
             submap.recompute_weight(new_region);
             continue;
         }
 
         // Partition arcs between target and new_region.
-        std::size_t split_lo = (ic.left_vertex != NONE)
-                                   ? ic.left_vertex : 0;
-        std::size_t split_hi = (ic.right_vertex != NONE)
-                                   ? ic.right_vertex : split_lo;
+        std::size_t split_lo = (ic.left_edge != NONE)
+                                   ? ic.left_edge : 0;
+        std::size_t split_hi = (ic.right_edge != NONE)
+                                   ? ic.right_edge : split_lo;
         if (split_lo > split_hi) std::swap(split_lo, split_hi);
 
-        std::fprintf(stderr, "    Step5 partition lv=%zu rv=%zu split=[%zu,%zu) target=%zu (%zu arcs)\n",
-                     ic.left_vertex, ic.right_vertex, split_lo, split_hi, target,
+        std::fprintf(stderr, "    Step5 partition le=%zu re=%zu split=[%zu,%zu) target=%zu (%zu arcs)\n",
+                     ic.left_edge, ic.right_edge, split_lo, split_hi, target,
                      submap.node(target).arcs.size());
 
         auto& arcs = submap.node(target).arcs;
@@ -572,7 +590,7 @@ void refine_region(Submap& submap,
                 continue;
             }
             auto& c = submap.chord(ci);
-            std::size_t cv = c.left_vertex;
+            std::size_t cv = c.left_edge;
             if (cv != NONE && cv >= split_lo && cv < split_hi) {
                 move_chords.push_back(ci);
             } else {
@@ -653,8 +671,8 @@ void process_grade(Submap& submap,
                          r, grade, post_chords - pre_chords);
             for (std::size_t ci = pre_chords; ci < post_chords; ++ci) {
                 const auto& c = submap.chord(ci);
-                std::fprintf(stderr, "    new chord %zu: lv=%zu rv=%zu r0=%zu r1=%zu null=%d\n",
-                             ci, c.left_vertex, c.right_vertex,
+                std::fprintf(stderr, "    new chord %zu: le=%zu re=%zu r0=%zu r1=%zu null=%d\n",
+                             ci, c.left_edge, c.right_edge,
                              c.region[0], c.region[1], (int)c.is_null_length);
             }
         }
@@ -670,8 +688,8 @@ void process_grade(Submap& submap,
                      grade, post_conf - pre_conf);
         for (std::size_t ci = pre_conf; ci < post_conf; ++ci) {
             const auto& c = submap.chord(ci);
-            std::fprintf(stderr, "    conf chord %zu: lv=%zu rv=%zu r0=%zu r1=%zu null=%d\n",
-                         ci, c.left_vertex, c.right_vertex,
+            std::fprintf(stderr, "    conf chord %zu: le=%zu re=%zu r0=%zu r1=%zu null=%d\n",
+                         ci, c.left_edge, c.right_edge,
                          c.region[0], c.region[1], (int)c.is_null_length);
         }
     }
@@ -714,14 +732,14 @@ void add_missing_null_length_chords(Submap& submap,
     for (std::size_t ci = 0; ci < submap.num_chords(); ++ci) {
         const auto& c = submap.chord(ci);
         if (!c.is_null_length) continue;
-        if (c.left_vertex == NONE || c.left_vertex >= has_null_chord.size())
+        if (c.left_edge == NONE || c.left_edge >= has_null_chord.size())
             continue;
         // Check the chord is properly connected.
         if (c.region[0] == c.region[1]) continue;
         if (c.region[0] == NONE || c.region[1] == NONE) continue;
         if (submap.node(c.region[0]).deleted ||
             submap.node(c.region[1]).deleted) continue;
-        has_null_chord[c.left_vertex] = true;
+        has_null_chord[c.left_edge] = true;
     }
 
     // For each y-extremum vertex without a null-length chord, add one.
@@ -756,8 +774,8 @@ void add_missing_null_length_chords(Submap& submap,
 
         Chord nlc;
         nlc.y = polygon.vertex(v).y;
-        nlc.left_vertex = v;
-        nlc.right_vertex = v;
+        nlc.left_edge = v;
+        nlc.right_edge = v;
         nlc.is_null_length = true;
         nlc.region[0] = target_region;
         nlc.region[1] = empty_region;
@@ -795,17 +813,27 @@ Submap down_phase(const Polygon& polygon, GradeStorage& storage) {
     }
     for (std::size_t ci = 0; ci < current.num_chords(); ++ci) {
         const auto& c = current.chord(ci);
-        std::fprintf(stderr, "  chord %zu: y=%.3f lv=%zu rv=%zu r0=%zu r1=%zu null=%d\n",
-                     ci, c.y, c.left_vertex, c.right_vertex,
+        std::fprintf(stderr, "  chord %zu: y=%.3f le=%zu re=%zu r0=%zu r1=%zu null=%d\n",
+                     ci, c.y, c.left_edge, c.right_edge,
                      c.region[0], c.region[1], (int)c.is_null_length);
     }
 
-    // Process grades p, p−1, …, 1.
-    for (std::size_t lambda = p; lambda >= 1; --lambda) {
+    // Process grades following the paper's recursive structure (Lemma 4.2):
+    //   λ → ⌈βλ⌉ → ⌈β⌈βλ⌉⌉ → … → constant.
+    // At each step, the submap is 2^⌈βλ⌉-granular; after refinement
+    // it becomes 2^⌈β⌈βλ⌉⌉-granular, and the next λ' = ⌈βλ⌉.
+    //
+    // With β = 1/5 the sequence is e.g. p=20 → 4 → 1.
+    // The final step (λ reaching a small constant) produces V(P).
+    std::size_t lambda = p;
+    while (lambda >= 1) {
         std::fprintf(stderr, "=== process_grade lambda=%zu (p=%zu) ===\n", lambda, p);
-        bool is_final = (lambda == 1);
+        std::size_t next_lambda = (lambda + 4) / 5;  // ⌈βλ⌉ = ⌈λ/5⌉
+        bool is_final = (next_lambda == 0 || next_lambda >= lambda);
         process_grade(current, storage, polygon, lambda, is_final);
         std::fprintf(stderr, "=== process_grade lambda=%zu done ===\n", lambda);
+        if (is_final) break;
+        lambda = next_lambda;
     }
 
     // Add null-length chords at every y-extremum that doesn't
@@ -819,8 +847,8 @@ Submap down_phase(const Polygon& polygon, GradeStorage& storage) {
                  current.num_nodes(), current.num_chords(), current.num_arcs());
     for (std::size_t ci = 0; ci < current.num_chords(); ++ci) {
         const auto& c = current.chord(ci);
-        std::fprintf(stderr, "  chord %zu: y=%.3f lv=%zu rv=%zu r0=%zu r1=%zu null=%d\n",
-                     ci, c.y, c.left_vertex, c.right_vertex,
+        std::fprintf(stderr, "  chord %zu: y=%.3f le=%zu re=%zu r0=%zu r1=%zu null=%d\n",
+                     ci, c.y, c.left_edge, c.right_edge,
                      c.region[0], c.region[1], (int)c.is_null_length);
     }
 

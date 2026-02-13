@@ -29,14 +29,26 @@ CanonicalSubmap merge_submaps(std::size_t grade,
 
     std::size_t gamma = compute_granularity(grade);
 
-    // Rebuild the oracles for the two children so they point to the
-    // submaps' current addresses.  (Moving a CanonicalSubmap into
-    // storage invalidates the oracle's internal pointer.)
-    std::size_t gamma1 = compute_granularity(prev_grade);
-    if (!s1.oracle.is_built()) s1.oracle.build(s1.submap, polygon, gamma1);
-    else s1.oracle.rebind_submap(s1.submap);
-    if (!s2.oracle.is_built()) s2.oracle.build(s2.submap, polygon, gamma1);
-    else s2.oracle.rebind_submap(s2.submap);
+    // §4.1 / Lemma 4.1: "we can trivially reset the granularity of
+    // each S_i to γ (Section 3.3)."
+    // The children have granularity 2^⌈β(λ-1)⌉; the target is
+    // γ = 2^⌈βλ⌉ ≥ that.  Resetting to the coarser γ may remove
+    // chords that are now redundant at the new granularity.
+    // We work on copies so the stored originals remain intact for
+    // the down-phase's arc-cutting lookups.
+    Submap sub1 = s1.submap;
+    Submap sub2 = s2.submap;
+    // Propagate chain vertex range so merge_arcs_at_vertex respects
+    // the §2.2 C-vertex guard during granularity enforcement.
+    sub1.set_chain_info(s1.start_vertex, s1.end_vertex, &polygon);
+    sub2.set_chain_info(s2.start_vertex, s2.end_vertex, &polygon);
+    enforce_granularity(sub1, gamma, /*protect_null_length=*/false);
+    enforce_granularity(sub2, gamma, /*protect_null_length=*/false);
+
+    // Build oracles on the (possibly reduced) copies.
+    RayShootingOracle ora1, ora2;
+    ora1.build(sub1, polygon, gamma);
+    ora2.build(sub2, polygon, gamma);
 
     // The junction vertex is the shared vertex between C₁ and C₂.
     // C₁ = chain (2j) at grade λ-1, C₂ = chain (2j+1) at grade λ-1.
@@ -44,7 +56,7 @@ CanonicalSubmap merge_submaps(std::size_t grade,
     std::size_t junction_vertex = s1.end_vertex;
 
     // Stage 1: Fusion.
-    Submap fused = fuse(s1.submap, s1.oracle, s2.submap, s2.oracle,
+    Submap fused = fuse(sub1, ora1, sub2, ora2,
                         polygon, junction_vertex);
 
     // Stage 2: Conformality restoration.
@@ -54,6 +66,12 @@ CanonicalSubmap merge_submaps(std::size_t grade,
     // Protect null-length chords: they mark y-extrema and must be
     // preserved for the complete visibility map V(P).
     enforce_granularity(fused, gamma, /*protect_null_length=*/true);
+
+    // §2.3: Put the submap in normal form.  The arc-sequence table may
+    // have been left unsorted by split_arc_at_vertex (conformality) and
+    // merge_arcs_at_vertex (granularity).  Sorting restores condition
+    // (iii) so that double_identify's O(log m) binary search is sound.
+    fused.normalize();
 
     // Compute chain vertex range.
     auto range = polygon.chain_range(grade, chain_index);
@@ -65,6 +83,10 @@ CanonicalSubmap merge_submaps(std::size_t grade,
     result.chain_index = chain_index;
     result.start_vertex = range.start_vertex;
     result.end_vertex = range.end_vertex;
+
+    // Store chain vertex range and polygon pointer for §2.2 / §2.4.
+    result.submap.set_chain_info(range.start_vertex, range.end_vertex,
+                                 &polygon);
 
     // Build ray-shooting oracle for the new canonical submap.
     result.oracle.build(result.submap, polygon, gamma);
