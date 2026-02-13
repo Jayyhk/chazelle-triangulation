@@ -80,6 +80,32 @@ RayHit shoot_in_region(const Submap& submap,
     for (std::size_t ai : nd.arcs) {
         const auto& a = submap.arc(ai);
         if (a.first_edge == NONE) continue;
+
+        // §4.2: Virtual arcs represent tilted exit-chord edges.
+        if (a.is_virtual()) {
+            double vy = a.virtual_y;
+            constexpr double TILT = 1e-8;
+            double vy_lo = vy - TILT;
+            double vy_hi = vy + TILT;
+            if (y < vy_lo - 1e-12 || y > vy_hi + 1e-12) continue;
+            double x_left = (a.first_edge < polygon.num_edges())
+                ? polygon.edge_x_at_y(a.first_edge, vy) : 0.0;
+            double x_right = (a.last_edge < polygon.num_edges())
+                ? polygon.edge_x_at_y(a.last_edge, vy) : 0.0;
+            double t = (std::abs(vy_hi - vy_lo) > 1e-15)
+                ? (y - vy_lo) / (vy_hi - vy_lo) : 0.5;
+            double x = x_left + t * (x_right - x_left);
+            double dist = shoot_right ? (x - origin_x)
+                                      : (origin_x - x);
+            if (dist > -1e-12 && dist < best_dist) {
+                best_dist = dist;
+                best.type = RayHit::Type::ARC;
+                best.arc_idx = ai;
+                best.hit_x = x;
+            }
+            continue;
+        }
+
         std::size_t lo = std::min(a.first_edge, a.last_edge);
         std::size_t hi = std::max(a.first_edge, a.last_edge);
         for (std::size_t ei = lo; ei <= hi; ++ei) {
@@ -144,7 +170,9 @@ int lemma24_test(
     // If a is on α, shoot from a to see if it hits A₂.
     if (a_on_alpha) {
         // Compute origin_x on the polygon edge ea at centroid chord y.
-        double pa_y = polygon.vertex(ea).y;
+        // The chord endpoint a lies on edge ea at height centroid_chord.y,
+        // NOT at the vertex's own y-coordinate.
+        double pa_y = centroid_chord.y;
         double origin_x = polygon.edge_x_at_y(ea, pa_y);
         // Shoot in both directions from a in the parent submap's region.
         for (bool dir : {true, false}) {
@@ -192,7 +220,9 @@ int lemma24_test(
     // If b is on α, shoot from b to see if it hits A₂.
     if (b_on_alpha) {
         // Compute origin_x on the polygon edge eb at centroid chord y.
-        double pb_y = polygon.vertex(eb).y;
+        // The chord endpoint b lies on edge eb at height centroid_chord.y,
+        // NOT at the vertex's own y-coordinate.
+        double pb_y = centroid_chord.y;
         double origin_x = polygon.edge_x_at_y(eb, pb_y);
         for (bool dir : {true, false}) {
             auto hit = shoot_in_region(parent_submap, region_idx, polygon,

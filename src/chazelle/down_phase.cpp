@@ -18,9 +18,9 @@ namespace {
 // ────────────────────────────────────────────────────────────────
 // Helper: build a trivial submap for a single polygon edge.
 //
-// This is used both for single-edge stubs from arc-cutting AND for
-// exit chords treated as curve edges (§4.2).  The resulting submap
-// has 1 region, 0 chords, and 1 arc spanning the single edge.
+// This is used for single-edge stubs from arc-cutting.
+// The resulting submap has 1 region, 0 chords, and 1 arc
+// spanning the single edge.
 // ────────────────────────────────────────────────────────────────
 struct TrivialPiece {
     Submap submap;
@@ -51,6 +51,79 @@ TrivialPiece make_trivial_submap(std::size_t edge_idx,
     tp.submap.recompute_weight(r0);
     tp.submap.start_arc = ai;
     tp.submap.end_arc   = ai;
+
+    // Build a trivial oracle.
+    tp.oracle.build(tp.submap, polygon, 2);
+    return tp;
+}
+
+// ────────────────────────────────────────────────────────────────
+// Build a trivial submap for an exit chord treated as a 3-edge
+// polygonal curve (§4.2).
+//
+// Per Chazelle §4.2: "Let T₁ (resp. T₂) be canonical submaps
+// for the 3-edge polygonal curve a₁'a₁b₁b₁' (resp. a₂'a₂b₂b₂')."
+// The three edges are:
+//   1. a₁'a₁ — stub from nearest ∂C vertex to left chord endpoint
+//   2. a₁b₁  — the exit chord itself (tilted symbolically)
+//   3. b₁b₁' — stub from right chord endpoint to nearest ∂C vertex
+//
+// The middle arc is virtual: its virtual_y records the chord
+// height so that ray-shooting computes intersections with the
+// tilted segment rather than polygon edges.
+// ────────────────────────────────────────────────────────────────
+TrivialPiece make_exit_chord_submap(std::size_t left_edge,
+                                    std::size_t right_edge,
+                                    double chord_y,
+                                    const Polygon& polygon) {
+    TrivialPiece tp;
+    tp.start_vertex = left_edge;
+    tp.end_vertex   = right_edge;
+
+    // Single region.
+    std::size_t r0 = tp.submap.add_node();
+
+    // Arc 1: left stub  a₁'a₁  (portion of polygon edge left_edge).
+    if (left_edge < polygon.num_edges()) {
+        ArcStructure stub_left;
+        stub_left.first_edge  = left_edge;
+        stub_left.last_edge   = left_edge;
+        stub_left.first_side  = Side::LEFT;
+        stub_left.last_side   = Side::LEFT;
+        stub_left.region_node = r0;
+        stub_left.edge_count  = 1;
+        std::size_t ai0 = tp.submap.add_arc(stub_left);
+        tp.submap.node(r0).arcs.push_back(ai0);
+    }
+
+    // Arc 2: tilted chord  a₁b₁  (virtual edge at chord_y).
+    ArcStructure chord_arc;
+    chord_arc.first_edge  = left_edge;
+    chord_arc.last_edge   = right_edge;
+    chord_arc.first_side  = Side::LEFT;
+    chord_arc.last_side   = Side::RIGHT;
+    chord_arc.region_node = r0;
+    chord_arc.edge_count  = 1;
+    chord_arc.virtual_y   = chord_y;   // marks this as a virtual arc
+    std::size_t ai1 = tp.submap.add_arc(chord_arc);
+    tp.submap.node(r0).arcs.push_back(ai1);
+
+    // Arc 3: right stub  b₁b₁'  (portion of polygon edge right_edge).
+    if (right_edge < polygon.num_edges() && right_edge != left_edge) {
+        ArcStructure stub_right;
+        stub_right.first_edge  = right_edge;
+        stub_right.last_edge   = right_edge;
+        stub_right.first_side  = Side::RIGHT;
+        stub_right.last_side   = Side::RIGHT;
+        stub_right.region_node = r0;
+        stub_right.edge_count  = 1;
+        std::size_t ai2 = tp.submap.add_arc(stub_right);
+        tp.submap.node(r0).arcs.push_back(ai2);
+    }
+
+    tp.submap.recompute_weight(r0);
+    tp.submap.start_arc = 0;
+    tp.submap.end_arc   = tp.submap.num_arcs() - 1;
 
     // Build a trivial oracle.
     tp.oracle.build(tp.submap, polygon, 2);
@@ -267,32 +340,28 @@ void refine_region(Submap& submap,
                 }
             }
         } else {
-            // EXIT_CHORD → treat as a curve edge.
+            // EXIT_CHORD → treat as a 3-edge curve (§4.2).
             //
             // §4.2: "we treat the edges a₁b₁ and a₂b₂ as part of
             // the input curve although they are not part of P."
             //
-            // An exit chord connects left_edge to right_edge.
-            // As a "curve edge" it doesn't correspond to an actual
-            // polygon edge, but we model it as a single-arc submap
-            // whose arc covers the edge range between the chord's
-            // two endpoint edges.  This allows the fusion pass
-            // to shoot through it and discover cross-chain chords.
+            // "Let T₁ (resp. T₂) be canonical submaps for the
+            // 3-edge polygonal curve a₁'a₁b₁b₁' (resp. a₂'a₂b₂b₂').
+            // ... T₁ and T₂ are computed directly (tilting the edges
+            // a₁b₁ and a₂b₂ symbolically to keep the merging
+            // algorithm from complaining later)."
             //
-            // We use the edge index of left_edge as the arc's edge index.
+            // The exit chord connects left_edge to right_edge at
+            // height y.  We build a 3-arc submap: left stub, tilted
+            // chord (virtual arc), right stub.
             const auto& chord = submap.chord(be.chord_idx);
             std::size_t le = chord.left_edge;
             std::size_t re = chord.right_edge;
             if (le == NONE || re == NONE) continue;
             if (le == re) continue; // null-length chord → skip
 
-            // The exit chord spans from le to re.  Use le as the
-            // representative polygon edge.
-            std::size_t edge_idx = (le < polygon.num_edges()) ? le
-                                   : (le > 0 ? le - 1 : 0);
-
             auto tp = std::make_unique<TrivialPiece>(
-                make_trivial_submap(edge_idx, le, re, polygon));
+                make_exit_chord_submap(le, re, chord.y, polygon));
             tp->oracle.rebind_submap(tp->submap);
             MergePiece mp;
             mp.trivial = tp.get();
@@ -338,6 +407,7 @@ void refine_region(Submap& submap,
     for (auto& mp : merge_pieces) {
         TreeNode tn;
         tn.submap = get_submap(mp);
+        tn.submap.set_chain_info(mp.start_vertex, mp.end_vertex, &polygon);
         enforce_granularity(tn.submap, gamma_merge, /*protect_null_length=*/false);
         tn.oracle.build(tn.submap, polygon, gamma_merge);
         tn.start_vertex = mp.start_vertex;
@@ -377,6 +447,11 @@ void refine_region(Submap& submap,
             merged.submap = std::move(fused);
             merged.start_vertex = layer[i].start_vertex;
             merged.end_vertex = layer[i+1].end_vertex;
+            // §2.3: set chain info and normalize for correct
+            // double_identify and C-vertex guards.
+            merged.submap.set_chain_info(merged.start_vertex,
+                                         merged.end_vertex, &polygon);
+            merged.submap.normalize();
             // Build oracle for the next level.
             merged.oracle.build(merged.submap, polygon, gamma_merge);
             next_layer.push_back(std::move(merged));
@@ -709,6 +784,12 @@ void process_grade(Submap& submap,
         enforce_granularity(submap, fine_gamma, true, original_chord_count);
         std::fprintf(stderr, "  >> enforce_granularity done (grade=%zu)\n", grade);
     }
+
+    // §2.3: Restore normal form.  Refinement, conformality restoration,
+    // and granularity enforcement may have appended arcs out of order.
+    // Normalizing restores the sorted arc-sequence table required for
+    // correct double_identify at the next grade.
+    submap.normalize();
 }
 
 /// Ensure the complete visibility map V(P) has null-length chords at

@@ -579,6 +579,32 @@ RayHit RayShootingOracle::local_shoot(std::size_t region_idx,
         const auto& a = submap_->arc(ai);
         if (a.first_edge == NONE) continue;
 
+        // §4.2: Virtual arcs represent tilted exit-chord edges.
+        if (a.is_virtual()) {
+            double vy = a.virtual_y;
+            constexpr double TILT = 1e-8;
+            double vy_lo = vy - TILT;
+            double vy_hi = vy + TILT;
+            if (y < vy_lo - 1e-12 || y > vy_hi + 1e-12) continue;
+            double x_left = (a.first_edge < polygon_->num_edges())
+                ? polygon_->edge_x_at_y(a.first_edge, vy) : 0.0;
+            double x_right = (a.last_edge < polygon_->num_edges())
+                ? polygon_->edge_x_at_y(a.last_edge, vy) : 0.0;
+            double t = (std::abs(vy_hi - vy_lo) > 1e-15)
+                ? (y - vy_lo) / (vy_hi - vy_lo) : 0.5;
+            double x = x_left + t * (x_right - x_left);
+            double dist = shoot_right ? (x - origin_x)
+                                      : (origin_x - x);
+            if (dist > -1e-12 && dist < best_dist) {
+                best_dist = dist;
+                best.type = RayHit::Type::ARC;
+                best.arc_idx = ai;
+                best.hit_x = x;
+                best.hit_edge = a.first_edge;
+            }
+            continue;
+        }
+
         // Walk the polygon edges in this arc's range and find the
         // x-coordinate where each edge crosses y.
         std::size_t lo = std::min(a.first_edge, a.last_edge);

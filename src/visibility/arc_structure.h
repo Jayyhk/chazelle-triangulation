@@ -17,6 +17,7 @@
 #include "common.h"
 #include "geometry/point.h"   // for Side enum
 
+#include <cmath>
 #include <cstddef>
 
 namespace chazelle {
@@ -38,6 +39,23 @@ struct ArcStructure {
     /// Number of non-null-length polygon edges composing this arc.
     /// Used for weight computation.
     std::size_t edge_count = 0;
+
+    /// Virtual-edge y-coordinate (§4.2).
+    ///
+    /// When finite (not NaN), this arc represents a "tilted" exit-chord
+    /// edge rather than a real polygon edge.  The chord is a nearly-
+    /// horizontal segment at height virtual_y connecting a point on
+    /// polygon edge first_edge to a point on polygon edge last_edge.
+    /// During ray-shooting, intersection is computed with this tilted
+    /// segment instead of with the polygon edges.
+    ///
+    /// Per Chazelle §4.2: "tilting the edges a₁b₁ and a₂b₂
+    /// symbolically to keep the merging algorithm from complaining
+    /// later."
+    double virtual_y = NAN;
+
+    /// Is this a virtual (exit-chord-turned-edge) arc?
+    bool is_virtual() const { return !std::isnan(virtual_y); }
 
     /// Is this a null-length (zero-length) arc?
     bool is_null() const { return first_edge == last_edge && edge_count == 0; }

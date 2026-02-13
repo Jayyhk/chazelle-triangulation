@@ -437,21 +437,58 @@ void Submap::normalize() {
 
     const std::size_t n = arc_sequence_.size();
 
-    // Build sort permutation: sorted indices by position along ∂C.
-    // Sort key = min(first_edge, last_edge).  Invalidated arcs
-    // (first_edge == NONE) are pushed to the end.
+    // Build sort permutation: arcs ordered by clockwise ∂C traversal.
+    //
+    // §2.3 condition (iii): "The arc-structures are stored in a table
+    // (the arc-sequence table) in the order corresponding to a
+    // canonical traversal of the double boundary ∂C."
+    //
+    // Clockwise traversal of ∂C visits:
+    //   1. LEFT side — ascending edge indices from c_start to c_end
+    //   2. RIGHT side — descending edge indices from c_end to c_start
+    //
+    // This produces two monotone subsequences required by double_identify
+    // (§2.4) for O(log m) binary search.
+    //
+    // Double-backing arcs (first_side != last_side) straddle the
+    // turn-around point at a C endpoint; they appear at the boundary
+    // between the two subsequences.  We classify by first_side so
+    // they sort with the LEFT group (their first portion is LEFT).
+    //
+    // Sort key: (side_group, edge_key), where
+    //   side_group 0 = LEFT (or double-backing starting LEFT)
+    //   side_group 1 = RIGHT
+    //   side_group 2 = invalidated (first_edge == NONE)
+    //
+    // Within group 0: ascending by min(first_edge, last_edge)
+    // Within group 1: descending by min(first_edge, last_edge)
     std::vector<std::size_t> perm(n);
     for (std::size_t i = 0; i < n; ++i) perm[i] = i;
     std::sort(perm.begin(), perm.end(), [&](std::size_t a, std::size_t b) {
         const auto& aa = arc_sequence_[a];
         const auto& bb = arc_sequence_[b];
-        std::size_t ka = (aa.first_edge != NONE)
-            ? std::min(aa.first_edge, aa.last_edge)
-            : std::numeric_limits<std::size_t>::max();
-        std::size_t kb = (bb.first_edge != NONE)
-            ? std::min(bb.first_edge, bb.last_edge)
-            : std::numeric_limits<std::size_t>::max();
-        return ka < kb;
+
+        // Invalidated arcs go to the end.
+        bool a_inv = (aa.first_edge == NONE);
+        bool b_inv = (bb.first_edge == NONE);
+        if (a_inv != b_inv) return b_inv; // non-invalid first
+        if (a_inv && b_inv) return false;  // both invalid, stable
+
+        // Determine side group: 0 = LEFT, 1 = RIGHT.
+        int ga = (aa.first_side == Side::LEFT) ? 0 : 1;
+        int gb = (bb.first_side == Side::LEFT) ? 0 : 1;
+        if (ga != gb) return ga < gb; // LEFT before RIGHT
+
+        std::size_t ka = std::min(aa.first_edge, aa.last_edge);
+        std::size_t kb = std::min(bb.first_edge, bb.last_edge);
+
+        if (ga == 0) {
+            // LEFT group: ascending edge order.
+            return ka < kb;
+        } else {
+            // RIGHT group: descending edge order.
+            return ka > kb;
+        }
     });
 
     // Build the inverse permutation: inv[old_index] = new_index.
@@ -484,12 +521,48 @@ void Submap::normalize() {
         }
     }
 
-    // Update start_arc / end_arc.
-    if (start_arc != NONE && start_arc < n) {
-        start_arc = inv[start_arc];
-    }
-    if (end_arc != NONE && end_arc < n) {
-        end_arc = inv[end_arc];
+    // Recompute start_arc / end_arc from the sorted table.
+    //
+    // §2.3 (iii): "the endpoints of C are identified by appropriate
+    // pointers into the input table as well as by pointers to the
+    // arc-structures whose corresponding arcs pass through the
+    // endpoints."
+    //
+    // §2.4 uses start_arc and end_arc to break the circular arc
+    // sequence into two linear subsequences for binary search:
+    //   Subseq 1 (LEFT, ascending):  [start_arc .. end_arc]
+    //   Subseq 2 (RIGHT, descending): [end_arc+1 .. start_arc-1] wrapping
+    //
+    // After sorting: LEFT arcs are at indices [0, split), RIGHT at
+    // [split, valid_count).
+    //
+    // start_arc = 0         (first LEFT arc, at C's start endpoint)
+    // end_arc   = split - 1 (last LEFT arc, at C's end endpoint)
+    //
+    // If all arcs are LEFT (no RIGHT arcs), end_arc = last valid arc.
+    // If all arcs are RIGHT, start_arc = 0 and end_arc = last valid
+    // (degenerate; the single subsequence is the only one used).
+    {
+        std::size_t valid_count = arc_sequence_.size();
+        // Find where RIGHT arcs begin.
+        std::size_t split = valid_count; // default: all are LEFT
+        for (std::size_t i = 0; i < valid_count; ++i) {
+            if (arc_sequence_[i].first_edge == NONE) {
+                split = i;
+                break;
+            }
+            if (arc_sequence_[i].first_side == Side::RIGHT) {
+                split = i;
+                break;
+            }
+        }
+        if (valid_count > 0 && arc_sequence_[0].first_edge != NONE) {
+            start_arc = 0;
+            // end_arc = last LEFT arc (just before the RIGHT group).
+            // If split == 0 (all RIGHT), end_arc = last valid arc.
+            end_arc = (split > 0) ? split - 1
+                      : (valid_count > 0 ? valid_count - 1 : 0);
+        }
     }
 
     // Strip invalidated arcs (those with first_edge == NONE) from the

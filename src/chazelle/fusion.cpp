@@ -128,6 +128,43 @@ RayHit local_shoot_in_region(const Submap& submap,
     for (std::size_t ai : nd.arcs) {
         const auto& a = submap.arc(ai);
         if (a.first_edge == NONE) continue;
+
+        // §4.2: Virtual arcs represent tilted exit-chord edges.
+        // Compute intersection with the tilted segment instead of
+        // polygon edges.
+        if (a.is_virtual()) {
+            // The tilted chord connects a point on edge first_edge to
+            // a point on edge last_edge, at height virtual_y with a
+            // tiny tilt.  Model as a segment from
+            //   (x_left, virtual_y - ε) to (x_right, virtual_y + ε)
+            // where ε is infinitesimal (symbolic perturbation).
+            //
+            // For numerical purposes, use a small tilt: the segment
+            // spans from y_lo = virtual_y - 1e-8 to y_hi = virtual_y + 1e-8.
+            double vy = a.virtual_y;
+            constexpr double TILT = 1e-8;
+            double y_lo = vy - TILT;
+            double y_hi = vy + TILT;
+            if (y < y_lo - 1e-12 || y > y_hi + 1e-12) continue;
+            // Compute x at the two endpoints of the tilted chord.
+            double x_left = (a.first_edge < polygon.num_edges())
+                ? polygon.edge_x_at_y(a.first_edge, vy) : 0.0;
+            double x_right = (a.last_edge < polygon.num_edges())
+                ? polygon.edge_x_at_y(a.last_edge, vy) : 0.0;
+            // Linearly interpolate x along the tilted segment.
+            double t = (std::abs(y_hi - y_lo) > 1e-15)
+                ? (y - y_lo) / (y_hi - y_lo) : 0.5;
+            double x = x_left + t * (x_right - x_left);
+            double dist = shoot_right ? (x - origin_x) : (origin_x - x);
+            if (dist > -1e-12 && dist < best_dist) {
+                best_dist = dist;
+                best.type = RayHit::Type::ARC;
+                best.arc_idx = ai;
+                best.hit_x = x;
+            }
+            continue;
+        }
+
         std::size_t alo = std::min(a.first_edge, a.last_edge);
         std::size_t ahi = std::max(a.first_edge, a.last_edge);
         for (std::size_t ei = alo; ei <= ahi && ei < polygon.num_edges(); ++ei) {
@@ -515,7 +552,6 @@ void fuse_pass(const Submap& src,
                     continue;
 
                 double y_e = c.y;
-                double ox_e = polygon.edge_x_at_y(endpt_e, y_e);
 
                 for (bool dir : {true, false}) {
                     RayHit h = src_oracle.shoot(endpt_e, y_e, Side::LEFT, dir);
@@ -584,14 +620,26 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         std::size_t sort_key;
     };
 
-    std::set<std::pair<std::size_t, std::size_t>> seen;
+    // §3.1: Chords are uniquely identified by (left_edge, right_edge, y).
+    // Two chords on the same edge pair but at different y-coordinates
+    // are distinct visibility relations and must both be kept.
+    struct ChordKey {
+        std::size_t lo, hi;
+        double y;
+        bool operator<(const ChordKey& o) const {
+            if (lo != o.lo) return lo < o.lo;
+            if (hi != o.hi) return hi < o.hi;
+            return y < o.y;
+        }
+    };
+    std::set<ChordKey> seen;
     std::vector<ChordRecord> all_chords;
 
     auto add_chord_rec = [&](double y, std::size_t le, std::size_t re,
                              bool is_null) {
         if (le == NONE || re == NONE) return;
         if (le == re && !is_null) return;
-        auto key = std::make_pair(std::min(le, re), std::max(le, re));
+        ChordKey key{std::min(le, re), std::max(le, re), y};
         if (!seen.insert(key).second) return;
         std::size_t sk = std::min(le, re);
         all_chords.push_back({y, le, re, is_null, sk});
@@ -627,18 +675,69 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     };
     std::vector<ArcRecord> all_arcs;
 
-    for (std::size_t i = 0; i < s1.num_arcs(); ++i) {
-        auto a = s1.arc(i);
-        std::size_t sk = (a.first_edge != NONE)
-                         ? std::min(a.first_edge, a.last_edge) : 0;
-        all_arcs.push_back({a, sk});
+    // §3.1: Arcs from S₁ and S₂ may span across newly discovered
+    // chord endpoints.  We must split arcs at chord endpoint edges
+    // before assigning them to regions.  Collect all chord endpoint
+    // edges as split points.
+    std::vector<std::size_t> split_edges;
+    for (const auto& cr : all_chords) {
+        if (cr.left_edge != NONE)
+            split_edges.push_back(cr.left_edge);
+        if (cr.right_edge != NONE)
+            split_edges.push_back(cr.right_edge);
     }
-    for (std::size_t i = 0; i < s2.num_arcs(); ++i) {
-        auto a = s2.arc(i);
-        std::size_t sk = (a.first_edge != NONE)
-                         ? std::min(a.first_edge, a.last_edge) : 0;
-        all_arcs.push_back({a, sk});
-    }
+    std::sort(split_edges.begin(), split_edges.end());
+    split_edges.erase(std::unique(split_edges.begin(), split_edges.end()),
+                      split_edges.end());
+
+    auto split_and_add_arc = [&](ArcStructure a) {
+        if (a.first_edge == NONE) {
+            all_arcs.push_back({a, 0});
+            return;
+        }
+        std::size_t lo = std::min(a.first_edge, a.last_edge);
+        std::size_t hi = std::max(a.first_edge, a.last_edge);
+
+        // Find all split points strictly interior to [lo, hi].
+        auto it_lo = std::upper_bound(split_edges.begin(),
+                                       split_edges.end(), lo);
+        auto it_hi = std::lower_bound(split_edges.begin(),
+                                       split_edges.end(), hi);
+
+        // Collect interior split points.
+        std::vector<std::size_t> splits;
+        for (auto it = it_lo; it != it_hi; ++it)
+            splits.push_back(*it);
+
+        if (splits.empty()) {
+            // No splits needed — arc stays whole.
+            all_arcs.push_back({a, lo});
+        } else {
+            // Split the arc at each interior split point.
+            std::size_t cur_lo = lo;
+            for (std::size_t sp : splits) {
+                if (sp <= cur_lo) continue;
+                // Sub-arc [cur_lo, sp-1].
+                ArcStructure sub = a;
+                sub.first_edge = cur_lo;
+                sub.last_edge  = sp - 1;
+                sub.edge_count = sp - cur_lo;
+                all_arcs.push_back({sub, cur_lo});
+                cur_lo = sp;
+            }
+            // Final sub-arc [cur_lo, hi].
+            ArcStructure sub = a;
+            sub.first_edge = cur_lo;
+            sub.last_edge  = hi;
+            sub.edge_count = hi - cur_lo + 1;
+            all_arcs.push_back({sub, cur_lo});
+        }
+    };
+
+    for (std::size_t i = 0; i < s1.num_arcs(); ++i)
+        split_and_add_arc(s1.arc(i));
+    for (std::size_t i = 0; i < s2.num_arcs(); ++i)
+        split_and_add_arc(s2.arc(i));
 
     std::sort(all_arcs.begin(), all_arcs.end(),
               [](const ArcRecord& a, const ArcRecord& b) {
@@ -676,9 +775,22 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
 
     result.recompute_all_weights();
 
+    // Temporary start_arc/end_arc: normalize() will recompute these
+    // properly after the caller calls it, but we set reasonable
+    // defaults so that any intermediate access doesn't crash.
+    // Find the split between LEFT and RIGHT arcs.
     if (!all_arcs.empty()) {
+        std::size_t n_arcs = result.num_arcs();
+        std::size_t split = n_arcs;
+        for (std::size_t i = 0; i < n_arcs; ++i) {
+            if (result.arc(i).first_side == Side::RIGHT) {
+                split = i;
+                break;
+            }
+        }
         result.start_arc = 0;
-        result.end_arc = result.num_arcs() > 0 ? result.num_arcs() - 1 : 0;
+        result.end_arc = (split > 0) ? split - 1
+                         : (n_arcs > 0 ? n_arcs - 1 : 0);
     }
 
     return result;
