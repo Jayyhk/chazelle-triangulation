@@ -80,21 +80,23 @@ bool Submap::split_arc_at_vertex(std::size_t arc_idx, std::size_t vertex_idx) {
     auto& arc = arc_sequence_[arc_idx];
     if (arc.first_edge == NONE) return false;
 
+    // Determine the edge range and direction of the arc.
+    // The arc's first_edge and last_edge may be in ascending or
+    // descending order — this encodes the direction of the clockwise
+    // traversal along ∂C (§2.4).  We must preserve this direction.
+    bool ascending = (arc.first_edge <= arc.last_edge);
     std::size_t lo = std::min(arc.first_edge, arc.last_edge);
     std::size_t hi = std::max(arc.first_edge, arc.last_edge);
 
     // vertex_idx corresponds to the start of edge vertex_idx (if
     // vertex_idx > 0) or the boundary vertex.  An arc covering edges
     // [lo, hi] spans vertices [lo, hi+1].  Splitting at vertex_idx
-    // means the left arc covers edges [lo, vertex_idx-1] (vertices
-    // [lo, vertex_idx]) and the right arc covers edges [vertex_idx, hi]
-    // (vertices [vertex_idx, hi+1]).
+    // means the "lower" piece covers edges [lo, vertex_idx-1] and the
+    // "upper" piece covers edges [vertex_idx, hi].
     //
     // We only split if vertex_idx is strictly interior: lo < vertex_idx <= hi.
     if (vertex_idx <= lo || vertex_idx > hi) return false;
 
-    // The split edge boundary: left arc gets [lo, vertex_idx - 1],
-    // right arc gets [vertex_idx, hi].
     std::size_t region = arc.region_node;
 
     // Determine the correct side flags for each half.
@@ -121,41 +123,59 @@ bool Submap::split_arc_at_vertex(std::size_t arc_idx, std::size_t vertex_idx) {
             // vertex_idx relative to the transition determines which
             // side the split point is on.
             if (vertex_idx < transition) {
-                // Split point is before the transition: left half
-                // is entirely on first_side.  Right half still crosses.
                 left_last_side   = arc.first_side;
                 right_first_side = arc.first_side;
             } else if (vertex_idx > transition) {
-                // Split point is after the transition: left half
-                // crosses.  Right half is entirely on last_side.
                 left_last_side   = arc.last_side;
                 right_first_side = arc.last_side;
             } else {
-                // Split is exactly at the transition.
                 left_last_side   = arc.first_side;
                 right_first_side = arc.last_side;
             }
         }
     }
 
-    // Create the right half arc.
-    ArcStructure right_arc;
-    right_arc.first_edge = vertex_idx;
-    right_arc.last_edge = hi;
-    right_arc.first_side = right_first_side;
-    right_arc.last_side = arc.last_side;
-    right_arc.region_node = region;
-    right_arc.edge_count = hi - vertex_idx + 1;
+    // Create the two halves, preserving the original direction.
+    // If ascending (first_edge < last_edge):
+    //   First half (kept in place): first_edge = lo, last_edge = vertex_idx - 1
+    //   Second half (new):          first_edge = vertex_idx, last_edge = hi
+    // If descending (first_edge > last_edge):
+    //   First half (kept in place): first_edge = hi, last_edge = vertex_idx
+    //   Second half (new):          first_edge = vertex_idx - 1, last_edge = lo
+    ArcStructure second_arc;
+    second_arc.region_node = region;
 
-    // Truncate the original arc to be the left half.
-    arc.first_edge = lo;
-    arc.last_edge = vertex_idx - 1;
-    arc.last_side = left_last_side;
-    arc.edge_count = vertex_idx - lo;
+    if (ascending) {
+        // First half: [lo, vertex_idx - 1], second half: [vertex_idx, hi]
+        second_arc.first_edge  = vertex_idx;
+        second_arc.last_edge   = hi;
+        second_arc.first_side  = right_first_side;
+        second_arc.last_side   = arc.last_side;
+        second_arc.edge_count  = hi - vertex_idx + 1;
 
-    // Add the right arc and register it with the region.
+        arc.first_edge = lo;
+        arc.last_edge  = vertex_idx - 1;
+        arc.last_side  = left_last_side;
+        arc.edge_count = vertex_idx - lo;
+    } else {
+        // Descending: original is [hi .. lo].  "First" in traversal
+        // order is the higher edge.
+        // First half: [hi, vertex_idx], second half: [vertex_idx - 1, lo]
+        second_arc.first_edge  = vertex_idx - 1;
+        second_arc.last_edge   = lo;
+        second_arc.first_side  = right_first_side;
+        second_arc.last_side   = arc.last_side;
+        second_arc.edge_count  = vertex_idx - lo;
+
+        arc.first_edge = hi;
+        arc.last_edge  = vertex_idx;
+        arc.last_side  = left_last_side;
+        arc.edge_count = hi - vertex_idx + 1;
+    }
+
+    // Add the second arc and register it with the region.
     std::size_t new_ai = arc_sequence_.size();
-    arc_sequence_.push_back(right_arc);
+    arc_sequence_.push_back(second_arc);
     if (region != NONE && region < nodes_.size()) {
         nodes_[region].arcs.push_back(new_ai);
     }
@@ -232,34 +252,40 @@ std::size_t Submap::remove_chord(std::size_t chord_idx) {
     // the down-phase).
     std::size_t removed_le = c.left_edge;
     std::size_t removed_re = c.right_edge;
+    double removed_y = c.y;
     c.region[0] = NONE;
     c.region[1] = NONE;
     c.left_edge = NONE;
     c.right_edge = NONE;
 
     // §2.2: "the removal of a chord entails removing not only the
-    // chord itself but also those endpoints that are not vertices
-    // of C, and glueing back ∂C at those points."  Vertices of C
-    // never disappear; only non-C chord endpoints (introduced by
-    // augmented visibility maps) can disappear.
-    //
-    // For each chord endpoint vertex v:
-    //   - If v is a vertex of C (v ∈ [c_start_vertex, c_end_vertex]),
-    //     it stays; arcs remain separate.
-    //   - Else, if v is no longer referenced by any remaining chord,
-    //     find the two arcs meeting at v and merge them.
-    // §2.2: "the removal of a chord entails removing not only the
     // chord itself but also those endpoints that are not vertices of
     // C, and glueing back ∂C at those points."
     // Per §3.1 Remark 1, chord endpoints are (edge, y) pairs.
-    // When an endpoint disappears, arcs sharing that edge merge.
-    auto merge_arcs_at_edge = [&](std::size_t edge_e) {
+    // An endpoint is "a vertex of C" only if its (edge, y) position
+    // coincides exactly with a polygon vertex — i.e., y matches
+    // vertex(edge_e).y or vertex(edge_e + 1).y.  Vertices of C
+    // never disappear; only interior-of-edge endpoints (introduced
+    // by augmented visibility maps) can disappear.
+    auto is_endpoint_at_c_vertex = [&](std::size_t edge_e, double y) -> bool {
+        if (edge_e == NONE) return false;
+        if (polygon_ == nullptr) return false;
+        if (edge_e >= polygon_->num_edges()) return false;
+        const auto& e = polygon_->edge(edge_e);
+        const auto& p_start = polygon_->vertex(e.start_idx);
+        const auto& p_end   = polygon_->vertex(e.end_idx);
+        // Check if y matches either endpoint of the edge (exact match).
+        if (p_start.y == y) return true;
+        if (p_end.y   == y) return true;
+        return false;
+    };
+
+    auto merge_arcs_at_edge = [&](std::size_t edge_e, double chord_y) {
         if (edge_e == NONE) return;
-        // §2.2: Vertices of C are never removed.  For edge-based
-        // endpoints, an endpoint at a C-vertex boundary (edge_e ==
-        // c_start_vertex or c_end_vertex) is a C-vertex and stays.
-        if (c_start_vertex != NONE && c_end_vertex != NONE &&
-            edge_e >= c_start_vertex && edge_e <= c_end_vertex) {
+        // §2.2: Vertices of C are never removed.  A chord endpoint
+        // (edge_e, chord_y) is at a C-vertex only if chord_y matches
+        // the y-coordinate of vertex(edge_e) or vertex(edge_e + 1).
+        if (is_endpoint_at_c_vertex(edge_e, chord_y)) {
             return;
         }
         // Check if this edge is still used by another chord endpoint.
@@ -350,8 +376,8 @@ std::size_t Submap::remove_chord(std::size_t chord_idx) {
         arcs.pop_back();
     };
 
-    merge_arcs_at_edge(removed_le);
-    merge_arcs_at_edge(removed_re);
+    merge_arcs_at_edge(removed_le, removed_y);
+    merge_arcs_at_edge(removed_re, removed_y);
 
     // Recompute survivor's weight.
     recompute_weight(survivor);
@@ -381,8 +407,10 @@ void Submap::recompute_all_weights() {
 // --- Queries ---
 
 bool Submap::is_conformal() const {
+    // §2.3: "conformal submaps [are] those with node-degree at most 4."
+    // Node-degree = number of incident chords (tree edges), NOT arcs.
     for (auto& nd : nodes_) {
-        if (!nd.deleted && nd.arcs.size() > 4) return false;
+        if (!nd.deleted && nd.degree() > 4) return false;
     }
     return true;
 }
@@ -496,9 +524,13 @@ std::vector<std::size_t> Submap::double_identify(std::size_t edge_idx,
     };
 
     // Helper: representative edge of arc i for ordering along ∂C.
+    // Must match the sort key used by normalize(): min(first_edge, last_edge).
+    // This ensures both sides of the double boundary (ascending and
+    // descending in edge index) are monotone in this key.
     auto arc_rep = [&](std::size_t i) -> std::size_t {
         const auto& a = arc_sequence_[i];
-        return (a.first_edge != NONE) ? a.first_edge : 0;
+        if (a.first_edge == NONE) return 0;
+        return std::min(a.first_edge, a.last_edge);
     };
 
     // §2.4: "we can conceptually break up the circular arc sequence into
@@ -530,7 +562,16 @@ std::vector<std::size_t> Submap::double_identify(std::size_t edge_idx,
             }
         }
 
-        // Scan around the landing point for containment.
+        // §2.4: "Either search might take us to a unique arc-structure,
+        // in which case we are done, or else to a contiguous interval
+        // of arc-structures: this might happen if e contributes several
+        // arcs.  We can disambiguate by pursuing the binary search, now
+        // using, say, the y-coordinate of q as a query."
+        //
+        // In a conformal submap the interval size is O(1) (degree ≤ 4
+        // implies ≤ 4 arcs per region, so at most a constant number of
+        // arcs share any edge).  We expand by one position in each
+        // direction — bounded by conformal degree — then collect.
         std::size_t scan_lo = left;
         while (scan_lo > 0 && arc_contains(real(scan_lo - 1))) {
             --scan_lo;
@@ -591,27 +632,32 @@ std::vector<std::size_t> Submap::double_identify(std::size_t edge_idx,
     // pursuing the binary search, now using, say, the y-coordinate
     // of q as a query."
     //
-    // When multiple arcs contain edge_idx, use the polygon's vertex
-    // y-coordinates to determine which arc(s) the point (edge_idx, y)
-    // actually lies on.  An arc covering edges [lo, hi] spans the
-    // y-range of the polygon vertices from lo to hi+1.  A point at
-    // y is on this arc if y falls within that range on edge_idx.
+    // When multiple arcs contain edge_idx, check whether y falls
+    // within each arc's y-span on that edge.  Under symbolic
+    // perturbation (§2), no two vertices share the same y, so we
+    // use exact comparison — no epsilon tolerance.
     if (result.size() > 1 && polygon_ != nullptr) {
         std::vector<std::size_t> y_filtered;
         for (std::size_t i : result) {
             const auto& a = arc_sequence_[i];
             if (a.first_edge == NONE) continue;
-            // The arc covers edge_idx.  Check if y falls within the
-            // y-range of edge_idx's endpoints.
+            std::size_t lo = std::min(a.first_edge, a.last_edge);
+            std::size_t hi = std::max(a.first_edge, a.last_edge);
+            // If edge_idx is strictly interior to the arc's edge range,
+            // the arc fully covers the edge — always accept.
+            if (edge_idx > lo && edge_idx < hi) {
+                y_filtered.push_back(i);
+                continue;
+            }
+            // If edge_idx is at the arc's boundary, check if y falls
+            // within the y-range of the edge.
             if (edge_idx < polygon_->num_edges()) {
                 const auto& e = polygon_->edge(edge_idx);
                 double y0 = polygon_->vertex(e.start_idx).y;
                 double y1 = polygon_->vertex(e.end_idx).y;
                 double ylo = std::min(y0, y1);
                 double yhi = std::max(y0, y1);
-                // The point y is on this arc's edge if it's within
-                // the y-range (with tolerance for endpoints).
-                if (y >= ylo - 1e-12 && y <= yhi + 1e-12) {
+                if (y >= ylo && y <= yhi) {
                     y_filtered.push_back(i);
                 }
             } else {

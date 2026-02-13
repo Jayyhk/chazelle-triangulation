@@ -576,7 +576,7 @@ ChordCandidate find_splitting_chord(
     std::size_t granularity) {
 
     const auto& nd = submap.node(region_idx);
-    assert(nd.arcs.size() > 4);
+    assert(nd.degree() > 4);
 
     if (nd.arcs.size() < 2) return {};
 
@@ -700,9 +700,11 @@ void restore_conformality(Submap& submap,
     // Worklist-based approach: only (re-)examine regions with degree > 4.
     // When a chord is inserted, only the two affected regions need to be
     // re-checked, giving O(total insertions) work instead of O(n²).
+    // §2.3: "conformal submaps [are] those with node-degree at most 4."
+    // Node-degree = number of incident chords (tree edges).
     std::queue<std::size_t> worklist;
     for (std::size_t i = 0; i < submap.num_nodes(); ++i) {
-        if (!submap.node(i).deleted && submap.node(i).arcs.size() > 4) {
+        if (!submap.node(i).deleted && submap.node(i).degree() > 4) {
             worklist.push(i);
         }
     }
@@ -726,7 +728,7 @@ void restore_conformality(Submap& submap,
         if (++iterations > max_iterations) break; // safety bound
 
         if (submap.node(i).deleted) continue;
-        if (submap.node(i).arcs.size() <= 4) continue;
+        if (submap.node(i).degree() <= 4) continue;
 
             // Find a chord to split this region.
             auto cand = find_splitting_chord(submap, i, storage,
@@ -892,8 +894,8 @@ void restore_conformality(Submap& submap,
                 submap.recompute_weight(new_region);
 
                 // Re-examine both regions if they still have high degree.
-                if (submap.node(i).arcs.size() > 4) worklist.push(i);
-                if (submap.node(new_region).arcs.size() > 4) worklist.push(new_region);
+                if (submap.node(i).degree() > 4) worklist.push(i);
+                if (submap.node(new_region).degree() > 4) worklist.push(new_region);
             }
     }
 }

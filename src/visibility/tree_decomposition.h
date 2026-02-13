@@ -56,7 +56,7 @@ public:
     TreeDecomposition() = default;
 
     /// Build the tree decomposition from a conformal submap.
-    /// Time: O(r log r) where r = number of regions.
+    /// Time: O(r log r) where r = number of regions (deterministic).
     void build(const Submap& submap);
 
     /// Root of the decomposition tree.

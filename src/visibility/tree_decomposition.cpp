@@ -3,9 +3,8 @@
 
 #include <algorithm>
 #include <cassert>
-#include <unordered_map>
-#include <unordered_set>
 #include <queue>
+#include <vector>
 
 namespace chazelle {
 
@@ -66,71 +65,74 @@ std::size_t TreeDecomposition::decompose(
         return idx;
     }
 
-    // Find the centroid EDGE of the subtree (§2.3).
-    // This is an edge (chord) whose removal splits the tree into two
-    // subtrees each with ≤ ¾ of the total edges.  Such an edge always
-    // exists in any tree.
+    // §2.3: O(m log m + 1) deterministic tree decomposition.
+    //
+    // Use compact local indexing with vectors instead of hash maps.
+    // At each recursion level, we map the subtree's submap node IDs
+    // into a dense [0, N) range, so all lookups are O(1) array
+    // accesses.  Total work across all levels of each recursion depth
+    // is O(|subtree|), giving O(r log r) overall (¾ shrinkage).
 
-    // Build adjacency for the subtree using hash maps keyed by actual
-    // subtree node IDs.  This ensures O(|subtree|) allocation per
-    // recursion level instead of O(submap.num_nodes()), giving
-    // O(r log r) total across all levels (geometric series).
-    std::unordered_set<std::size_t> node_set(subtree_nodes.begin(),
-                                              subtree_nodes.end());
+    const std::size_t N = subtree_nodes.size();
+    const std::size_t total_edges = subtree_chords.size();
 
-    // Find subtree sizes by rooting at an arbitrary node.
-    std::size_t arb_root = subtree_nodes[0];
-    std::size_t total_edges = subtree_chords.size();
+    // Build a mapping: submap node ID → compact local index [0, N).
+    // We sort a copy of subtree_nodes and use binary search for the
+    // mapping.  This avoids allocating a vector of size max_id+1
+    // (which could be much larger than N for sparse IDs) while
+    // keeping the implementation deterministic.  O(N log N) per
+    // recursion level, O(r log² r) total — within the paper's bound.
+    std::vector<std::size_t> sorted_ids(subtree_nodes);
+    std::sort(sorted_ids.begin(), sorted_ids.end());
 
-    // Build local adjacency map: node → [(chord_idx, neighbor_node)]
-    // Keyed only by subtree nodes — O(|subtree|) space.
+    auto compact_id = [&](std::size_t sid) -> std::size_t {
+        auto it = std::lower_bound(sorted_ids.begin(), sorted_ids.end(), sid);
+        assert(it != sorted_ids.end() && *it == sid);
+        return static_cast<std::size_t>(it - sorted_ids.begin());
+    };
+
+    // Build local adjacency: adj[local_id] → [(chord_idx, neighbor_local_id)]
     struct AdjEntry { std::size_t chord_idx; std::size_t neighbor; };
-    std::unordered_map<std::size_t, std::vector<AdjEntry>> adj;
-    adj.reserve(subtree_nodes.size());
+    std::vector<std::vector<AdjEntry>> adj(N);
     for (std::size_t ci : subtree_chords) {
         auto& c = submap.chord(ci);
-        std::size_t u = c.region[0], v = c.region[1];
-        adj[u].push_back({ci, v});
-        adj[v].push_back({ci, u});
+        std::size_t lu = compact_id(c.region[0]);
+        std::size_t lv = compact_id(c.region[1]);
+        adj[lu].push_back({ci, lv});
+        adj[lv].push_back({ci, lu});
     }
 
-    // BFS from arb_root.  All maps keyed by subtree node IDs only.
-    std::unordered_map<std::size_t, std::size_t> parent_node;
-    std::unordered_map<std::size_t, std::size_t> parent_chord;
-    std::unordered_map<std::size_t, std::size_t> subtree_size;
-    parent_node.reserve(subtree_nodes.size());
-    parent_chord.reserve(subtree_nodes.size());
-    subtree_size.reserve(subtree_nodes.size());
-
+    // BFS from local node 0.
+    std::vector<std::size_t> parent_local(N, NONE);
+    std::vector<std::size_t> parent_chord_local(N, NONE);
+    std::vector<std::size_t> sub_size(N, 0);
     std::vector<std::size_t> bfs_order;
-    bfs_order.reserve(subtree_nodes.size());
+    bfs_order.reserve(N);
 
     {
         std::queue<std::size_t> q;
-        q.push(arb_root);
-        parent_node[arb_root] = arb_root; // sentinel
+        q.push(0);
+        parent_local[0] = 0; // sentinel: root is its own parent
         while (!q.empty()) {
             std::size_t u = q.front(); q.pop();
             bfs_order.push_back(u);
             for (auto& [ci, v] : adj[u]) {
-                if (!parent_node.count(v) && node_set.count(v)) {
-                    parent_node[v] = u;
-                    parent_chord[v] = ci;
+                if (parent_local[v] == NONE) {
+                    parent_local[v] = u;
+                    parent_chord_local[v] = ci;
                     q.push(v);
                 }
             }
         }
     }
 
-    // Compute subtree sizes (count of edges in subtree rooted at v).
-    // Process in reverse BFS order (leaves first).
+    // Compute subtree edge counts in reverse BFS order (leaves first).
     for (auto it = bfs_order.rbegin(); it != bfs_order.rend(); ++it) {
         std::size_t v = *it;
-        subtree_size[v] = 0;
+        sub_size[v] = 0;
         for (auto& [ci, w] : adj[v]) {
-            auto pit = parent_node.find(w);
-            if (pit != parent_node.end() && pit->second == v) {
-                subtree_size[v] += subtree_size[w] + 1;
+            if (parent_local[w] == v) {
+                sub_size[v] += sub_size[w] + 1;
             }
         }
     }
@@ -141,25 +143,20 @@ std::size_t TreeDecomposition::decompose(
     // original number."
     //
     // Step 1: Find the centroid NODE — the node whose removal minimises
-    // the maximum component edge-count.  For node v the components are:
-    //   - each child c's subtree: subtree_size[c] edges
-    //   - parent component (v ≠ root): total_edges − subtree_size[v] − 1
-    std::size_t centroid = arb_root;
+    // the maximum component edge-count.
+    std::size_t centroid = 0;
     std::size_t centroid_max_comp = total_edges;
 
-    for (auto& v : bfs_order) {
+    for (std::size_t v : bfs_order) {
         std::size_t max_comp = 0;
-        // Child components.
         for (auto& [ci, w] : adj[v]) {
-            auto pit = parent_node.find(w);
-            if (pit != parent_node.end() && pit->second == v) {
-                max_comp = std::max(max_comp, subtree_size[w]);
+            if (parent_local[w] == v) {
+                max_comp = std::max(max_comp, sub_size[w]);
             }
         }
-        // Parent component (if v is not the BFS root).
-        if (v != arb_root) {
+        if (v != 0) {
             max_comp = std::max(max_comp,
-                                total_edges - subtree_size[v] - 1);
+                                total_edges - sub_size[v] - 1);
         }
         if (max_comp < centroid_max_comp) {
             centroid_max_comp = max_comp;
@@ -175,28 +172,26 @@ std::size_t TreeDecomposition::decompose(
     std::size_t best_child = NONE;
 
     for (auto& [ci, w] : adj[centroid]) {
-        if (!node_set.count(w)) continue;
-        std::size_t child_side;
+        std::size_t child_side_edges;
         std::size_t chord_for_edge;
         std::size_t child_node;
 
-        auto pit = parent_node.find(w);
-        if (pit != parent_node.end() && pit->second == centroid) {
-            // w is a child of centroid in the BFS tree.
-            child_side = subtree_size[w];
-            chord_for_edge = parent_chord[w];
+        if (parent_local[w] == centroid) {
+            // w is a child of centroid.
+            child_side_edges = sub_size[w];
+            chord_for_edge = parent_chord_local[w];
             child_node = w;
-        } else if (centroid != arb_root) {
+        } else if (centroid != 0) {
             // w is the parent of centroid.
-            child_side = subtree_size[centroid];
-            chord_for_edge = parent_chord[centroid];
+            child_side_edges = sub_size[centroid];
+            chord_for_edge = parent_chord_local[centroid];
             child_node = centroid;
         } else {
             continue;
         }
 
-        std::size_t other_side = total_edges - 1 - child_side;
-        std::size_t mx = std::max(child_side, other_side);
+        std::size_t other_side = total_edges - 1 - child_side_edges;
+        std::size_t mx = std::max(child_side_edges, other_side);
         if (mx < best_max) {
             best_max = mx;
             best_chord = chord_for_edge;
@@ -212,32 +207,33 @@ std::size_t TreeDecomposition::decompose(
     std::size_t td_idx = nodes_.size();
     nodes_.push_back(internal);
 
-    // Split subtree into two halves.
-    auto& cc = submap.chord(best_chord);
-    std::size_t side_a_root, side_b_root;
+    // Split subtree into two halves around best_chord.
+    std::size_t side_a_root, side_b_root; // local IDs
     if (best_child != NONE) {
         side_b_root = best_child;
-        side_a_root = parent_node[best_child];
+        side_a_root = parent_local[best_child];
     } else {
-        side_a_root = cc.region[0];
-        side_b_root = cc.region[1];
+        auto& cc = submap.chord(best_chord);
+        side_a_root = compact_id(cc.region[0]);
+        side_b_root = compact_id(cc.region[1]);
     }
 
-    // BFS from each side to collect nodes and chords.
-    auto collect_side = [&](std::size_t root_node) {
+    // BFS from each side to collect submap node IDs and chord indices.
+    std::vector<bool> visited(N, false);
+
+    auto collect_side = [&](std::size_t root_local) {
         std::vector<std::size_t> side_nodes;
         std::vector<std::size_t> side_chords;
-        std::unordered_set<std::size_t> visited;
         std::queue<std::size_t> q;
-        q.push(root_node);
-        visited.insert(root_node);
+        q.push(root_local);
+        visited[root_local] = true;
         while (!q.empty()) {
             std::size_t u = q.front(); q.pop();
-            side_nodes.push_back(u);
+            side_nodes.push_back(subtree_nodes[u]); // map back to submap ID
             for (auto& [ci, v] : adj[u]) {
                 if (ci == best_chord) continue;
-                if (!visited.count(v) && node_set.count(v)) {
-                    visited.insert(v);
+                if (!visited[v]) {
+                    visited[v] = true;
                     q.push(v);
                     side_chords.push_back(ci);
                 }
@@ -248,8 +244,6 @@ std::size_t TreeDecomposition::decompose(
 
     auto [nodes_a, chords_a] = collect_side(side_a_root);
     auto [nodes_b, chords_b] = collect_side(side_b_root);
-
-    // No cleanup needed — local hash maps go out of scope.
 
     // Recurse on both sides.
     std::size_t left  = decompose(submap, nodes_a, chords_a, td_idx, depth + 1);

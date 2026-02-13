@@ -1,4 +1,5 @@
 #include "chazelle/granularity.h"
+#include "geometry/polygon.h"
 
 #include <algorithm>
 #include <cassert>
@@ -55,14 +56,27 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
         // merged_weight = max over all resulting (merged or individual)
         // arc edge_counts.
 
-        // Determine which chord endpoint vertices would disappear.
-        // A vertex disappears if it is not referenced by any other
-        // chord in either region.
         // Determine which chord endpoint edges would disappear.
-        // An edge endpoint disappears if it is not referenced by any other
-        // chord in either region.
-        auto edge_survives = [&](std::size_t e) -> bool {
+        // An edge endpoint disappears if (1) it is not at a C-vertex
+        // AND (2) it is not referenced by any other chord in either region.
+        // §2.2: "those endpoints that are not vertices of C" disappear;
+        // vertices of C never disappear.
+        auto is_at_c_vertex = [&](std::size_t e, double y) -> bool {
             if (e == NONE) return false;
+            if (submap.polygon_ == nullptr) return false;
+            if (e >= submap.polygon_->num_edges()) return false;
+            const auto& edge = submap.polygon_->edge(e);
+            const auto& p_start = submap.polygon_->vertex(edge.start_idx);
+            const auto& p_end   = submap.polygon_->vertex(edge.end_idx);
+            if (p_start.y == y) return true;
+            if (p_end.y   == y) return true;
+            return false;
+        };
+
+        auto edge_survives = [&](std::size_t e, double y) -> bool {
+            if (e == NONE) return false;
+            // A C-vertex endpoint always survives.
+            if (is_at_c_vertex(e, y)) return true;
             for (std::size_t oci : n0.incident_chords) {
                 if (oci == ci) continue;
                 const auto& oc = submap.chord(oci);
@@ -78,8 +92,8 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
             return false;
         };
 
-        bool le_disappears = (c.left_edge != NONE && !edge_survives(c.left_edge));
-        bool re_disappears = (c.right_edge != NONE && !edge_survives(c.right_edge));
+        bool le_disappears = (c.left_edge != NONE && !edge_survives(c.left_edge, c.y));
+        bool re_disappears = (c.right_edge != NONE && !edge_survives(c.right_edge, c.y));
 
         // For each disappearing vertex, find the two arcs (across both
         // regions) that meet at it and sum their edge_counts.  For
