@@ -375,64 +375,94 @@ std::vector<std::size_t> Submap::double_identify(std::size_t edge_idx,
         return (a.first_edge != NONE) ? a.first_edge : 0;
     };
 
-    // Binary search in range [lo_idx, hi_idx) for an arc containing
-    // edge_idx.  Arcs are ordered by their edge range along ∂C, so
-    // we search by comparing edge_idx against each arc's representative.
-    auto binary_search_arcs = [&](std::size_t lo_idx, std::size_t hi_idx) {
-        if (lo_idx >= hi_idx) return;
+    // §2.4: "we can conceptually break up the circular arc sequence into
+    // two linear sequences and perform in each of them a binary search,
+    // using the name of the containing edge as a query."
+    //
+    // Each of the two C-sides is monotone in edge index — one ascending,
+    // the other descending.  We binary-search a virtual sequence of
+    // `count` elements starting at real index `offset`, wrapping around
+    // the table when necessary.  `ascending` gives the direction.
+    auto binary_search_arcs_seq = [&](std::size_t offset, std::size_t count,
+                                      bool ascending) {
+        if (count == 0) return;
+        std::size_t n_arcs = arc_sequence_.size();
+        auto real = [&](std::size_t vi) -> std::size_t {
+            return (offset + vi) % n_arcs;
+        };
 
-        // Standard binary search for the first arc whose representative
-        // edge is >= edge_idx.
-        std::size_t left = lo_idx, right = hi_idx;
+        std::size_t left = 0, right = count;
         while (left < right) {
             std::size_t mid = left + (right - left) / 2;
-            if (arc_rep(mid) < edge_idx) {
+            bool go_right = ascending
+                ? (arc_rep(real(mid)) < edge_idx)
+                : (arc_rep(real(mid)) > edge_idx);
+            if (go_right) {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
 
-        // The matching arcs form a contiguous interval around `left`.
-        // Check left and its neighbors for containment.
-        // Expand leftward.
+        // Scan around the landing point for containment.
         std::size_t scan_lo = left;
-        while (scan_lo > lo_idx && arc_contains(scan_lo - 1)) {
+        while (scan_lo > 0 && arc_contains(real(scan_lo - 1))) {
             --scan_lo;
         }
-        // Expand rightward.
         std::size_t scan_hi = left;
-        while (scan_hi < hi_idx && arc_contains(scan_hi)) {
+        while (scan_hi < count && arc_contains(real(scan_hi))) {
             ++scan_hi;
         }
-        // Also check one position before scan_lo (binary search may
-        // land just past a multi-edge arc that contains edge_idx).
-        if (scan_lo > lo_idx && scan_lo == left && arc_contains(scan_lo - 1)) {
+        if (scan_lo > 0 && scan_lo == left &&
+            arc_contains(real(scan_lo - 1))) {
             --scan_lo;
         }
 
         for (std::size_t i = scan_lo; i < scan_hi; ++i) {
-            if (arc_contains(i)) {
-                result.push_back(i);
+            if (arc_contains(real(i))) {
+                result.push_back(real(i));
             }
         }
     };
 
-    // Split the arc-sequence at the C-endpoint arcs (start_arc, end_arc)
-    // into two monotone subsequences along ∂C.
+    // Break the circular arc-sequence at the two C-endpoint arcs into
+    // exactly two linear sequences (one per side of C) and binary-
+    // search each.
     if (start_arc != NONE && end_arc != NONE &&
         start_arc < arc_sequence_.size() && end_arc < arc_sequence_.size()) {
-        std::size_t split1 = std::min(start_arc, end_arc);
-        std::size_t split2 = std::max(start_arc, end_arc);
-        // Search each half.
-        binary_search_arcs(0, split1 + 1);
-        binary_search_arcs(split1 + 1, split2 + 1);
-        if (split2 + 1 < arc_sequence_.size()) {
-            binary_search_arcs(split2 + 1, arc_sequence_.size());
+        std::size_t n_arcs = arc_sequence_.size();
+
+        // Sequence 1: from start_arc to end_arc going forward in the
+        // table (wrapping if start_arc > end_arc).
+        std::size_t count1 = (end_arc >= start_arc)
+            ? (end_arc - start_arc + 1)
+            : (n_arcs - start_arc + end_arc + 1);
+        bool seq1_asc = true;
+        if (count1 >= 2) {
+            std::size_t first_r = start_arc;
+            std::size_t last_r  = (start_arc + count1 - 1) % n_arcs;
+            seq1_asc = (arc_rep(first_r) <= arc_rep(last_r));
+        }
+        binary_search_arcs_seq(start_arc, count1, seq1_asc);
+
+        // Sequence 2: the complement — from end_arc+1 back to
+        // start_arc−1 (the other side of C, also wrapping).
+        std::size_t seq2_start = (end_arc + 1) % n_arcs;
+        std::size_t count2 = n_arcs - count1;
+        if (count2 > 0) {
+            bool seq2_asc = true;
+            if (count2 >= 2) {
+                std::size_t first_r = seq2_start;
+                std::size_t last_r  = (seq2_start + count2 - 1) % n_arcs;
+                seq2_asc = (arc_rep(first_r) <= arc_rep(last_r));
+            }
+            binary_search_arcs_seq(seq2_start, count2, seq2_asc);
         }
     } else {
-        // No endpoint info — search the full table.
-        binary_search_arcs(0, arc_sequence_.size());
+        // No endpoint info — linear scan (degenerate case).
+        for (std::size_t i = 0; i < arc_sequence_.size(); ++i) {
+            if (arc_contains(i)) result.push_back(i);
+        }
     }
 
     // Structural disambiguation: when multiple arcs contain edge_idx,

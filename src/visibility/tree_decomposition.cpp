@@ -135,20 +135,72 @@ std::size_t TreeDecomposition::decompose(
         }
     }
 
-    // Find centroid edge: edge (parent→child) where both sides ≤ ¾.
-    std::size_t best_chord = subtree_chords[0];
-    std::size_t best_max = total_edges; // worst case
-    std::size_t best_child = NONE;
+    // §2.3: "pick the centroid of the submap's tree and observe that
+    // there exists at least one incident edge whose removal leaves two
+    // subtrees, each with a number of edges at most three-quarters the
+    // original number."
+    //
+    // Step 1: Find the centroid NODE — the node whose removal minimises
+    // the maximum component edge-count.  For node v the components are:
+    //   - each child c's subtree: subtree_size[c] edges
+    //   - parent component (v ≠ root): total_edges − subtree_size[v] − 1
+    std::size_t centroid = arb_root;
+    std::size_t centroid_max_comp = total_edges;
 
     for (auto& v : bfs_order) {
-        if (v == arb_root) continue;
-        std::size_t child_side = subtree_size[v];
+        std::size_t max_comp = 0;
+        // Child components.
+        for (auto& [ci, w] : adj[v]) {
+            auto pit = parent_node.find(w);
+            if (pit != parent_node.end() && pit->second == v) {
+                max_comp = std::max(max_comp, subtree_size[w]);
+            }
+        }
+        // Parent component (if v is not the BFS root).
+        if (v != arb_root) {
+            max_comp = std::max(max_comp,
+                                total_edges - subtree_size[v] - 1);
+        }
+        if (max_comp < centroid_max_comp) {
+            centroid_max_comp = max_comp;
+            centroid = v;
+        }
+    }
+
+    // Step 2: Among the centroid's incident edges, pick the one whose
+    // removal gives the most balanced split.  The ¾ guarantee holds
+    // because the submap is conformal (degree ≤ 4).
+    std::size_t best_chord = subtree_chords[0];
+    std::size_t best_max = total_edges;
+    std::size_t best_child = NONE;
+
+    for (auto& [ci, w] : adj[centroid]) {
+        if (!node_set.count(w)) continue;
+        std::size_t child_side;
+        std::size_t chord_for_edge;
+        std::size_t child_node;
+
+        auto pit = parent_node.find(w);
+        if (pit != parent_node.end() && pit->second == centroid) {
+            // w is a child of centroid in the BFS tree.
+            child_side = subtree_size[w];
+            chord_for_edge = parent_chord[w];
+            child_node = w;
+        } else if (centroid != arb_root) {
+            // w is the parent of centroid.
+            child_side = subtree_size[centroid];
+            chord_for_edge = parent_chord[centroid];
+            child_node = centroid;
+        } else {
+            continue;
+        }
+
         std::size_t other_side = total_edges - 1 - child_side;
         std::size_t mx = std::max(child_side, other_side);
         if (mx < best_max) {
             best_max = mx;
-            best_chord = parent_chord[v];
-            best_child = v;
+            best_chord = chord_for_edge;
+            best_child = child_node;
         }
     }
 
