@@ -580,19 +580,18 @@ RayHit RayShootingOracle::local_shoot(std::size_t region_idx,
         if (a.first_edge == NONE) continue;
 
         // §4.2: Virtual arcs represent tilted exit-chord edges.
+        // Symbolic perturbation: the tilted edge has infinitesimal
+        // y-extent [vy - ε, vy + ε].  In the limit ε → 0, only rays
+        // at y ≈ vy intersect it, and the intersection point is the
+        // midpoint of the two endpoint x-coordinates.
         if (a.is_virtual()) {
             double vy = a.virtual_y;
-            constexpr double TILT = 1e-8;
-            double vy_lo = vy - TILT;
-            double vy_hi = vy + TILT;
-            if (y < vy_lo - 1e-12 || y > vy_hi + 1e-12) continue;
+            if (std::abs(y - vy) > 1e-9) continue;
             double x_left = (a.first_edge < polygon_->num_edges())
                 ? polygon_->edge_x_at_y(a.first_edge, vy) : 0.0;
             double x_right = (a.last_edge < polygon_->num_edges())
                 ? polygon_->edge_x_at_y(a.last_edge, vy) : 0.0;
-            double t = (std::abs(vy_hi - vy_lo) > 1e-15)
-                ? (y - vy_lo) / (vy_hi - vy_lo) : 0.5;
-            double x = x_left + t * (x_right - x_left);
+            double x = (x_left + x_right) * 0.5;
             double dist = shoot_right ? (x - origin_x)
                                       : (origin_x - x);
             if (dist > -1e-12 && dist < best_dist) {
@@ -605,8 +604,9 @@ RayHit RayShootingOracle::local_shoot(std::size_t region_idx,
             continue;
         }
 
-        // Walk the polygon edges in this arc's range and find the
-        // x-coordinate where each edge crosses y.
+        // §3.4: "a naive algorithm which involves checking all the
+        // O(γ) edges of the region."  Walk every polygon edge in the
+        // arc's range and test for intersection with the horizontal ray.
         std::size_t lo = std::min(a.first_edge, a.last_edge);
         std::size_t hi = std::max(a.first_edge, a.last_edge);
 

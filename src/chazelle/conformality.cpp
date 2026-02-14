@@ -144,7 +144,10 @@ RayHit shoot_in_region(const Submap& submap,
 ///   -1 → left child subtree should be explored (right side shielded)
 ///    0 → success: found a point that sees A₂ (candidate filled in)
 ///    1 → right child subtree should be explored (left side shielded)
-///    2 → indeterminate (fallback to exhaustive)
+///   -1 → left child subtree should be explored (right side shielded)
+///
+/// Per Lemma 2.4: with symbolic perturbation the shielded side is
+/// always determinable.  There is no indeterminate case.
 int lemma24_test(
     const Submap& parent_submap,
     std::size_t region_idx,
@@ -159,9 +162,8 @@ int lemma24_test(
     // Centroid chord endpoints: edge indices a, b.
     std::size_t ea = centroid_chord.left_edge;
     std::size_t eb = centroid_chord.right_edge;
-    if (ea == NONE || eb == NONE) return 2;
-    if (ea >= polygon.num_edges() || eb >= polygon.num_edges())
-        return 2;
+    assert(ea != NONE && eb != NONE);
+    assert(ea < polygon.num_edges() && eb < polygon.num_edges());
 
     // Check if a lies on α = [alpha_start, alpha_end).
     bool a_on_alpha = (ea >= alpha_start && ea < alpha_end);
@@ -482,103 +484,10 @@ ChordCandidate search_tree_decomposition(
         } else if (result < 0) {
             // Descend into left child.
             cur = td_node.left_child;
-        } else if (result == 1) {
-            // Descend into right child.
-            cur = td_node.right_child;
         } else {
-            // Indeterminate — the topological test could not determine
-            // the shielded side (degenerate geometry).  Per the paper,
-            // Lemma 2.4 should always determine the shielded side for
-            // non-degenerate inputs.  As a fallback, try both children
-            // but descend only one level deep into each, checking only
-            // the nearest leaf.  This bounds the work to O(log r) per
-            // indeterminate case instead of O(r).
-            //
-            // Try left child first — descend to its leftmost leaf.
-            std::size_t try_left = td_node.left_child;
-            std::size_t try_right = td_node.right_child;
-
-            // Quick probe of the left subtree's nearest leaf.
-            std::size_t probe = try_left;
-            while (probe != TD_NONE && !td.node(probe).is_leaf()) {
-                if (td.node(probe).left_child != TD_NONE)
-                    probe = td.node(probe).left_child;
-                else
-                    probe = td.node(probe).right_child;
-            }
-            if (probe != TD_NONE && td.node(probe).is_leaf()) {
-                std::size_t leaf_region = td.node(probe).region_idx;
-                if (leaf_region != TD_NONE && leaf_region < cs_submap.num_nodes()) {
-                    const auto& leaf_nd = cs_submap.node(leaf_region);
-                    bool found = false;
-                    for (std::size_t ai2 : leaf_nd.arcs) {
-                        if (found) break;
-                        const auto& a2 = cs_submap.arc(ai2);
-                        if (a2.first_edge == NONE) continue;
-                        std::size_t lo2 = std::min(a2.first_edge, a2.last_edge);
-                        std::size_t hi2 = std::max(a2.first_edge, a2.last_edge);
-                        for (std::size_t v = lo2; v <= hi2 + 1 && !found; ++v) {
-                            if (v < alpha_start || v >= alpha_end) continue;
-                            if (v >= polygon.num_vertices()) continue;
-                            const auto& pt2 = polygon.vertex(v);
-                            std::size_t ev2 = (v > 0) ? v - 1 : 0;
-                            double ox2 = pt2.x;
-                            if (ev2 < polygon.num_edges()) {
-                                const auto& edge2 = polygon.edge(ev2);
-                                const auto& pp1 = polygon.vertex(edge2.start_idx);
-                                const auto& pp2 = polygon.vertex(edge2.end_idx);
-                                if (std::abs(pp2.y - pp1.y) > 1e-15) {
-                                    double tt = (pt2.y - pp1.y) / (pp2.y - pp1.y);
-                                    ox2 = pp1.x + tt * (pp2.x - pp1.x);
-                                }
-                            }
-                            for (bool dir2 : {true, false}) {
-                                auto hit2 = shoot_in_region(
-                                    parent_submap, region_idx, polygon,
-                                    ox2, pt2.y, dir2);
-                                if (hit_lands_on_arc(hit2, parent_submap, arc_j)) {
-                                    ChordCandidate cand2;
-                                    cand2.y = pt2.y;
-                                    cand2.left_edge = v;
-                                    cand2.right_edge = NONE;
-                                    if (hit2.arc_idx != NONE &&
-                                        hit2.arc_idx < parent_submap.num_arcs()) {
-                                        const auto& ha2 = parent_submap.arc(hit2.arc_idx);
-                                        if (ha2.first_edge != NONE) {
-                                            std::size_t hlo2 = std::min(ha2.first_edge, ha2.last_edge);
-                                            std::size_t hhi2 = std::max(ha2.first_edge, ha2.last_edge);
-                                            double best_xd2 = std::numeric_limits<double>::infinity();
-                                            for (std::size_t ei3 = hlo2; ei3 <= hhi2 && ei3 < polygon.num_edges(); ++ei3) {
-                                                const auto& e3 = polygon.edge(ei3);
-                                                const auto& ep1 = polygon.vertex(e3.start_idx);
-                                                const auto& ep2 = polygon.vertex(e3.end_idx);
-                                                double ey_lo = std::min(ep1.y, ep2.y);
-                                                double ey_hi = std::max(ep1.y, ep2.y);
-                                                if (pt2.y < ey_lo - 1e-12 || pt2.y > ey_hi + 1e-12) continue;
-                                                if (std::abs(ey_hi - ey_lo) < 1e-15) continue;
-                                                double t3 = (pt2.y - ep1.y) / (ep2.y - ep1.y);
-                                                double ex = ep1.x + t3 * (ep2.x - ep1.x);
-                                                double dx = std::abs(ex - hit2.hit_x);
-                                                if (dx < best_xd2) {
-                                                    best_xd2 = dx;
-                                                    cand2.right_edge = ei3;
-                                                }
-                                            }
-                                            // No vertex fallback needed; right_edge is set to the hit edge.
-                                        }
-                                    }
-                                    if (cand2.right_edge != NONE && cand2.right_edge != v) {
-                                        cand2.valid = true;
-                                        return cand2;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Left probe failed — try the right subtree.
-            cur = try_right;
+            // result == 1: descend into right child.
+            assert(result == 1);
+            cur = td_node.right_child;
         }
     }
 
@@ -643,34 +552,16 @@ ChordCandidate find_splitting_chord(
         return std::min(d, k - d);
     };
 
-    // Collect all non-consecutive pairs.  Try (0, k/2) first as a
-    // likely candidate, then all remaining non-consecutive pairs.
-    struct ArcPair { std::size_t ii; std::size_t jj; };
-    std::vector<ArcPair> pairs;
-
-    // Preferred pair first (maximally separated).
-    if (index_distance(0, k / 2) > 1) {
-        pairs.push_back({0, k / 2});
-    }
-
-    // All other non-consecutive pairs.
-    for (std::size_t ii = 0; ii < k; ++ii) {
-        for (std::size_t jj = ii + 2; jj < k; ++jj) {
-            if (index_distance(ii, jj) <= 1) continue;
-            // Skip the preferred pair already added above.
-            if (ii == 0 && jj == k / 2) continue;
-            pairs.push_back({ii, jj});
-        }
-    }
-
-    for (const auto& [pi, pj] : pairs) {
-        std::size_t ai = sorted_arcs[pi];
-        std::size_t aj = sorted_arcs[pj];
+    // §3.2 Lemma 3.3: try non-consecutive pairs sequentially until a
+    // splitting chord is found.  Preferred pair (0, k/2) first.
+    auto try_pair = [&](std::size_t ii, std::size_t jj) -> ChordCandidate {
+        std::size_t ai = sorted_arcs[ii];
+        std::size_t aj = sorted_arcs[jj];
 
         const auto& arc_i_final = submap.arc(ai);
         const auto& arc_j_final = submap.arc(aj);
         if (arc_i_final.first_edge == NONE || arc_j_final.first_edge == NONE)
-            continue;
+            return {};
 
         // Decompose A₁ into O(log γ) dyadic pieces.
         std::size_t start = std::min(arc_i_final.first_edge, arc_i_final.last_edge);
@@ -694,25 +585,23 @@ ChordCandidate find_splitting_chord(
             if (cand.valid) return cand;
         }
 
-        // Also try with the roles swapped: search A₂ for a vertex
-        // that sees A₁.  The paper says "apply Lemma 3.2 to every
-        // pair," and the lemma is stated with A₁ containing the
-        // vertex — so we must try both directions.
-        std::size_t start2 = std::min(arc_j_final.first_edge, arc_j_final.last_edge);
-        std::size_t end2   = std::max(arc_j_final.first_edge, arc_j_final.last_edge) + 1;
-        auto pieces2 = cut_arc(start2, end2, polygon);
+        // §3.2 Lemma 3.2: only search A₁ for a vertex seeing A₂.
+        // Lemma 3.3 guarantees existence for any non-consecutive pair.
+        return {};
+    };
 
-        for (auto& piece : pieces2) {
-            if (piece.grade >= storage.num_grades()) continue;
-            if (piece.chain_index >= storage.num_chains(piece.grade)) continue;
+    // Try preferred pair first (maximally separated).
+    if (index_distance(0, k / 2) > 1) {
+        auto cand = try_pair(0, k / 2);
+        if (cand.valid) return cand;
+    }
 
-            const auto& cs = storage.get(piece.grade, piece.chain_index);
-            if (!cs.oracle.is_built()) continue;
-
-            auto cand = search_tree_decomposition(
-                submap, region_idx, polygon, cs,
-                piece.start_vertex, piece.end_vertex,
-                arc_i_final);
+    // Try remaining non-consecutive pairs.
+    for (std::size_t ii = 0; ii < k; ++ii) {
+        for (std::size_t jj = ii + 2; jj < k; ++jj) {
+            if (index_distance(ii, jj) <= 1) continue;
+            if (ii == 0 && jj == k / 2) continue;  // already tried
+            auto cand = try_pair(ii, jj);
             if (cand.valid) return cand;
         }
     }

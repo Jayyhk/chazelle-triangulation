@@ -42,8 +42,8 @@ CanonicalSubmap merge_submaps(std::size_t grade,
     // the §2.2 C-vertex guard during granularity enforcement.
     sub1.set_chain_info(s1.start_vertex, s1.end_vertex, &polygon);
     sub2.set_chain_info(s2.start_vertex, s2.end_vertex, &polygon);
-    enforce_granularity(sub1, gamma, /*protect_null_length=*/false);
-    enforce_granularity(sub2, gamma, /*protect_null_length=*/false);
+    enforce_granularity(sub1, gamma);
+    enforce_granularity(sub2, gamma);
 
     // Build oracles on the (possibly reduced) copies.
     RayShootingOracle ora1, ora2;
@@ -62,10 +62,8 @@ CanonicalSubmap merge_submaps(std::size_t grade,
     // Stage 2: Conformality restoration.
     restore_conformality(fused, storage, polygon, gamma);
 
-    // Stage 3: Granularity enforcement.
-    // Protect null-length chords: they mark y-extrema and must be
-    // preserved for the complete visibility map V(P).
-    enforce_granularity(fused, gamma, /*protect_null_length=*/true);
+    // Stage 3: Granularity enforcement (§3.3).
+    enforce_granularity(fused, gamma);
 
     // §2.3: Put the submap in normal form.  The arc-sequence table may
     // have been left unsorted by split_arc_at_vertex (conformality) and

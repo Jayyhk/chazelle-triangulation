@@ -233,7 +233,7 @@ std::size_t find_junction_region(const Submap& dst,
 void fuse_pass(const Submap& src,
                const RayShootingOracle& src_oracle,
                const Submap& dst,
-               const RayShootingOracle& /*dst_oracle*/,
+               const RayShootingOracle& dst_oracle,
                const Polygon& polygon,
                std::size_t junction_vertex,
                std::vector<DiscoveredChord>& discovered) {
@@ -394,8 +394,9 @@ void fuse_pass(const Submap& src,
         double dist_dst = std::numeric_limits<double>::infinity();
         if (current_region != NONE) {
             for (bool dir : {true, false}) {
-                RayHit h = local_shoot_in_region(
-                    dst, polygon, current_region, ox, y, dir);
+                RayHit h = dst_oracle.is_built()
+                    ? dst_oracle.shoot_from_region(current_region, ox, y, dir)
+                    : local_shoot_in_region(dst, polygon, current_region, ox, y, dir);
                 std::fprintf(stderr, "    startup dst local_shoot region=%zu ox=%.3f y=%.3f dir=%s type=%d hit_x=%.3f arc=%zu\n",
                              current_region, ox, y, dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
                 if (h.type == RayHit::Type::ARC) {
@@ -484,8 +485,9 @@ void fuse_pass(const Submap& src,
         if (current_region < dst.num_nodes() &&
             !dst.node(current_region).deleted) {
             for (bool dir : {true, false}) {
-                RayHit h = local_shoot_in_region(
-                    dst, polygon, current_region, ox, y, dir);
+                RayHit h = dst_oracle.is_built()
+                    ? dst_oracle.shoot_from_region(current_region, ox, y, dir)
+                    : local_shoot_in_region(dst, polygon, current_region, ox, y, dir);
                 std::fprintf(stderr, "      dst local_shoot dir=%s type=%d hit_x=%.3f arc=%zu\n",
                              dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
                 if (h.type == RayHit::Type::ARC) {
@@ -659,11 +661,59 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         add_chord_rec(dc.y, dc.left_edge, dc.right_edge, dc.is_null_length);
     }
 
-    std::sort(all_chords.begin(), all_chords.end(),
-              [](const ChordRecord& a, const ChordRecord& b) {
-                  if (a.sort_key != b.sort_key) return a.sort_key < b.sort_key;
-                  return a.y < b.y;
-              });
+    // §3.1: Merge the three pre-sorted chord lists instead of sorting.
+    // S₁ and S₂ chords are already in ∂C order; discovered chords are
+    // sorted here (typically a small list).
+    auto chord_less = [](const ChordRecord& a, const ChordRecord& b) {
+        if (a.sort_key != b.sort_key) return a.sort_key < b.sort_key;
+        return a.y < b.y;
+    };
+
+    // Partition all_chords into the three source ranges.
+    // S₁ chords are indices [0, s1_end), S₂ are [s1_end, s2_end),
+    // discovered are [s2_end, all_chords.size()).
+    std::size_t s1_end = 0;
+    for (std::size_t ci = 0; ci < s1.num_chords(); ++ci) {
+        const auto& c = s1.chord(ci);
+        if (c.region[0] == NONE && c.region[1] == NONE) continue;
+        s1_end++;
+    }
+    std::size_t s2_end = s1_end;
+    for (std::size_t ci = 0; ci < s2.num_chords(); ++ci) {
+        const auto& c = s2.chord(ci);
+        if (c.region[0] == NONE && c.region[1] == NONE) continue;
+        s2_end++;
+    }
+    // Sort only the discovered portion [s2_end, end).
+    std::sort(all_chords.begin() + static_cast<std::ptrdiff_t>(s2_end),
+              all_chords.end(), chord_less);
+
+    // 3-way merge into a new vector.
+    std::vector<ChordRecord> merged_chords;
+    merged_chords.reserve(all_chords.size());
+    std::size_t i1 = 0, i2 = s1_end, i3 = s2_end;
+    while (i1 < s1_end || i2 < s2_end || i3 < all_chords.size()) {
+        // Pick the smallest among the three heads.
+        const ChordRecord* best_ptr = nullptr;
+        std::size_t* best_idx = nullptr;
+        std::size_t best_limit = 0;
+        auto consider = [&](std::size_t& idx, std::size_t limit) {
+            if (idx < limit) {
+                if (!best_ptr || chord_less(all_chords[idx], *best_ptr)) {
+                    best_ptr = &all_chords[idx];
+                    best_idx = &idx;
+                    best_limit = limit;
+                }
+            }
+        };
+        consider(i1, s1_end);
+        consider(i2, s2_end);
+        consider(i3, all_chords.size());
+        if (!best_ptr) break;
+        merged_chords.push_back(*best_ptr);
+        ++(*best_idx);
+    }
+    all_chords = std::move(merged_chords);
 
     std::size_t num_regions = all_chords.size() + 1;
     for (std::size_t i = 0; i < num_regions; ++i)
@@ -734,15 +784,12 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         }
     };
 
+    // S₁ arcs come before S₂ arcs in ∂C order (disjoint edge ranges),
+    // so concatenation preserves ∂C order — no sort needed.
     for (std::size_t i = 0; i < s1.num_arcs(); ++i)
         split_and_add_arc(s1.arc(i));
     for (std::size_t i = 0; i < s2.num_arcs(); ++i)
         split_and_add_arc(s2.arc(i));
-
-    std::sort(all_arcs.begin(), all_arcs.end(),
-              [](const ArcRecord& a, const ArcRecord& b) {
-                  return a.sort_key < b.sort_key;
-              });
 
     for (auto& arec : all_arcs) {
         auto it = std::upper_bound(

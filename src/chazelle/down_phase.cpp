@@ -408,7 +408,7 @@ void refine_region(Submap& submap,
         TreeNode tn;
         tn.submap = get_submap(mp);
         tn.submap.set_chain_info(mp.start_vertex, mp.end_vertex, &polygon);
-        enforce_granularity(tn.submap, gamma_merge, /*protect_null_length=*/false);
+        enforce_granularity(tn.submap, gamma_merge);
         tn.oracle.build(tn.submap, polygon, gamma_merge);
         tn.start_vertex = mp.start_vertex;
         tn.end_vertex = mp.end_vertex;
@@ -442,6 +442,9 @@ void refine_region(Submap& submap,
 
             // Restore conformality on the fused result.
             restore_conformality(fused, storage, polygon, gamma_merge);
+
+            // §4.2 / Lemma 4.1: enforce granularity after conformality.
+            enforce_granularity(fused, gamma_merge);
 
             TreeNode merged;
             merged.submap = std::move(fused);
@@ -781,7 +784,7 @@ void process_grade(Submap& submap,
     if (!is_final) {
         std::fprintf(stderr, "  >> enforce_granularity start (grade=%zu, fine_gamma=%zu, max_chord=%zu)\n",
                      grade, fine_gamma, original_chord_count);
-        enforce_granularity(submap, fine_gamma, true, original_chord_count);
+        enforce_granularity(submap, fine_gamma, original_chord_count);
         std::fprintf(stderr, "  >> enforce_granularity done (grade=%zu)\n", grade);
     }
 
@@ -792,81 +795,9 @@ void process_grade(Submap& submap,
     submap.normalize();
 }
 
-/// Ensure the complete visibility map V(P) has null-length chords at
-/// every y-extremum vertex.
-///
-/// Per Chazelle §2.1: "if a vertex of C is a local extremum in the
-/// y-direction, the chord is null-length," creating an empty region
-/// in V(C).  These null-length chords may have been removed during
-/// the up-phase merge's granularity enforcement (they produce weight-0,
-/// degree-1 regions that are always considered removable).
-///
-/// This is the base case of Lemma 4.2: "the regions of S have bounded
-/// size, and therefore the missing chords can be provided in constant
-/// time per region."
-void add_missing_null_length_chords(Submap& submap,
-                                    const Polygon& polygon) {
-    // Build a set of vertices that already have properly-connected
-    // null-length chords.  A chord is "properly connected" if its
-    // two region endpoints are distinct and both are live.
-    std::vector<bool> has_null_chord(polygon.num_vertices(), false);
-    for (std::size_t ci = 0; ci < submap.num_chords(); ++ci) {
-        const auto& c = submap.chord(ci);
-        if (!c.is_null_length) continue;
-        if (c.left_edge == NONE || c.left_edge >= has_null_chord.size())
-            continue;
-        // Check the chord is properly connected.
-        if (c.region[0] == c.region[1]) continue;
-        if (c.region[0] == NONE || c.region[1] == NONE) continue;
-        if (submap.node(c.region[0]).deleted ||
-            submap.node(c.region[1]).deleted) continue;
-        has_null_chord[c.left_edge] = true;
-    }
-
-    // For each y-extremum vertex without a null-length chord, add one.
-    for (std::size_t v = 1; v + 1 < polygon.num_vertices(); ++v) {
-        if (!polygon.is_y_extremum(v)) continue;
-        if (has_null_chord[v]) continue;
-
-        // Find the region containing edge v-1 (the edge just before
-        // vertex v).  The null-length chord at v creates an empty
-        // region, so the target region keeps all its arcs.
-        std::size_t target_region = NONE;
-        for (std::size_t ri = 0; ri < submap.num_nodes(); ++ri) {
-            const auto& nd = submap.node(ri);
-            if (nd.deleted) continue;
-            for (std::size_t ai : nd.arcs) {
-                const auto& a = submap.arc(ai);
-                if (a.first_edge == NONE) continue;
-                std::size_t lo = std::min(a.first_edge, a.last_edge);
-                std::size_t hi = std::max(a.first_edge, a.last_edge);
-                if (v >= 1 && v - 1 >= lo && v - 1 <= hi) {
-                    target_region = ri;
-                    break;
-                }
-            }
-            if (target_region != NONE) break;
-        }
-
-        if (target_region == NONE) continue;
-
-        // Create the empty region and null-length chord.
-        std::size_t empty_region = submap.add_node();
-
-        Chord nlc;
-        nlc.y = polygon.vertex(v).y;
-        nlc.left_edge = v;
-        nlc.right_edge = v;
-        nlc.is_null_length = true;
-        nlc.region[0] = target_region;
-        nlc.region[1] = empty_region;
-
-        submap.add_chord(nlc);
-
-        // The empty region has no arcs (weight 0).
-        submap.recompute_weight(empty_region);
-    }
-}
+// §4.2: Null-length chords at y-extrema are discovered naturally by
+// the algorithm during the down-phase refinement.  No separate
+// post-processing step is needed.
 
 } // anonymous namespace
 
@@ -917,11 +848,8 @@ Submap down_phase(const Polygon& polygon, GradeStorage& storage) {
         lambda = next_lambda;
     }
 
-    // Add null-length chords at every y-extremum that doesn't
-    // already have one.  These create the empty regions required by
-    // FM Algorithm 2 to locate Class B trapezoids at cusps and
-    // guarantee unimonotone sub-polygons.
-    add_missing_null_length_chords(current, polygon);
+    // §4.2: Null-length chords at y-extrema are discovered naturally
+    // by the algorithm during the down-phase refinement.
 
     // DEBUG: dump the visibility map
     std::fprintf(stderr, "DOWN_PHASE FINAL: %zu nodes, %zu chords, %zu arcs\n",

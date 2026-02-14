@@ -21,16 +21,14 @@ namespace chazelle {
 /// Enforce granularity: remove redundant chords so that contracting any
 /// edge incident on a degree-<3 node would exceed γ.
 ///
-/// @param submap              The submap to make granular (modified in place).
-/// @param gamma               The target granularity.
-/// @param protect_null_length When true, null-length chords at y-extrema are
-///                            never removed.  Set this during the down-phase
-///                            where the goal is the complete V(P); leave false
-///                            during the up-phase merge.
-/// @param max_chord_idx       Only consider chords with index < this value.
-///                            Use NONE (default) to consider all chords.
+/// §3.3: "We process each exit chord in turn and check whether it is
+/// removable.  Chords need be processed only once."
+///
+/// @param submap         The submap to make granular (modified in place).
+/// @param gamma          The target granularity.
+/// @param max_chord_idx  Only consider chords with index < this value.
+///                       Use NONE (default) to consider all chords.
 void enforce_granularity(Submap& submap, std::size_t gamma,
-                         bool protect_null_length = false,
                          std::size_t max_chord_idx = NONE);
 
 } // namespace chazelle

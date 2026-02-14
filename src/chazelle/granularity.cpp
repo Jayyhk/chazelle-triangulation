@@ -8,7 +8,6 @@
 namespace chazelle {
 
 void enforce_granularity(Submap& submap, std::size_t gamma,
-                         bool protect_null_length,
                          std::size_t max_chord_idx) {
     // §3.3: Single-pass chord removal.  Chords need be processed only
     // once since removals cannot make any chord removable if it was not
@@ -17,7 +16,6 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
     // A chord is removable if:
     //   1. At least one of its endpoint regions has degree < 3.
     //   2. Merging the two regions would produce weight ≤ γ.
-    //   3. If protect_null_length is set, null-length chords are exempt.
 
     std::size_t chord_limit = (max_chord_idx != NONE)
                               ? std::min(max_chord_idx, submap.num_chords())
@@ -30,7 +28,7 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
         auto& c = submap.chord(ci);
         if (c.region[0] == NONE || c.region[1] == NONE) continue;
 
-        if (protect_null_length && c.is_null_length) continue;
+
 
         auto& n0 = submap.node(c.region[0]);
         auto& n1 = submap.node(c.region[1]);
