@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <set>
 #include <vector>
 
 namespace chazelle {
@@ -494,8 +493,12 @@ void refine_region(Submap& submap,
     };
     std::vector<InternalChord> internal_chords;
 
-    // Deduplication set.
-    std::set<std::pair<std::size_t, std::size_t>> seen;
+    // Deduplication: track which (min_edge) values have been seen.
+    // Edge indices are within the merged submap's range; use a
+    // vector<bool> for O(1) lookup.  Size is bounded by
+    // merged_submap's edge count, which is O(n/γ).
+    std::size_t merged_num_edges = polygon.num_edges();  // upper bound on edge idx
+    std::vector<bool> seen(merged_num_edges + 1, false);
 
     for (std::size_t ci = 0; ci < merged_submap.num_chords(); ++ci) {
         const auto& chord = merged_submap.chord(ci);
@@ -510,11 +513,12 @@ void refine_region(Submap& submap,
             !chord.is_null_length)
             continue;
 
-        // Deduplicate by edge pair.
-        auto key = std::make_pair(
-            std::min(chord.left_edge, chord.right_edge),
-            std::max(chord.left_edge, chord.right_edge));
-        if (!seen.insert(key).second) continue;
+        // Deduplicate by min_edge index — O(1) lookup.
+        std::size_t min_edge = std::min(chord.left_edge, chord.right_edge);
+        if (min_edge < seen.size()) {
+            if (seen[min_edge]) continue;
+            seen[min_edge] = true;
+        }
 
         // Check both endpoints lie on R's actual arcs.
         bool left_in = edge_in_region(chord.left_edge);
@@ -575,20 +579,19 @@ void refine_region(Submap& submap,
         pc_max  = std::max(pc_max, mx);
     }
 
-    // parent_chords_present[min_edge - pc_base] maps to max_edge
-    // (NONE if no chord).  For simplicity, just use a bool vector.
-    // §4.2: parent_chords is O(M) where M = initial chord count
-    // (bounded by n/γ).  The O(log M) factor per lookup is within
-    // the paper's O(m · log(n₁+n₂)) budget.
-    std::set<std::pair<std::size_t, std::size_t>> parent_chords;
-    for (std::size_t ci = 0; ci < submap.num_chords(); ++ci) {
+    // §4.2: parent_chords — O(1) lookup via boolean vector.
+    // Only the chords incident to region_idx can overlap with newly
+    // extracted internal chords.  In a conformal submap each region
+    // has degree ≤ 4, so this loop is O(1) per region.
+    std::size_t pc_range = (pc_max >= pc_base) ? (pc_max - pc_base + 1) : 0;
+    std::vector<bool> parent_chords(pc_range, false);
+    for (std::size_t ci : submap.node(region_idx).incident_chords) {
         const auto& c = submap.chord(ci);
         if (c.left_edge == NONE || c.right_edge == NONE) continue;
-        if (c.region[0] == NONE || c.region[1] == NONE) continue;
-        if (submap.node(c.region[0]).deleted ||
-            submap.node(c.region[1]).deleted) continue;
-        parent_chords.emplace(std::min(c.left_edge, c.right_edge),
-                              std::max(c.left_edge, c.right_edge));
+        std::size_t mn = std::min(c.left_edge, c.right_edge);
+        if (mn >= pc_base && mn - pc_base < pc_range) {
+            parent_chords[mn - pc_base] = true;
+        }
     }
 
     // §4.2 Step 5: edge→region index for O(1) chord-target lookup.
@@ -651,10 +654,9 @@ void refine_region(Submap& submap,
     // Phase 1: insert chords + partition arcs.
     for (auto& ic : internal_chords) {
         // Skip chords that already exist in the parent submap.
-        auto key = std::make_pair(
-            std::min(ic.left_edge, ic.right_edge),
-            std::max(ic.left_edge, ic.right_edge));
-        if (parent_chords.count(key)) continue;
+        std::size_t pc_min = std::min(ic.left_edge, ic.right_edge);
+        if (pc_min >= pc_base && pc_min - pc_base < pc_range &&
+            parent_chords[pc_min - pc_base]) continue;
 
         std::size_t le_edge = ic.left_edge;
 
@@ -676,7 +678,9 @@ void refine_region(Submap& submap,
 
         std::size_t new_chord_idx = submap.add_chord(new_chord);
         new_chord_indices.push_back(new_chord_idx);
-        parent_chords.insert(key);
+        if (pc_min >= pc_base && pc_min - pc_base < pc_range) {
+            parent_chords[pc_min - pc_base] = true;
+        }
 
         // Null-length chords create an empty region; no arc partition.
         if (ic.left_edge == ic.right_edge) {

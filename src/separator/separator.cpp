@@ -25,13 +25,13 @@ struct Component {
 };
 
 std::vector<Component>
-find_components(const PlanarGraph& graph) {
-    const std::size_t nv = graph.num_vertices();
-    std::vector<bool> visited(nv, false);
+find_components(const PlanarGraph& graph,
+                const std::vector<std::size_t>& piece_verts,
+                std::vector<bool>& visited) {
     std::vector<Component> comps;
 
-    for (std::size_t start = 0; start < nv; ++start) {
-        if (visited[start] || graph.vertex(start).deleted) continue;
+    for (std::size_t start : piece_verts) {
+        if (visited[start]) continue;
         Component comp;
         std::queue<std::size_t> q;
         q.push(start);
@@ -104,23 +104,41 @@ std::size_t bfs_spanning_tree(PlanarGraph& graph,
 
 /// Triangulate every face of the embedded graph by fan-triangulation.
 /// Added edges are marked as non-tree.
+///
+/// Uses a generation-counter visited buffer to avoid O(nv) allocation
+/// per call.  The counter is incremented once; testing/setting is O(1).
 void triangulate_faces(PlanarGraph& graph,
-                       const std::vector<std::size_t>& verts) {
+                       const std::vector<std::size_t>& verts,
+                       std::vector<std::size_t>& he_gen,
+                       std::size_t& he_current_gen) {
     // Collect all directed half-edges, then trace faces.
     // A directed half-edge is (edge_index, destination_vertex).
-    // We track visited half-edges to avoid re-processing faces.
+    // We track visited half-edges via generation counter to avoid
+    // re-processing faces.
     struct HalfEdge {
         std::size_t edge_idx;
         std::size_t dest;
     };
 
-    // Use a set of (edge_idx * 2 + side) to track visited directed edges.
-    const std::size_t ne = graph.num_edges();
-    std::vector<bool> visited(ne * 2, false);
+    // Advance generation — O(1) clear of all previous marks.
+    ++he_current_gen;
+
+    // Ensure buffer covers all current edges.
+    if (he_gen.size() < graph.num_edges() * 2) {
+        he_gen.resize(graph.num_edges() * 2, 0);
+    }
 
     auto half_id = [&](std::size_t ei, std::size_t dest) -> std::size_t {
         int s = graph.edge(ei).side_of(dest);
         return ei * 2 + static_cast<std::size_t>(s);
+    };
+
+    auto is_visited = [&](std::size_t hid) -> bool {
+        return hid < he_gen.size() && he_gen[hid] == he_current_gen;
+    };
+
+    auto mark_visited = [&](std::size_t h) {
+        if (h < he_gen.size()) he_gen[h] = he_current_gen;
     };
 
     for (std::size_t v : verts) {
@@ -128,7 +146,7 @@ void triangulate_faces(PlanarGraph& graph,
         graph.for_each_edge_cw(v, [&](std::size_t start_ei) {
             // Directed edge: towards v.
             std::size_t hid = half_id(start_ei, v);
-            if (visited[hid]) return;
+            if (is_visited(hid)) return;
 
             // Trace the face boundary.
             std::vector<HalfEdge> face;
@@ -136,7 +154,7 @@ void triangulate_faces(PlanarGraph& graph,
             std::size_t dest = v;
             do {
                 std::size_t h = half_id(ei, dest);
-                if (h < visited.size()) visited[h] = true;
+                mark_visited(h);
                 face.push_back({ei, dest});
                 auto [nei, ndest] = graph.face_next(ei, dest);
                 ei   = nei;
@@ -156,8 +174,10 @@ void triangulate_faces(PlanarGraph& graph,
                     graph.add_edge(anchor, w, face[0].edge_idx,
                                    face[i].edge_idx);
                 graph.edge(new_ei).is_tree = false;
-                // Update visited capacity if edges grew.
-                visited.resize(graph.num_edges() * 2, false);
+                // Grow generation buffer if edges were added.
+                if (he_gen.size() < graph.num_edges() * 2) {
+                    he_gen.resize(graph.num_edges() * 2, 0);
+                }
             }
         });
     }
@@ -262,25 +282,45 @@ void compute_descendant_costs(PlanarGraph& graph,
     }
 }
 
+/// Workspace buffers for find_separator, allocated once at size nv.
+/// Each boolean buffer is cleared in O(n_piece) after use by iterating
+/// the piece vertices, avoiding O(nv) re-allocation per call.
+/// The half-edge buffer uses a generation counter for O(1) clearing.
+struct SeparatorWorkspace {
+    std::vector<bool> visited;      // find_components
+    std::vector<bool> table;        // Step 6b contraction
+    std::vector<bool> on_cycle;     // Step 9
+    std::vector<bool> is_interior;  // Step 9
+    std::vector<bool> is_sep;       // Step 10
+    std::vector<bool> reachable;    // Step 10
+    std::vector<std::size_t> he_gen; // triangulate_faces generation counters
+    std::size_t he_current_gen = 0;
+
+    explicit SeparatorWorkspace(std::size_t nv, std::size_t ne)
+        : visited(nv, false), table(nv, false), on_cycle(nv, false)
+        , is_interior(nv, false), is_sep(nv, false), reachable(nv, false)
+        , he_gen(ne * 2, 0) {}
+};
+
 } // anonymous namespace
 
 // ════════════════════════════════════════════════════════════════════
-//  find_separator — Lipton-Tarjan 10-step algorithm
+//  find_separator_impl — internal version with shared workspace
 // ════════════════════════════════════════════════════════════════════
 
-SeparatorResult find_separator(PlanarGraph& graph) {
-    const std::size_t nv = graph.num_vertices();
+namespace {
+
+SeparatorResult find_separator_impl(PlanarGraph& graph,
+                                     const std::vector<std::size_t>& piece_verts,
+                                     SeparatorWorkspace& ws) {
+    [[maybe_unused]] const std::size_t nv = graph.num_vertices();
     SeparatorResult result;
 
-    // Collect non-deleted vertices.
-    std::vector<std::size_t> all_verts;
-    all_verts.reserve(nv);
+    // Use caller-provided piece vertices (O(n_piece), not O(nv)).
+    const auto& all_verts = piece_verts;
     double total_cost = 0.0;
-    for (std::size_t i = 0; i < nv; ++i) {
-        if (!graph.vertex(i).deleted) {
-            all_verts.push_back(i);
-            total_cost += graph.vertex(i).cost;
-        }
+    for (std::size_t v : all_verts) {
+        total_cost += graph.vertex(v).cost;
     }
 
     if (all_verts.empty()) return result;
@@ -293,7 +333,9 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     }
 
     // ── Step 2: connected components ────────────────────────────
-    auto comps = find_components(graph);
+    auto comps = find_components(graph, all_verts, ws.visited);
+    // Clear visited buffer in O(n_piece).
+    for (std::size_t v : all_verts) ws.visited[v] = false;
 
     // Find the heaviest component.
     std::size_t heavy_idx = 0;
@@ -492,7 +534,7 @@ SeparatorResult find_separator(PlanarGraph& graph) {
         std::size_t pos_at_w;   // edge CW-before (v,w) at w
     };
     std::vector<RedirectInfo> redirects;
-    std::vector<bool> table(nv, false);
+    auto& table = ws.table;
     for (std::size_t v : comp.vertices) {
         if (graph.vertex(v).level <= l0)
             table[v] = true;  // in contracted set
@@ -514,12 +556,15 @@ SeparatorResult find_separator(PlanarGraph& graph) {
             } else {
                 // First encounter with middle vertex w.
                 table[w] = true;
-                int ws = graph.edge(ei).side_of(w);
-                redirects.push_back({w, graph.edge(ei).ccw[ws]});
+                int w_side = graph.edge(ei).side_of(w);
+                redirects.push_back({w, graph.edge(ei).ccw[w_side]});
             }
         });
     };
     tree_scan(tree_scan, root);
+
+    // Clear table buffer in O(n_piece).
+    for (std::size_t v : comp.vertices) table[v] = false;
 
     // 6c. Soft-delete ALL edges of vertices at levels 0..l₀.
     for (std::size_t v : comp.vertices) {
@@ -569,7 +614,7 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     std::size_t middle_max_level =
         bfs_spanning_tree(graph, middle_verts, super_x);
     compute_descendant_costs(graph, middle_verts, middle_max_level);
-    triangulate_faces(graph, middle_verts);
+    triangulate_faces(graph, middle_verts, ws.he_gen, ws.he_current_gen);
 
     // Steps 8–9: Find a fundamental cycle that separates the middle.
     // Per Step 8, choose any nontree edge in the contracted graph.
@@ -601,8 +646,8 @@ SeparatorResult find_separator(PlanarGraph& graph) {
         // removing one face from the inside.  Cost update is O(1)
         // per iteration.  Total O(V) iterations × O(1) = O(V).
 
-        // Mark cycle vertices in a vector<bool> for O(1) lookup.
-        std::vector<bool> on_cycle(nv, false);
+        // Mark cycle vertices in workspace buffer for O(1) lookup.
+        auto& on_cycle = ws.on_cycle;
         for (std::size_t v : cycle_verts) on_cycle[v] = true;
 
         // Compute initial cycle cost and raw descendant cost.
@@ -619,7 +664,7 @@ SeparatorResult find_separator(PlanarGraph& graph) {
 
         // Determine interior vs exterior by marking one side via
         // BFS from one face of the initial non-tree edge.  O(V).
-        std::vector<bool> is_interior(nv, false);
+        auto& is_interior = ws.is_interior;
         double interior_cost = one_side_desc;
         {
             std::size_t cu0 = graph.edge(cycle_edge).endpoint[0];
@@ -652,7 +697,8 @@ SeparatorResult find_separator(PlanarGraph& graph) {
             if (std::abs(marked_cost - other_side_desc) <
                 std::abs(marked_cost - one_side_desc)) {
                 // Guessed the wrong side — re-mark from the other face.
-                is_interior.assign(nv, false);
+                // Clear in O(n_piece) instead of O(nv).
+                for (std::size_t mv : middle_verts) is_interior[mv] = false;
                 auto [ne_t2, nd_t2] = graph.face_next(cycle_edge, cu0);
                 std::size_t y_probe2 = nd_t2;
                 if (!on_cycle[y_probe2] &&
@@ -755,7 +801,7 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     }
 
     // C = separator levels (l₀, l₂) + cycle vertices
-    std::vector<bool> is_sep(nv, false);
+    auto& is_sep = ws.is_sep;
     for (std::size_t v : sep_levels) {
         if (!is_sep[v]) { is_sep[v] = true; result.C.push_back(v); }
     }
@@ -766,7 +812,7 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     // Partition remaining vertices into A (inside cycle) and B (outside).
     // BFS from tree root, not crossing separator.
     std::size_t tree_root = root;
-    std::vector<bool> reachable(nv, false);
+    auto& reachable = ws.reachable;
     {
         std::queue<std::size_t> q;
         if (!is_sep[tree_root]) {
@@ -802,12 +848,37 @@ SeparatorResult find_separator(PlanarGraph& graph) {
         std::swap(result.A, result.B);
     }
 
-    // Restore original costs.
+    // Restore original costs and clean workspace buffers — O(n_piece).
     for (std::size_t v : all_verts) {
         graph.vertex(v).cost *= total_cost;
+        ws.on_cycle[v] = false;
+        ws.is_interior[v] = false;
+        ws.is_sep[v] = false;
+        ws.reachable[v] = false;
     }
 
     return result;
+}
+
+} // anonymous namespace
+
+// ════════════════════════════════════════════════════════════════════
+//  find_separator — public wrapper (allocates its own workspace)
+// ════════════════════════════════════════════════════════════════════
+
+SeparatorResult find_separator(PlanarGraph& graph) {
+    const std::size_t nv = graph.num_vertices();
+    const std::size_t ne = graph.num_edges();
+
+    // Collect non-deleted vertices — O(nv) for the public API.
+    std::vector<std::size_t> piece_verts;
+    piece_verts.reserve(nv);
+    for (std::size_t i = 0; i < nv; ++i) {
+        if (!graph.vertex(i).deleted) piece_verts.push_back(i);
+    }
+
+    SeparatorWorkspace ws(nv, ne);
+    return find_separator_impl(graph, piece_verts, ws);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -832,9 +903,11 @@ iterated_separator(PlanarGraph& graph, std::size_t max_piece_size) {
     // in O(|piece|) per call, not O(nv).  Total work per recursion
     // level is O(μ) (pieces are disjoint) → O(μ log μ) overall.
     //
-    // We use a vector<bool> to track which vertices are part of
-    // the current piece for O(1) membership tests.
+    // Shared workspace: allocated once at O(nv), boolean buffers
+    // cleared in O(n_piece) per call via targeted resets.
+    // The half-edge generation counter clears in O(1).
     std::vector<bool> in_piece(nv, false);
+    SeparatorWorkspace ws(nv, graph.num_edges());
 
     std::function<void(std::vector<std::size_t>)> recurse =
         [&](std::vector<std::size_t> piece) {
@@ -856,7 +929,7 @@ iterated_separator(PlanarGraph& graph, std::size_t max_piece_size) {
             graph.vertex(v).cost = 1.0;
         }
 
-        auto sep = find_separator(graph);
+        auto sep = find_separator_impl(graph, piece, ws);
 
         // Clear the piece marking.
         for (std::size_t v : piece) in_piece[v] = false;
