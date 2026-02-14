@@ -596,6 +596,39 @@ void Submap::normalize() {
            arc_sequence_.back().first_edge == NONE) {
         arc_sequence_.pop_back();
     }
+
+    // Also normalize chords for linear-time fusion.
+    normalize_chords();
+}
+
+void Submap::normalize_chords() {
+    if (chords_.empty()) return;
+
+    std::sort(chords_.begin(), chords_.end(), [](const Chord& a, const Chord& b) {
+        std::size_t a_start = std::min(a.left_edge, a.right_edge);
+        std::size_t b_start = std::min(b.left_edge, b.right_edge);
+        if (a_start != b_start) return a_start < b_start;
+        
+        std::size_t a_end = std::max(a.left_edge, a.right_edge);
+        std::size_t b_end = std::max(b.left_edge, b.right_edge);
+        if (a_end != b_end) return a_end < b_end;
+
+        return a.y < b.y;
+    });
+
+    // Rebuild incident_chords for all nodes since chord indices changed.
+    for (auto& nd : nodes_) {
+        nd.incident_chords.clear();
+    }
+    for (std::size_t i = 0; i < chords_.size(); ++i) {
+        const auto& c = chords_[i];
+        for (int s = 0; s < 2; ++s) {
+            std::size_t r = c.region[s];
+            if (r != NONE && r < nodes_.size()) {
+                nodes_[r].incident_chords.push_back(i);
+            }
+        }
+    }
 }
 
 // --- Double Identification (§2.4) ---

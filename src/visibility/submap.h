@@ -133,6 +133,10 @@ public:
     /// Sort key: min(first_edge, last_edge), i.e., position along ∂C.
     void normalize();
 
+    /// Sort the chords by (min_edge, max_edge, y).
+    /// Required for linear-time fusion (§3.1).
+    void normalize_chords();
+
     // --- Double Identification (§2.4) ---
 
     /// Given an edge index in the input table and a y-coordinate,

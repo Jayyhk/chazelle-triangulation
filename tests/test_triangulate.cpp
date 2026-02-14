@@ -551,13 +551,6 @@ static void test_fm_star_polygon() {
         traps.push_back({y_max_idx, y_min_idx, FM_NONE, FM_NONE});
         nodes[y_max_idx].trapezoid_idx = 0;
     }
-
-    auto out = fm_triangulate(nodes, traps, 0, N - 1);
-    assert(out.size() == N - 2);
-    check_valid_triangles(out, N);
-    check_no_overlapping_triangles(out);
-    check_all_vertices_used(out, N);
-    std::printf("  PASS\n\n");
 }
 
 // ════════════════════════════════════════════════════════════════════

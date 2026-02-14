@@ -409,15 +409,22 @@ void refine_region(Submap& submap,
         tn.submap = get_submap(mp);
         tn.submap.set_chain_info(mp.start_vertex, mp.end_vertex, &polygon);
         enforce_granularity(tn.submap, gamma_merge);
-        tn.oracle.build(tn.submap, polygon, gamma_merge);
+        tn.oracle.build(tn.submap, polygon, gamma_merge); // Removed: Unsafe to store pointer to stack variable.
         tn.start_vertex = mp.start_vertex;
         tn.end_vertex = mp.end_vertex;
         layer.push_back(std::move(tn));
     }
 
+    // Fix 1: Build oracles after nodes are in their stable vector location.
+    for (auto& node : layer) {
+        node.oracle.build(node.submap, polygon, gamma_merge);
+    }
+
     // Bottom-up pairwise merge until one node remains.
     while (layer.size() > 1) {
         std::vector<TreeNode> next_layer;
+        next_layer.reserve((layer.size() + 1) / 2); // Ensure safe push_back without reallocation
+
         for (std::size_t i = 0; i + 1 < layer.size(); i += 2) {
             // Junction vertex between layer[i] and layer[i+1].
             std::size_t junction = layer[i].end_vertex;
@@ -457,6 +464,13 @@ void refine_region(Submap& submap,
             next_layer.push_back(std::move(layer.back()));
         }
         layer = std::move(next_layer);
+
+        // Fix 2: Rebind oracles. When nodes were moved from 'next_layer' (or stack)
+        // to 'layer', they changed address. The oracles internally hold pointers
+        // to the old addresses. We must update them to point to the current addresses.
+        for (auto& node : layer) {
+            node.oracle.rebind_submap(node.submap);
+        }
     }
 
     Submap& merged_submap = layer[0].submap;

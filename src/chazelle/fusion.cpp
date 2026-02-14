@@ -561,7 +561,7 @@ void fuse_pass(const Submap& src,
 /// Per §3.1: "Sort the endpoints of these chords along ∂C (by edge name,
 /// then y-coordinate)."
 Submap rebuild_submap(const Submap& s1, const Submap& s2,
-                      const std::vector<DiscoveredChord>& discovered,
+                      const std::vector<DiscoveredChord>& discovered_chords,
                       const Polygon& /*polygon*/) {
     Submap result;
 
@@ -606,72 +606,92 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         all_chords.push_back({y, le, re, is_null, sk});
     };
 
+    // Populate all_chords from S₁, S₂, and discovered chords.
+    // Chords are added via add_chord_rec which handles deduplication.
+
     for (std::size_t ci = 0; ci < s1.num_chords(); ++ci) {
         const auto& c = s1.chord(ci);
         if (c.region[0] == NONE && c.region[1] == NONE) continue;
         add_chord_rec(c.y, c.left_edge, c.right_edge, c.is_null_length);
     }
+
     for (std::size_t ci = 0; ci < s2.num_chords(); ++ci) {
         const auto& c = s2.chord(ci);
         if (c.region[0] == NONE && c.region[1] == NONE) continue;
         add_chord_rec(c.y, c.left_edge, c.right_edge, c.is_null_length);
     }
-    for (const auto& dc : discovered) {
+
+    for (const auto& dc : discovered_chords) {
         add_chord_rec(dc.y, dc.left_edge, dc.right_edge, dc.is_null_length);
     }
 
-    // §3.1: Merge the three pre-sorted chord lists instead of sorting.
-    // S₁ and S₂ chords are already in ∂C order; discovered chords are
-    // sorted here (typically a small list).
+    // §3.1: Merge the three chord lists in linear time O(N).
+    // S₁ and S₂ chords are guaranteed sorted by Submap::normalize().
+    
+    // 1. Transform and sort discovered chords.
+    std::vector<ChordRecord> disc_list;
+    disc_list.reserve(discovered_chords.size());
+    for (const auto& dc : discovered_chords) {
+         disc_list.push_back({dc.y, dc.left_edge, dc.right_edge, dc.is_null_length, 
+                              std::min(dc.left_edge, dc.right_edge)});
+    }
     auto chord_less = [](const ChordRecord& a, const ChordRecord& b) {
         if (a.sort_key != b.sort_key) return a.sort_key < b.sort_key;
         return a.y < b.y;
     };
+    std::sort(disc_list.begin(), disc_list.end(), chord_less);
 
-    // Partition all_chords into the three source ranges.
-    // S₁ chords are indices [0, s1_end), S₂ are [s1_end, s2_end),
-    // discovered are [s2_end, all_chords.size()).
-    std::size_t s1_end = 0;
-    for (std::size_t ci = 0; ci < s1.num_chords(); ++ci) {
-        const auto& c = s1.chord(ci);
-        if (c.region[0] == NONE && c.region[1] == NONE) continue;
-        s1_end++;
+    // 2. Pre-filter S1 and S2 chords to handle invalid entries linearly.
+    std::vector<ChordRecord> s1_list, s2_list;
+    s1_list.reserve(s1.num_chords());
+    for (std::size_t k = 0; k < s1.num_chords(); ++k) {
+        const auto& c = s1.chord(k);
+        if (c.region[0] != NONE || c.region[1] != NONE)
+             s1_list.push_back({c.y, c.left_edge, c.right_edge, c.is_null_length, std::min(c.left_edge, c.right_edge)});
     }
-    std::size_t s2_end = s1_end;
-    for (std::size_t ci = 0; ci < s2.num_chords(); ++ci) {
-        const auto& c = s2.chord(ci);
-        if (c.region[0] == NONE && c.region[1] == NONE) continue;
-        s2_end++;
+    s2_list.reserve(s2.num_chords());
+    for (std::size_t k = 0; k < s2.num_chords(); ++k) {
+        const auto& c = s2.chord(k);
+        if (c.region[0] != NONE || c.region[1] != NONE)
+             s2_list.push_back({c.y, c.left_edge, c.right_edge, c.is_null_length, std::min(c.left_edge, c.right_edge)});
     }
-    // Sort only the discovered portion [s2_end, end).
-    std::sort(all_chords.begin() + static_cast<std::ptrdiff_t>(s2_end),
-              all_chords.end(), chord_less);
 
-    // 3-way merge into a new vector.
-    std::vector<ChordRecord> merged_chords;
-    merged_chords.reserve(all_chords.size());
-    std::size_t i1 = 0, i2 = s1_end, i3 = s2_end;
-    while (i1 < s1_end || i2 < s2_end || i3 < all_chords.size()) {
-        // Pick the smallest among the three heads.
-        const ChordRecord* best_ptr = nullptr;
-        std::size_t* best_idx = nullptr;
-        
-        auto consider = [&](std::size_t& idx, std::size_t limit) {
-            if (idx < limit) {
-                if (!best_ptr || chord_less(all_chords[idx], *best_ptr)) {
-                    best_ptr = &all_chords[idx];
-                    best_idx = &idx;
-                }
+    // 3. Perform 3-Way Merge of S1, S2, and Discovered.
+    all_chords.clear();
+    all_chords.reserve(s1_list.size() + s2_list.size() + disc_list.size());
+
+    std::size_t i1 = 0, n1 = s1_list.size();
+    std::size_t i2 = 0, n2 = s2_list.size();
+    std::size_t id = 0, nd = disc_list.size();
+    
+    while (i1 < n1 || i2 < n2 || id < nd) {
+        // Find min of head of lists
+        int source = -1; // 0=s1, 1=s2, 2=disc
+        const ChordRecord* min_c = nullptr;
+
+        if (i1 < n1) {
+            min_c = &s1_list[i1];
+            source = 0;
+        }
+        if (i2 < n2) {
+            if (!min_c || chord_less(s2_list[i2], *min_c)) {
+                min_c = &s2_list[i2];
+                source = 1;
             }
-        };
-        consider(i1, s1_end);
-        consider(i2, s2_end);
-        consider(i3, all_chords.size());
-        if (!best_ptr) break;
-        merged_chords.push_back(*best_ptr);
-        ++(*best_idx);
+        }
+        if (id < nd) {
+            if (!min_c || chord_less(disc_list[id], *min_c)) {
+                min_c = &disc_list[id];
+                source = 2;
+            }
+        }
+        
+        // Push min and advance
+        all_chords.push_back(*min_c);
+        if (source == 0) i1++;
+        else if (source == 1) i2++;
+        else id++;
     }
-    all_chords = std::move(merged_chords);
 
     std::size_t num_regions = all_chords.size() + 1;
     for (std::size_t i = 0; i < num_regions; ++i)
@@ -707,6 +727,12 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         std::size_t hi = std::max(a.first_edge, a.last_edge);
 
         // Find all split points strictly interior to [lo, hi].
+        if (lo >= hi) {
+             // No interior points possible if lo == hi.
+             all_arcs.push_back({a, lo});
+             return;
+        }
+
         auto it_lo = std::upper_bound(split_edges.begin(),
                                        split_edges.end(), lo);
         auto it_hi = std::lower_bound(split_edges.begin(),
@@ -714,8 +740,11 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
 
         // Collect interior split points.
         std::vector<std::size_t> splits;
-        for (auto it = it_lo; it != it_hi; ++it)
-            splits.push_back(*it);
+        // Safety check: sequence must be valid.
+        if (std::distance(it_lo, it_hi) > 0) {
+            for (auto it = it_lo; it != it_hi; ++it)
+                splits.push_back(*it);
+        }
 
         if (splits.empty()) {
             // No splits needed — arc stays whole.
