@@ -143,13 +143,8 @@ ConvertResult convert_submap_to_fm(const Submap& vp,
             else if (nd_top.trapezoid_idx2 == std::numeric_limits<std::size_t>::max())
                 nd_top.trapezoid_idx2 = ti;
         }
-        if (bot_v < result.nodes.size()) {
-            auto& nd_bot = result.nodes[bot_v];
-            if (nd_bot.trapezoid_idx == std::numeric_limits<std::size_t>::max())
-                nd_bot.trapezoid_idx = ti;
-            else if (nd_bot.trapezoid_idx2 == std::numeric_limits<std::size_t>::max())
-                nd_bot.trapezoid_idx2 = ti;
-        }
+        // Strict Adherence: "Each trapezoid appears only once, with the vertex of the highest y coordinate."
+        // Do not assign to bottom_vertex.
     }
 
     return result;

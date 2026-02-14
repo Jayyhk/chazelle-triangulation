@@ -31,21 +31,24 @@ struct DiscoveredChord {
 /// the hit point lies on.  Returns the edge index.
 ///
 /// Per §3.1 Remark 1, chord endpoints are arbitrary points on ∂C,
-/// identified by their edge index.  The y-coordinate of the chord
-/// determines the exact position on that edge.
+/// identified by their edge index.
+///
+/// Use strict equality/inequality for symbolic perturbation consistency.
 std::size_t resolve_hit_edge(const Submap& submap,
                               const Polygon& polygon,
                               std::size_t arc_idx,
-                              double ray_y,
-                              double ray_hit_x) {
+                              double ray_y) {
     const auto& arc = submap.arc(arc_idx);
     if (arc.first_edge == NONE) return NONE;
 
     std::size_t lo = std::min(arc.first_edge, arc.last_edge);
     std::size_t hi = std::max(arc.first_edge, arc.last_edge);
 
-    std::size_t best_edge = NONE;
-    double best_x_dist = std::numeric_limits<double>::infinity();
+    // In the symbolic perturbation model, general position is assumed.
+    // A horizontal ray at `ray_y` intersects exactly one edge of the chain
+    // [lo, hi], unless ray_y coincides with a vertex y-coordinate.
+    // Even then, consistency is handled by the lexicographic order in predicates.
+    // Here we just need to find *which* edge covers ray_y.
 
     for (std::size_t ei = lo; ei <= hi && ei < polygon.num_edges(); ++ei) {
         const auto& edge = polygon.edge(ei);
@@ -55,20 +58,14 @@ std::size_t resolve_hit_edge(const Submap& submap,
         double y_lo = std::min(p1.y, p2.y);
         double y_hi = std::max(p1.y, p2.y);
 
-        if (ray_y < y_lo - 1e-12 || ray_y > y_hi + 1e-12) continue;
-        if (std::abs(y_hi - y_lo) < 1e-15) continue;
+        // Exact comparison.
+        if (ray_y < y_lo || ray_y > y_hi) continue;
+        if (p1.y == p2.y) continue; // Horizontal edges shouldn't exist in filtered input.
 
-        double t = (ray_y - p1.y) / (p2.y - p1.y);
-        double edge_x = p1.x + t * (p2.x - p1.x);
-
-        double dx = std::abs(edge_x - ray_hit_x);
-        if (dx < best_x_dist) {
-            best_x_dist = dx;
-            best_edge = ei;
-        }
+        return ei;
     }
 
-    return best_edge;
+    return NONE;
 }
 
 /// Compute the x-coordinate of a point on ∂C at height y, on the
@@ -76,19 +73,8 @@ std::size_t resolve_hit_edge(const Submap& submap,
 double origin_x_for_vertex(const Polygon& polygon, std::size_t v) {
     if (v >= polygon.num_vertices()) return 0.0;
     const auto& pt = polygon.vertex(v);
-    double x = pt.x;
-    double y = pt.y;
-    std::size_t ei = (v > 0 && v <= polygon.num_edges()) ? v - 1 : 0;
-    if (ei < polygon.num_edges()) {
-        const auto& edge = polygon.edge(ei);
-        const auto& p1 = polygon.vertex(edge.start_idx);
-        const auto& p2 = polygon.vertex(edge.end_idx);
-        if (std::abs(p2.y - p1.y) > 1e-15) {
-            double t = (y - p1.y) / (p2.y - p1.y);
-            x = p1.x + t * (p2.x - p1.x);
-        }
-    }
-    return x;
+    // Return vertex x directly.
+    return pt.x;
 }
 
 /// Do local shooting from point (origin_x, y) within a specific region
@@ -108,7 +94,9 @@ RayHit local_shoot_in_region(const Submap& submap,
 
     for (std::size_t ci : nd.incident_chords) {
         const auto& c = submap.chord(ci);
-        if (std::abs(c.y - y) > 1e-12) continue;
+        // Exact comparison for chords (they are horizontal segments).
+        if (c.y != y) continue;
+        
         if (c.left_edge != NONE && c.right_edge != NONE &&
             c.left_edge < polygon.num_edges() &&
             c.right_edge < polygon.num_edges()) {
@@ -118,7 +106,8 @@ RayHit local_shoot_in_region(const Submap& submap,
                                          : std::max(lx, rx);
             double dist = shoot_right ? (chord_x - origin_x)
                                       : (origin_x - chord_x);
-            if (dist > -1e-12 && dist < best_dist) {
+            // Strict distance check > 0 for valid hit.
+            if (dist > 0.0 && dist < best_dist) {
                 best_dist = dist;
                 best.type = RayHit::Type::CHORD;
                 best.chord_idx = ci;
@@ -132,19 +121,22 @@ RayHit local_shoot_in_region(const Submap& submap,
         if (a.first_edge == NONE) continue;
 
         // §4.2: Virtual arcs represent tilted exit-chord edges.
-        // Symbolic perturbation: the tilted edge has infinitesimal
-        // y-extent [vy - ε, vy + ε].  In the limit ε → 0, only rays
-        // at y ≈ vy intersect it.  Use exact midpoint: no TILT constant.
+        // Symbolic perturbation logic:
+        // A tilted chord is formally `y = virtual_y + ε * x`.
+        // In the limit ε -> 0, it acts as a horizontal segment at `virtual_y`.
         if (a.is_virtual()) {
             double vy = a.virtual_y;
-            if (std::abs(y - vy) > 1e-9) continue;
+            // Exact y comparison.
+            if (y != vy) continue;
+
             double x_left = (a.first_edge < polygon.num_edges())
                 ? polygon.edge_x_at_y(a.first_edge, vy) : 0.0;
             double x_right = (a.last_edge < polygon.num_edges())
                 ? polygon.edge_x_at_y(a.last_edge, vy) : 0.0;
+            // Midpoint approximation for hit x is fine topology-wise.
             double x = (x_left + x_right) * 0.5;
             double dist = shoot_right ? (x - origin_x) : (origin_x - x);
-            if (dist > -1e-12 && dist < best_dist) {
+            if (dist > 0.0 && dist < best_dist) {
                 best_dist = dist;
                 best.type = RayHit::Type::ARC;
                 best.arc_idx = ai;
@@ -162,14 +154,20 @@ RayHit local_shoot_in_region(const Submap& submap,
             const auto& edge = polygon.edge(ei);
             const auto& p1 = polygon.vertex(edge.start_idx);
             const auto& p2 = polygon.vertex(edge.end_idx);
+            
             double y_lo = std::min(p1.y, p2.y);
             double y_hi = std::max(p1.y, p2.y);
-            if (y < y_lo - 1e-12 || y > y_hi + 1e-12) continue;
-            if (std::abs(y_hi - y_lo) < 1e-15) continue;
-            double t = (y - p1.y) / (p2.y - p1.y);
-            double x = p1.x + t * (p2.x - p1.x);
+
+            // Exact bounds check.
+            if (y < y_lo || y > y_hi) continue;
+            if (p1.y == p2.y) continue; 
+
+            // Exact intersection computation.
+            double x = horizontal_ray_x_intercept(p1, p2, y);
+
             double dist = shoot_right ? (x - origin_x) : (origin_x - x);
-            if (dist > -1e-12 && dist < best_dist) {
+            // Strict check.
+            if (dist > 0.0 && dist < best_dist) {
                 best_dist = dist;
                 best.type = RayHit::Type::ARC;
                 best.arc_idx = ai;
@@ -293,8 +291,7 @@ void fuse_pass(const Submap& src,
     // Always include the junction vertex (default: shoot right).
     add_vertex_stop(junction_vertex, true);
 
-    // Sort by position along ∂C: primary key = edge index, then by
-    // parametric position along that edge.
+    // Sort by position along ∂C using perturbed comparison logic.
     std::sort(stops.begin(), stops.end(),
               [&](const StopPoint& a, const StopPoint& b) {
                   if (a.edge_idx != b.edge_idx) return a.edge_idx < b.edge_idx;
@@ -302,11 +299,16 @@ void fuse_pass(const Submap& src,
                       const auto& e = polygon.edge(a.edge_idx);
                       const auto& p1 = polygon.vertex(e.start_idx);
                       const auto& p2 = polygon.vertex(e.end_idx);
-                      double dy = p2.y - p1.y;
-                      if (std::abs(dy) > 1e-15) {
-                          double ta = (a.y - p1.y) / dy;
-                          double tb = (b.y - p1.y) / dy;
-                          return ta < tb;
+                      
+                      // Perturbed comparison.
+                      bool p1_less_p2 = perturbed_y_less(p1, p2);
+                      
+                      if (a.y == b.y) return false;
+
+                      if (p1_less_p2) {
+                          return a.y < b.y;
+                      } else {
+                          return a.y > b.y;
                       }
                   }
                   return a.y < b.y;
@@ -359,7 +361,7 @@ void fuse_pass(const Submap& src,
             RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, a0_dir);
             if (h.type == RayHit::Type::ARC) {
                 double d = a0_dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                if (d > 1e-9) dist_src = d;
+                if (d > 0.0) dist_src = d;
             }
         }
 
@@ -372,18 +374,16 @@ void fuse_pass(const Submap& src,
                 : local_shoot_in_region(dst, polygon, current_region, ox, y, a0_dir);
             if (h.type == RayHit::Type::ARC) {
                 double d = a0_dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                if (d > -1e-12) {
+                if (d > 0.0) {
                     dist_dst = d;
                     hit_dst = h;
                 }
             }
         }
 
-        if (hit_dst.type == RayHit::Type::ARC &&
-            dist_dst <= dist_src + 1e-12) {
-            // Case 1: c0 in ∂C₂.  Record cross-chain chord a0→c0.
+        if (hit_dst.type == RayHit::Type::ARC && dist_dst <= dist_src) {
             std::size_t re = resolve_hit_edge(
-                dst, polygon, hit_dst.arc_idx, y, hit_dst.hit_x);
+                dst, polygon, hit_dst.arc_idx, y);
             std::size_t a0_edge = stops[a0_idx].edge_idx;
             if (re != NONE && re != a0_edge) {
                 DiscoveredChord dc;
@@ -399,15 +399,14 @@ void fuse_pass(const Submap& src,
                 RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, a0_dir);
                 if (h.type == RayHit::Type::ARC) {
                     double d = a0_dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                    if (d > 1e-9) {
+                    if (d > 0.0) {
                         c0_edge = resolve_hit_edge(
-                            src, polygon, h.arc_idx, y, h.hit_x);
+                            src, polygon, h.arc_idx, y);
                     }
                 }
             }
 
             if (c0_edge != NONE && c0_edge != stops[a0_idx].edge_idx) {
-
                 DiscoveredChord dc;
                 dc.y = y;
                 dc.left_edge = c0_edge;
@@ -452,7 +451,7 @@ void fuse_pass(const Submap& src,
                 : local_shoot_in_region(dst, polygon, current_region, ox, y, aj_dir);
             if (h.type == RayHit::Type::ARC) {
                 double d = aj_dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                if (d > -1e-12) {
+                if (d > 0.0) {
                     best_dst_dist = d;
                     best_dst_hit = h;
                     aj_in_R = true;
@@ -466,14 +465,13 @@ void fuse_pass(const Submap& src,
                 RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, aj_dir);
                 if (h.type == RayHit::Type::ARC) {
                     double d = aj_dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                    if (d > 1e-9) dist_src = d;
+                    if (d > 0.0) dist_src = d;
                 }
             }
 
-            if (best_dst_dist <= dist_src + 1e-12) {
+            if (best_dst_dist <= dist_src) {
                 std::size_t re = resolve_hit_edge(
-                    dst, polygon, best_dst_hit.arc_idx, y,
-                    best_dst_hit.hit_x);
+                    dst, polygon, best_dst_hit.arc_idx, y);
                 if (re != NONE && re != aj_edge) {
                     DiscoveredChord dc;
                     dc.y = y;
@@ -524,7 +522,7 @@ void fuse_pass(const Submap& src,
                     if (h_lo > seg_hi || h_hi < seg_lo) continue;
 
                     std::size_t p_prime_e = resolve_hit_edge(
-                        src, polygon, h.arc_idx, y_e, h.hit_x);
+                        src, polygon, h.arc_idx, y_e);
                     if (p_prime_e == NONE) continue;
                     if (p_prime_e <= p_edge) continue;
 
@@ -657,13 +655,12 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         // Pick the smallest among the three heads.
         const ChordRecord* best_ptr = nullptr;
         std::size_t* best_idx = nullptr;
-        std::size_t best_limit = 0;
+        
         auto consider = [&](std::size_t& idx, std::size_t limit) {
             if (idx < limit) {
                 if (!best_ptr || chord_less(all_chords[idx], *best_ptr)) {
                     best_ptr = &all_chords[idx];
                     best_idx = &idx;
-                    best_limit = limit;
                 }
             }
         };
@@ -801,29 +798,19 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     return result;
 }
 
-} // anonymous namespace
+} // namespace
 
 Submap fuse(const Submap& s1, const RayShootingOracle& oracle1,
             const Submap& s2, const RayShootingOracle& oracle2,
             const Polygon& polygon,
             std::size_t junction_vertex) {
+    if (s1.num_nodes() == 0) return Submap(s2);
+    if (s2.num_nodes() == 0) return Submap(s1);
+
     std::vector<DiscoveredChord> discovered;
 
     fuse_pass(s1, oracle1, s2, oracle2, polygon, junction_vertex, discovered);
     fuse_pass(s2, oracle2, s1, oracle1, polygon, junction_vertex, discovered);
-
-    if (junction_vertex != NONE && junction_vertex < polygon.num_vertices() &&
-        polygon.is_y_extremum(junction_vertex)) {
-        double jy = polygon.vertex(junction_vertex).y;
-        DiscoveredChord dc;
-        dc.y = jy;
-        std::size_t je = junction_vertex;
-        if (je >= polygon.num_edges()) je = polygon.num_edges() - 1;
-        dc.left_edge = je;
-        dc.right_edge = je;
-        dc.is_null_length = true;
-        discovered.push_back(dc);
-    }
 
     return rebuild_submap(s1, s2, discovered, polygon);
 }

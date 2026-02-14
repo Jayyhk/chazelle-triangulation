@@ -64,44 +64,58 @@ void triangulate_monotone(std::vector<VertexNode>& nodes,
         start = y_max;
     }
 
-    // Walk from next(start), removing convex vertices.
-    // Use a stack to avoid re-scanning reflex vertices:
-    // push reflex vertices, pop when a convex vertex enables ear removal.
-    // Each vertex is pushed and popped at most once, giving O(n) total.
-    std::vector<std::size_t> stack;
-    stack.push_back(start);
-    stack.push_back(nodes[start].next);
+    // Walk from next(start), removing convex vertices using backtracking.
+    // Fournier-Montuno Algorithm 3:
+    //   u = next(start)
+    //   while n >= 3:
+    //     if angle(prev(u), u, next(u)) is convex:
+    //       output triangle
+    //       remove u
+    //       u = prev(u)
+    //     else:
+    //       u = next(u)
 
-    std::size_t current = nodes[nodes[start].next].next;
-    std::size_t iterations_left = 2 * num_verts; // safety bound (each vertex pushed + popped at most once)
+    std::size_t u = nodes[start].next;
+    std::size_t safety_counter = 2 * num_verts * num_verts; // Upper bound for safety
 
-    while (num_verts >= 3 && iterations_left-- > 0) {
-        std::size_t top = stack.back();
+    while (num_verts >= 3 && safety_counter-- > 0) {
+        std::size_t p = nodes[u].prev;
+        std::size_t n = nodes[u].next;
 
-        Point pp{nodes[stack[stack.size() >= 2 ? stack.size() - 2 : 0]].x,
-                 nodes[stack[stack.size() >= 2 ? stack.size() - 2 : 0]].y,
-                 nodes[stack[stack.size() >= 2 ? stack.size() - 2 : 0]].index};
-        Point pc{nodes[top].x, nodes[top].y, nodes[top].index};
-        Point pn{nodes[current].x, nodes[current].y, nodes[current].index};
+        Point prev_pt{nodes[p].x, nodes[p].y, nodes[p].index};
+        Point curr_pt{nodes[u].x, nodes[u].y, nodes[u].index};
+        Point next_pt{nodes[n].x, nodes[n].y, nodes[n].index};
 
-        // Check if top of stack forms a convex ear with its neighbors.
-        if (stack.size() >= 2 && orient2d(pp, pc, pn) >= 0.0) {
-            // Emit triangle and pop the ear vertex.
-            std::size_t prev_on_stack = stack[stack.size() - 2];
-            out.push_back({nodes[prev_on_stack].index,
-                           nodes[top].index,
-                           nodes[current].index});
+        // Determine convexity.
+        // For a simple polygon, "convex" means the internal angle is < 180 degrees.
+        // Since we traverse in CCW order, this corresponds to a specific orientation.
+        // orient2d returns > 0 for CCW turn (left turn), which is convex for CCW traversal.
+        // orient2d returns < 0 for CW turn (right turn), which is reflex.
+        // == 0 overlaps, treat as convex to remove degenerate vertices.
+        if (orient2d(prev_pt, curr_pt, next_pt) >= 0.0) {
+            // Convex (or collinear). Output triangle.
+            out.push_back({nodes[p].index, nodes[u].index, nodes[n].index});
 
-            // Remove top from linked list.
-            nodes[prev_on_stack].next = current;
-            nodes[current].prev = prev_on_stack;
-            stack.pop_back();
+            // Remove u from the linked list.
+            nodes[p].next = n;
+            nodes[n].prev = p;
+            
+            // Decrement vertex count.
             --num_verts;
-            // Don't advance current — check if the new top is also convex.
+
+            // Backtrack: u = prev(u).
+            // Algorithm 3 explicitly handles the case where the removed vertex was the start:
+            // "if current = first then current = next(first) else current = save;"
+            if (u == first) {
+                u = n; // next(first)
+                // Note: we do not update 'first' because it is a value argument
+                // and serves only as a check for this specific boundary condition.
+            } else {
+                u = p; // save (prev(current))
+            }
         } else {
-            // Reflex or base case — push current and advance.
-            stack.push_back(current);
-            current = nodes[current].next;
+            // Reflex. Advance.
+            u = n;
         }
     }
 }
