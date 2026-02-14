@@ -462,8 +462,6 @@ void Submap::normalize() {
 
     const std::size_t n = arc_sequence_.size();
 
-    // Build sort permutation: arcs ordered by clockwise ∂C traversal.
-    //
     // §2.3 condition (iii): "The arc-structures are stored in a table
     // (the arc-sequence table) in the order corresponding to a
     // canonical traversal of the double boundary ∂C."
@@ -475,46 +473,79 @@ void Submap::normalize() {
     // This produces two monotone subsequences required by double_identify
     // (§2.4) for O(log m) binary search.
     //
-    // Double-backing arcs (first_side != last_side) straddle the
-    // turn-around point at a C endpoint; they appear at the boundary
-    // between the two subsequences.  We classify by first_side so
-    // they sort with the LEFT group (their first portion is LEFT).
+    // §3.1 (Lemma 3.1 proof): "Note that merging can also be used
+    // instead of sorting."  We use a counting sort keyed by
+    // (side_group, edge_key) for O(E) time instead of O(E log E).
     //
-    // Sort key: (side_group, edge_key), where
-    //   side_group 0 = LEFT (or double-backing starting LEFT)
-    //   side_group 1 = RIGHT
-    //   side_group 2 = invalidated (first_edge == NONE)
-    //
-    // Within group 0: ascending by min(first_edge, last_edge)
-    // Within group 1: descending by min(first_edge, last_edge)
-    std::vector<std::size_t> perm(n);
-    for (std::size_t i = 0; i < n; ++i) perm[i] = i;
-    std::sort(perm.begin(), perm.end(), [&](std::size_t a, std::size_t b) {
-        const auto& aa = arc_sequence_[a];
-        const auto& bb = arc_sequence_[b];
+    // Step 1: Partition arcs into LEFT, RIGHT, and INVALID groups.
+    // Within LEFT group: ascending by min(first_edge, last_edge).
+    // Within RIGHT group: descending by min(first_edge, last_edge).
 
-        // Invalidated arcs go to the end.
-        bool a_inv = (aa.first_edge == NONE);
-        bool b_inv = (bb.first_edge == NONE);
-        if (a_inv != b_inv) return b_inv; // non-invalid first
-        if (a_inv && b_inv) return false;  // both invalid, stable
+    // Find max edge index for bucket sizing.
+    std::size_t max_key = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto& a = arc_sequence_[i];
+        if (a.first_edge == NONE) continue;
+        std::size_t k = std::min(a.first_edge, a.last_edge);
+        max_key = std::max(max_key, k);
+    }
 
-        // Determine side group: 0 = LEFT, 1 = RIGHT.
-        int ga = (aa.first_side == Side::LEFT) ? 0 : 1;
-        int gb = (bb.first_side == Side::LEFT) ? 0 : 1;
-        if (ga != gb) return ga < gb; // LEFT before RIGHT
+    // Counting sort: group 0 (LEFT, ascending), group 1 (RIGHT, descending).
+    // For LEFT:  sort key = min(first_edge, last_edge), ascending
+    // For RIGHT: sort key = max_key - min(first_edge, last_edge), ascending
+    //            (reversing the order gives descending)
+    std::size_t bucket_size = max_key + 2;
 
-        std::size_t ka = std::min(aa.first_edge, aa.last_edge);
-        std::size_t kb = std::min(bb.first_edge, bb.last_edge);
+    // Count arcs per bucket for each group.
+    std::vector<std::size_t> left_count(bucket_size, 0);
+    std::vector<std::size_t> right_count(bucket_size, 0);
+    std::size_t invalid_count = 0;
 
-        if (ga == 0) {
-            // LEFT group: ascending edge order.
-            return ka < kb;
-        } else {
-            // RIGHT group: descending edge order.
-            return ka > kb;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto& a = arc_sequence_[i];
+        if (a.first_edge == NONE) {
+            ++invalid_count;
+            continue;
         }
-    });
+        std::size_t k = std::min(a.first_edge, a.last_edge);
+        if (a.first_side == Side::LEFT) {
+            left_count[k]++;
+        } else {
+            // Reverse key for descending order.
+            right_count[max_key - k]++;
+        }
+    }
+
+    // Prefix sums for stable placement.
+    std::vector<std::size_t> left_offset(bucket_size, 0);
+    std::vector<std::size_t> right_offset(bucket_size, 0);
+    for (std::size_t i = 1; i < bucket_size; ++i) {
+        left_offset[i] = left_offset[i - 1] + left_count[i - 1];
+        right_offset[i] = right_offset[i - 1] + right_count[i - 1];
+    }
+    std::size_t total_left = left_offset[bucket_size - 1] + left_count[bucket_size - 1];
+    std::size_t total_right = right_offset[bucket_size - 1] + right_count[bucket_size - 1];
+
+    // Build permutation: LEFT arcs first, then RIGHT, then INVALID.
+    std::vector<std::size_t> perm(n);
+    std::vector<std::size_t> left_cursor = left_offset;
+    std::vector<std::size_t> right_cursor = right_offset;
+    std::size_t inv_cursor = total_left + total_right;
+
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto& a = arc_sequence_[i];
+        if (a.first_edge == NONE) {
+            perm[inv_cursor++] = i;
+            continue;
+        }
+        std::size_t k = std::min(a.first_edge, a.last_edge);
+        if (a.first_side == Side::LEFT) {
+            perm[left_cursor[k]++] = i;
+        } else {
+            std::size_t rk = max_key - k;
+            perm[total_left + right_cursor[rk]++] = i;
+        }
+    }
 
     // Build the inverse permutation: inv[old_index] = new_index.
     std::vector<std::size_t> inv(n);
@@ -604,17 +635,37 @@ void Submap::normalize() {
 void Submap::normalize_chords() {
     if (chords_.empty()) return;
 
-    std::sort(chords_.begin(), chords_.end(), [](const Chord& a, const Chord& b) {
-        std::size_t a_start = std::min(a.left_edge, a.right_edge);
-        std::size_t b_start = std::min(b.left_edge, b.right_edge);
-        if (a_start != b_start) return a_start < b_start;
-        
-        std::size_t a_end = std::max(a.left_edge, a.right_edge);
-        std::size_t b_end = std::max(b.left_edge, b.right_edge);
-        if (a_end != b_end) return a_end < b_end;
+    // §3.1 (Lemma 3.1 proof): "Note that merging can also be used
+    // instead of sorting."  We use counting sort by min(left_edge,
+    // right_edge) for O(E) time instead of O(E log E).
+    std::size_t nc = chords_.size();
+    std::size_t max_key = 0;
+    for (const auto& c : chords_) {
+        std::size_t k = std::min(c.left_edge, c.right_edge);
+        if (k != NONE) max_key = std::max(max_key, k);
+    }
 
-        return a.y < b.y;
-    });
+    std::size_t bucket_size = max_key + 2;
+    std::vector<std::size_t> count(bucket_size, 0);
+    for (const auto& c : chords_) {
+        std::size_t k = std::min(c.left_edge, c.right_edge);
+        if (k == NONE) k = max_key + 1;
+        count[std::min(k, max_key + 1)]++;
+    }
+
+    std::vector<std::size_t> offset(bucket_size, 0);
+    for (std::size_t i = 1; i < bucket_size; ++i)
+        offset[i] = offset[i - 1] + count[i - 1];
+
+    std::vector<std::size_t> cursor = offset;
+    std::vector<Chord> sorted(nc);
+    for (const auto& c : chords_) {
+        std::size_t k = std::min(c.left_edge, c.right_edge);
+        if (k == NONE) k = max_key + 1;
+        k = std::min(k, max_key + 1);
+        sorted[cursor[k]++] = c;
+    }
+    chords_ = std::move(sorted);
 
     // Rebuild incident_chords for all nodes since chord indices changed.
     for (auto& nd : nodes_) {

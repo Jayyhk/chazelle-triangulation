@@ -182,36 +182,124 @@ void RayShootingOracle::build_dual_graph() {
 }
 
 void RayShootingOracle::build_vertical_line() {
-    // Build vertical-line structure: intersect a vertical line (x = +∞,
-    // conceptually to the right of all vertices) with all chords.
-    // Since chords are horizontal, each chord contributes one entry at
-    // its y-coordinate.
+    // §3.4: "Take a vertical line passing to the right of all the
+    // vertices of P, and intersect it with the chords of the regions
+    // in S.  This breaks up the line into segments, every one of which
+    // falls entirely within some region; to split up the line and
+    // identify the regions cut by each segment can be done by
+    // traversing G and checking each chord for intersection with the
+    // vertical line.  Since the regions cut correspond to nodes of G
+    // lying on a path, sorting the intersections comes for free, and
+    // all the work can be done in O(μ) time."
+    //
+    // We traverse the submap tree via DFS, rooted at the topmost
+    // region (above the chord with the highest y).  At each node we
+    // visit children in decreasing y-order of their connecting chord.
+    // Since each conformal region has O(1) incident chords (degree ≤ 4),
+    // this is O(1) per node, giving O(μ) total.
 
     vertical_line_.clear();
+
+    // Collect valid chords with their y-coordinates.
+    struct ChordInfo {
+        std::size_t chord_idx;
+        double y;
+        std::size_t region_below; // region[0]
+        std::size_t region_above; // region[1]
+    };
+    std::vector<ChordInfo> chords;
     for (std::size_t ci = 0; ci < submap_->num_chords(); ++ci) {
         auto& c = submap_->chord(ci);
         if (c.region[0] == NONE || c.region[1] == NONE) continue;
         if (submap_->node(c.region[0]).deleted ||
             submap_->node(c.region[1]).deleted) continue;
-
-        VerticalEntry entry;
-        entry.y = c.y;
-        entry.chord_idx = ci;
-
-        // Determine which region is above and which is below.
-        // By convention, region[0] is below the chord, region[1] is above.
-        // (This will be properly set during submap construction.)
-        entry.region_below = c.region[0];
-        entry.region_above = c.region[1];
-
-        vertical_line_.push_back(entry);
+        chords.push_back({ci, c.y, c.region[0], c.region[1]});
     }
 
-    // Sort by y-coordinate.
-    std::sort(vertical_line_.begin(), vertical_line_.end(),
-              [](const VerticalEntry& a, const VerticalEntry& b) {
-                  return a.y < b.y;
-              });
+    if (chords.empty()) return;
+
+    // Build per-region incidence lists (indices into 'chords').
+    // Use region_to_dual_ for compact indexing.
+    std::size_t num_dual = dual_to_region_.size();
+    std::vector<std::vector<std::size_t>> incident(num_dual);
+    for (std::size_t i = 0; i < chords.size(); ++i) {
+        std::size_t du0 = region_to_dual(chords[i].region_below);
+        std::size_t du1 = region_to_dual(chords[i].region_above);
+        if (du0 != NONE) incident[du0].push_back(i);
+        if (du1 != NONE) incident[du1].push_back(i);
+    }
+
+    // Sort each incidence list by decreasing y.  Since each conformal
+    // region has degree ≤ 4, each list has at most 3 items → O(1).
+    for (auto& inc : incident) {
+        std::sort(inc.begin(), inc.end(),
+                  [&](std::size_t a, std::size_t b) {
+                      return chords[a].y > chords[b].y;
+                  });
+    }
+
+    // Find the topmost region: above the chord with maximum y.
+    std::size_t top_ci = 0;
+    for (std::size_t i = 1; i < chords.size(); ++i) {
+        if (chords[i].y > chords[top_ci].y)
+            top_ci = i;
+    }
+    std::size_t top_region = chords[top_ci].region_above;
+
+    // DFS: at each region, visit incident chords in decreasing y,
+    // emitting each chord and recursing into the other region.
+    // This produces chords in decreasing y-order.
+    //
+    // We use an explicit stack to handle deep trees without
+    // risking stack overflow.  Each stack frame tracks the region
+    // and its position in the sorted incidence list.
+    std::vector<bool> visited(chords.size(), false);
+    vertical_line_.reserve(chords.size());
+
+    struct Frame {
+        std::size_t region;
+        std::size_t pos; // index into incident[dual_id]
+    };
+    std::vector<Frame> stack;
+    stack.push_back({top_region, 0});
+
+    while (!stack.empty()) {
+        auto& fr = stack.back();
+        std::size_t du = region_to_dual(fr.region);
+        if (du == NONE) { stack.pop_back(); continue; }
+
+        const auto& inc = incident[du];
+        // Advance past visited chords.
+        while (fr.pos < inc.size() && visited[inc[fr.pos]])
+            ++fr.pos;
+
+        if (fr.pos >= inc.size()) {
+            // All incident chords visited; backtrack.
+            stack.pop_back();
+            continue;
+        }
+
+        std::size_t ci = inc[fr.pos];
+        visited[ci] = true;
+        ++fr.pos; // advance for when we return to this frame
+
+        VerticalEntry entry;
+        entry.y = chords[ci].y;
+        entry.chord_idx = chords[ci].chord_idx;
+        entry.region_below = chords[ci].region_below;
+        entry.region_above = chords[ci].region_above;
+        vertical_line_.push_back(entry);
+
+        // Recurse into the other region.
+        std::size_t other = (chords[ci].region_below == fr.region)
+                                ? chords[ci].region_above
+                                : chords[ci].region_below;
+        stack.push_back({other, 0});
+    }
+
+    // The DFS produced chords in decreasing y-order;
+    // reverse to get increasing y for binary-search queries.
+    std::reverse(vertical_line_.begin(), vertical_line_.end());
 }
 
 // --- Query ---

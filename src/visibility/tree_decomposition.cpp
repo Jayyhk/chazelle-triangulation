@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <queue>
+#include <unordered_map>
 #include <vector>
 
 namespace chazelle {
@@ -76,19 +77,25 @@ std::size_t TreeDecomposition::decompose(
     const std::size_t N = subtree_nodes.size();
     const std::size_t total_edges = subtree_chords.size();
 
+    // §2.3: "By using straightforward tree-labeling techniques we can
+    // find the centroid node, and from there, the first edge to be
+    // removed, in linear time.  Proceeding recursively gives us a
+    // simple O(m log m + 1)-time algorithm for computing the tree
+    // decomposition."
+    //
     // Build a mapping: submap node ID → compact local index [0, N).
-    // We sort a copy of subtree_nodes and use binary search for the
-    // mapping.  This avoids allocating a vector of size max_id+1
-    // (which could be much larger than N for sparse IDs) while
-    // keeping the implementation deterministic.  O(N log N) per
-    // recursion level, O(r log² r) total — within the paper's bound.
-    std::vector<std::size_t> sorted_ids(subtree_nodes);
-    std::sort(sorted_ids.begin(), sorted_ids.end());
+    // Use a hash map for O(1) expected-time lookups, giving O(N) per
+    // recursion level and O(r log r) total — matching the paper's
+    // O(m log m + 1) bound.
+    std::unordered_map<std::size_t, std::size_t> id_map;
+    id_map.reserve(N);
+    for (std::size_t i = 0; i < N; ++i)
+        id_map[subtree_nodes[i]] = i;
 
     auto compact_id = [&](std::size_t sid) -> std::size_t {
-        auto it = std::lower_bound(sorted_ids.begin(), sorted_ids.end(), sid);
-        assert(it != sorted_ids.end() && *it == sid);
-        return static_cast<std::size_t>(it - sorted_ids.begin());
+        auto it = id_map.find(sid);
+        assert(it != id_map.end());
+        return it->second;
     };
 
     // Build local adjacency: adj[local_id] → [(chord_idx, neighbor_local_id)]

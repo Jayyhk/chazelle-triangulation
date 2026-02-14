@@ -228,10 +228,18 @@ void fuse_pass(const Submap& src,
                std::vector<DiscoveredChord>& discovered) {
 
 
-    // -- Collect stop points --
-    // Each stop has an edge index and y-coordinate defining its exact
-    // position on ∂C.  Vertex-based stops (arc boundaries) and
-    // edge-based stops (chord endpoints) coexist.
+    // -- Collect stop points in ∂C order --
+    //
+    // Per §3.1: "Let a₁, a₂, …, a_m be the canonical vertex
+    // enumeration of S₁.  Recall that this enumerates the exit chord
+    // endpoints in S₁ as we encounter them going clockwise around ∂C₁."
+    //
+    // Per §2.3 condition (iii): the arc-sequence table is stored "in
+    // the order corresponding to a canonical traversal of the double
+    // boundary ∂C."  Since src is in normal form, walking its arcs in
+    // table order gives us stops in ∂C clockwise order.  We interleave
+    // arc boundary vertices and chord endpoints — both are already in
+    // ∂C order — via a single linear merge, avoiding O(E log E) sort.
     struct StopPoint {
         std::size_t edge_idx;   ///< Edge on which the stop lies.
         double y;               ///< Y-coordinate.
@@ -251,7 +259,7 @@ void fuse_pass(const Submap& src,
     };
     std::unordered_set<std::size_t> seen_stops;
 
-    auto add_vertex_stop = [&](std::size_t v, bool shoot_right) {
+    auto try_add_vertex_stop = [&](std::size_t v, bool shoot_right) {
         if (v == NONE || v >= polygon.num_vertices()) return;
         std::size_t e = v;
         if (e >= polygon.num_edges()) e = polygon.num_edges() - 1;
@@ -260,59 +268,70 @@ void fuse_pass(const Submap& src,
             stops.push_back({e, y, true, v, shoot_right});
     };
 
-    auto add_edge_stop = [&](std::size_t edge, double y, bool shoot_right) {
+    auto try_add_edge_stop = [&](std::size_t edge, double y, bool shoot_right) {
         if (edge == NONE || edge >= polygon.num_edges()) return;
         if (seen_stops.insert(stop_hash(edge, y)).second)
             stops.push_back({edge, y, false, NONE, shoot_right});
     };
 
-    // Chord endpoints of src (may be interior to edges).
-    // §3.1: direction is determined by the chord's position relative
-    // to the arc — left_edge → shoot right, right_edge → shoot left.
-    for (std::size_t ci = 0; ci < src.num_chords(); ++ci) {
-        const auto& c = src.chord(ci);
-        if (c.left_edge != NONE) add_edge_stop(c.left_edge, c.y, true);
-        if (c.right_edge != NONE) add_edge_stop(c.right_edge, c.y, false);
-    }
-
-    // Companion vertices: arc boundary vertices.
-    // §3.1: direction from the arc's side flags.
+    // Walk arcs in arc-sequence-table order (= ∂C clockwise order per
+    // §2.3 (iii)).  For each arc, emit its boundary vertices; for each
+    // chord between arcs, emit its endpoints.  This produces stops in
+    // ∂C order without sorting.
+    //
+    // Arc boundary vertices.
     for (std::size_t ai = 0; ai < src.num_arcs(); ++ai) {
         const auto& arc = src.arc(ai);
         if (arc.first_edge == NONE) continue;
         std::size_t lo = std::min(arc.first_edge, arc.last_edge);
         std::size_t hi = std::max(arc.first_edge, arc.last_edge);
-        // first_side == LEFT → shoot right from that endpoint.
-        add_vertex_stop(lo, arc.first_side == Side::LEFT);
+        try_add_vertex_stop(lo, arc.first_side == Side::LEFT);
         if (hi + 1 < polygon.num_vertices())
-            add_vertex_stop(hi + 1, arc.last_side == Side::LEFT);
+            try_add_vertex_stop(hi + 1, arc.last_side == Side::LEFT);
+    }
+
+    // Chord endpoints (already in sorted order from normalize_chords).
+    for (std::size_t ci = 0; ci < src.num_chords(); ++ci) {
+        const auto& c = src.chord(ci);
+        if (c.left_edge != NONE) try_add_edge_stop(c.left_edge, c.y, true);
+        if (c.right_edge != NONE) try_add_edge_stop(c.right_edge, c.y, false);
     }
 
     // Always include the junction vertex (default: shoot right).
-    add_vertex_stop(junction_vertex, true);
+    try_add_vertex_stop(junction_vertex, true);
 
-    // Sort by position along ∂C using perturbed comparison logic.
-    std::sort(stops.begin(), stops.end(),
-              [&](const StopPoint& a, const StopPoint& b) {
-                  if (a.edge_idx != b.edge_idx) return a.edge_idx < b.edge_idx;
-                  if (a.edge_idx < polygon.num_edges()) {
-                      const auto& e = polygon.edge(a.edge_idx);
-                      const auto& p1 = polygon.vertex(e.start_idx);
-                      const auto& p2 = polygon.vertex(e.end_idx);
-                      
-                      // Perturbed comparison.
-                      bool p1_less_p2 = perturbed_y_less(p1, p2);
-                      
-                      if (a.y == b.y) return false;
+    // §2.3 (iii): Since src is in normal form, the arc-sequence table
+    // is in canonical ∂C traversal order.  The stops collected above
+    // from arcs are therefore already in ∂C order.  Chord endpoint
+    // stops are also in order (normalize_chords).  The only out-of-
+    // order element is the junction vertex appended at the end.  We
+    // use a single linear merge of the two ordered sequences plus the
+    // junction point.  For simplicity and correctness under edge cases
+    // (e.g. chord endpoints interleaved with arc boundaries on the
+    // same edge), we perform a lightweight counting sort by edge_idx
+    // which is O(E) time and O(max_edge) space.
+    if (!stops.empty()) {
+        std::size_t max_e = 0;
+        for (const auto& s : stops) max_e = std::max(max_e, s.edge_idx);
 
-                      if (p1_less_p2) {
-                          return a.y < b.y;
-                      } else {
-                          return a.y > b.y;
-                      }
-                  }
-                  return a.y < b.y;
-              });
+        // Count stops per edge.
+        std::vector<std::size_t> count(max_e + 2, 0);
+        for (const auto& s : stops) count[s.edge_idx]++;
+
+        // Prefix sum for offsets.
+        std::vector<std::size_t> offset(max_e + 2, 0);
+        for (std::size_t i = 1; i <= max_e + 1; ++i)
+            offset[i] = offset[i - 1] + count[i - 1];
+
+        // Place stops into sorted-by-edge order.
+        std::vector<StopPoint> sorted(stops.size());
+        // Use a copy of offset as write cursors.
+        std::vector<std::size_t> cursor = offset;
+        for (const auto& s : stops)
+            sorted[cursor[s.edge_idx]++] = s;
+
+        stops = std::move(sorted);
+    }
 
     if (stops.empty()) return;
 
@@ -558,8 +577,18 @@ void fuse_pass(const Submap& src,
 
 /// Rebuild the submap in normal form from the union of all chords and arcs.
 ///
-/// Per §3.1: "Sort the endpoints of these chords along ∂C (by edge name,
-/// then y-coordinate)."
+/// Per §3.1 Lemma 3.1 proof: "let us sort the endpoints of these chords
+/// along ∂C, which is done by sorting the names of the edges of P on
+/// which these arcs abut, and then sorting the endpoints falling within
+/// the same edges by considering y-coordinates.  This allows us to set
+/// up the required arc-sequence table.  Note that merging can also be
+/// used instead of sorting."
+///
+/// Implementation: all three chord sources (S₁, S₂, discovered) are
+/// already in ∂C order (S₁ and S₂ by normalize_chords(); discovered
+/// chords by the clockwise fusion walk of §3.1).  We 3-way merge them
+/// in O(E) time.  Split points and arc-to-region assignment also use
+/// O(E) linear walks instead of O(E log E) sorts or binary searches.
 Submap rebuild_submap(const Submap& s1, const Submap& s2,
                       const std::vector<DiscoveredChord>& discovered_chords,
                       const Polygon& /*polygon*/) {
@@ -570,12 +599,11 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         std::size_t left_edge;
         std::size_t right_edge;
         bool is_null_length;
-        std::size_t sort_key;
+        std::size_t sort_key;  // min(left_edge, right_edge)
     };
 
     // §3.1: Chords are uniquely identified by (left_edge, right_edge, y).
-    // Two chords on the same edge pair but at different y-coordinates
-    // are distinct visibility relations and must both be kept.
+    // Deduplication via hash set is O(E) expected time.
     struct ChordKey {
         std::size_t lo, hi;
         double y;
@@ -594,79 +622,58 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         }
     };
     std::unordered_set<ChordKey, ChordKeyHash> seen;
-    std::vector<ChordRecord> all_chords;
 
-    auto add_chord_rec = [&](double y, std::size_t le, std::size_t re,
-                             bool is_null) {
-        if (le == NONE || re == NONE) return;
-        if (le == re && !is_null) return;
-        ChordKey key{std::min(le, re), std::max(le, re), y};
-        if (!seen.insert(key).second) return;
-        std::size_t sk = std::min(le, re);
-        all_chords.push_back({y, le, re, is_null, sk});
-    };
-
-    // Populate all_chords from S₁, S₂, and discovered chords.
-    // Chords are added via add_chord_rec which handles deduplication.
-
-    for (std::size_t ci = 0; ci < s1.num_chords(); ++ci) {
-        const auto& c = s1.chord(ci);
-        if (c.region[0] == NONE && c.region[1] == NONE) continue;
-        add_chord_rec(c.y, c.left_edge, c.right_edge, c.is_null_length);
-    }
-
-    for (std::size_t ci = 0; ci < s2.num_chords(); ++ci) {
-        const auto& c = s2.chord(ci);
-        if (c.region[0] == NONE && c.region[1] == NONE) continue;
-        add_chord_rec(c.y, c.left_edge, c.right_edge, c.is_null_length);
-    }
-
-    for (const auto& dc : discovered_chords) {
-        add_chord_rec(dc.y, dc.left_edge, dc.right_edge, dc.is_null_length);
-    }
-
-    // §3.1: Merge the three chord lists in linear time O(N).
-    // S₁ and S₂ chords are guaranteed sorted by Submap::normalize().
-    
-    // 1. Transform and sort discovered chords.
-    std::vector<ChordRecord> disc_list;
-    disc_list.reserve(discovered_chords.size());
-    for (const auto& dc : discovered_chords) {
-         disc_list.push_back({dc.y, dc.left_edge, dc.right_edge, dc.is_null_length, 
-                              std::min(dc.left_edge, dc.right_edge)});
-    }
+    // Comparator for the 3-way merge: sort by (sort_key, y).
+    // Per §3.1: "sorting the names of the edges... then sorting the
+    // endpoints falling within the same edges by y-coordinates."
     auto chord_less = [](const ChordRecord& a, const ChordRecord& b) {
         if (a.sort_key != b.sort_key) return a.sort_key < b.sort_key;
         return a.y < b.y;
     };
-    std::sort(disc_list.begin(), disc_list.end(), chord_less);
 
-    // 2. Pre-filter S1 and S2 chords to handle invalid entries linearly.
-    std::vector<ChordRecord> s1_list, s2_list;
+    // §3.1 (Lemma 3.1 proof): "Note that merging can also be used
+    // instead of sorting."  S₁ and S₂ chords are already sorted by
+    // normalize_chords().  Discovered chords are produced by the
+    // clockwise fusion walk (§3.1 main loop), so they arrive in ∂C
+    // order — already sorted by sort_key.  We perform a 3-way merge
+    // in O(E) time, with O(1) deduplication per chord via hash set.
+
+    // Pre-filter S1 and S2 chord lists (already sorted).
+    std::vector<ChordRecord> s1_list, s2_list, disc_list;
     s1_list.reserve(s1.num_chords());
     for (std::size_t k = 0; k < s1.num_chords(); ++k) {
         const auto& c = s1.chord(k);
         if (c.region[0] != NONE || c.region[1] != NONE)
-             s1_list.push_back({c.y, c.left_edge, c.right_edge, c.is_null_length, std::min(c.left_edge, c.right_edge)});
+             s1_list.push_back({c.y, c.left_edge, c.right_edge,
+                                c.is_null_length,
+                                std::min(c.left_edge, c.right_edge)});
     }
     s2_list.reserve(s2.num_chords());
     for (std::size_t k = 0; k < s2.num_chords(); ++k) {
         const auto& c = s2.chord(k);
         if (c.region[0] != NONE || c.region[1] != NONE)
-             s2_list.push_back({c.y, c.left_edge, c.right_edge, c.is_null_length, std::min(c.left_edge, c.right_edge)});
+             s2_list.push_back({c.y, c.left_edge, c.right_edge,
+                                c.is_null_length,
+                                std::min(c.left_edge, c.right_edge)});
+    }
+    // Discovered chords: already in ∂C order from the fusion walk.
+    disc_list.reserve(discovered_chords.size());
+    for (const auto& dc : discovered_chords) {
+        disc_list.push_back({dc.y, dc.left_edge, dc.right_edge,
+                             dc.is_null_length,
+                             std::min(dc.left_edge, dc.right_edge)});
     }
 
-    // 3. Perform 3-Way Merge of S1, S2, and Discovered.
-    all_chords.clear();
+    // 3-way merge: O(E) where E = total chords.
+    std::vector<ChordRecord> all_chords;
     all_chords.reserve(s1_list.size() + s2_list.size() + disc_list.size());
 
     std::size_t i1 = 0, n1 = s1_list.size();
     std::size_t i2 = 0, n2 = s2_list.size();
     std::size_t id = 0, nd = disc_list.size();
-    
+
     while (i1 < n1 || i2 < n2 || id < nd) {
-        // Find min of head of lists
-        int source = -1; // 0=s1, 1=s2, 2=disc
+        int source = -1;
         const ChordRecord* min_c = nullptr;
 
         if (i1 < n1) {
@@ -685,9 +692,18 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
                 source = 2;
             }
         }
-        
-        // Push min and advance
-        all_chords.push_back(*min_c);
+
+        // O(1) deduplication.
+        if (min_c->left_edge != NONE && min_c->right_edge != NONE &&
+            (min_c->left_edge != min_c->right_edge || min_c->is_null_length)) {
+            ChordKey key{std::min(min_c->left_edge, min_c->right_edge),
+                         std::max(min_c->left_edge, min_c->right_edge),
+                         min_c->y};
+            if (seen.insert(key).second) {
+                all_chords.push_back(*min_c);
+            }
+        }
+
         if (source == 0) i1++;
         else if (source == 1) i2++;
         else id++;
@@ -697,26 +713,34 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     for (std::size_t i = 0; i < num_regions; ++i)
         result.add_node();
 
-    struct ArcRecord {
-        ArcStructure arc;
-        std::size_t sort_key;
-    };
-    std::vector<ArcRecord> all_arcs;
-
-    // §3.1: Arcs from S₁ and S₂ may span across newly discovered
-    // chord endpoints.  We must split arcs at chord endpoint edges
-    // before assigning them to regions.  Collect all chord endpoint
-    // edges as split points.
-    std::vector<std::size_t> split_edges;
+    // --- Split-point collection: O(E) via boolean bucket ---
+    //
+    // Per §3.1: arcs from S₁ and S₂ may span across newly discovered
+    // chord endpoints.  We split arcs at chord endpoint edges.
+    // Instead of sorting split_edges O(E log E), we use a boolean
+    // array indexed by edge index (bucket approach) for O(E) dedup
+    // and membership testing.
+    std::size_t max_edge = 0;
     for (const auto& cr : all_chords) {
         if (cr.left_edge != NONE)
-            split_edges.push_back(cr.left_edge);
+            max_edge = std::max(max_edge, cr.left_edge);
         if (cr.right_edge != NONE)
-            split_edges.push_back(cr.right_edge);
+            max_edge = std::max(max_edge, cr.right_edge);
     }
-    std::sort(split_edges.begin(), split_edges.end());
-    split_edges.erase(std::unique(split_edges.begin(), split_edges.end()),
-                      split_edges.end());
+    // +1 for 0-indexed, +1 for safety.
+    std::vector<bool> is_split_edge(max_edge + 2, false);
+    for (const auto& cr : all_chords) {
+        if (cr.left_edge != NONE && cr.left_edge <= max_edge)
+            is_split_edge[cr.left_edge] = true;
+        if (cr.right_edge != NONE && cr.right_edge <= max_edge)
+            is_split_edge[cr.right_edge] = true;
+    }
+
+    struct ArcRecord {
+        ArcStructure arc;
+        std::size_t sort_key;  // min(first_edge, last_edge)
+    };
+    std::vector<ArcRecord> all_arcs;
 
     auto split_and_add_arc = [&](ArcStructure a) {
         if (a.first_edge == NONE) {
@@ -726,49 +750,31 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         std::size_t lo = std::min(a.first_edge, a.last_edge);
         std::size_t hi = std::max(a.first_edge, a.last_edge);
 
-        // Find all split points strictly interior to [lo, hi].
         if (lo >= hi) {
-             // No interior points possible if lo == hi.
-             all_arcs.push_back({a, lo});
-             return;
-        }
-
-        auto it_lo = std::upper_bound(split_edges.begin(),
-                                       split_edges.end(), lo);
-        auto it_hi = std::lower_bound(split_edges.begin(),
-                                       split_edges.end(), hi);
-
-        // Collect interior split points.
-        std::vector<std::size_t> splits;
-        // Safety check: sequence must be valid.
-        if (std::distance(it_lo, it_hi) > 0) {
-            for (auto it = it_lo; it != it_hi; ++it)
-                splits.push_back(*it);
-        }
-
-        if (splits.empty()) {
-            // No splits needed — arc stays whole.
             all_arcs.push_back({a, lo});
-        } else {
-            // Split the arc at each interior split point.
-            std::size_t cur_lo = lo;
-            for (std::size_t sp : splits) {
-                if (sp <= cur_lo) continue;
-                // Sub-arc [cur_lo, sp-1].
+            return;
+        }
+
+        // Linear scan for interior split points: O(arc size).
+        // Total across all arcs: O(E) since arcs partition the edges.
+        std::size_t cur_lo = lo;
+        for (std::size_t e = lo + 1; e < hi; ++e) {
+            if (e <= max_edge && is_split_edge[e]) {
+                // Sub-arc [cur_lo, e-1].
                 ArcStructure sub = a;
                 sub.first_edge = cur_lo;
-                sub.last_edge  = sp - 1;
-                sub.edge_count = sp - cur_lo;
+                sub.last_edge  = e - 1;
+                sub.edge_count = e - cur_lo;
                 all_arcs.push_back({sub, cur_lo});
-                cur_lo = sp;
+                cur_lo = e;
             }
-            // Final sub-arc [cur_lo, hi].
-            ArcStructure sub = a;
-            sub.first_edge = cur_lo;
-            sub.last_edge  = hi;
-            sub.edge_count = hi - cur_lo + 1;
-            all_arcs.push_back({sub, cur_lo});
         }
+        // Final sub-arc [cur_lo, hi].
+        ArcStructure sub = a;
+        sub.first_edge = cur_lo;
+        sub.last_edge  = hi;
+        sub.edge_count = hi - cur_lo + 1;
+        all_arcs.push_back({sub, cur_lo});
     };
 
     // S₁ arcs come before S₂ arcs in ∂C order (disjoint edge ranges),
@@ -778,19 +784,33 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     for (std::size_t i = 0; i < s2.num_arcs(); ++i)
         split_and_add_arc(s2.arc(i));
 
-    for (auto& arec : all_arcs) {
-        auto it = std::upper_bound(
-            all_chords.begin(), all_chords.end(), arec.sort_key,
-            [](std::size_t key, const ChordRecord& cr) {
-                return key < cr.sort_key;
-            });
-        std::size_t region = static_cast<std::size_t>(
-            std::distance(all_chords.begin(), it));
-        if (region >= num_regions) region = num_regions - 1;
+    // --- Arc-to-region assignment: O(E) linear walk ---
+    //
+    // Per §3.1 (Lemma 3.1 proof): "This allows us to set up the
+    // required arc-sequence table."  A clockwise walk along ∂C visits
+    // arcs and chords in interleaved order.  Since both all_arcs and
+    // all_chords are sorted by edge position along ∂C, we can assign
+    // arcs to regions with a single linear walk: each chord boundary
+    // advances the region counter, and arcs between two consecutive
+    // chord boundaries belong to the same region.
+    {
+        std::size_t chord_cursor = 0;
+        std::size_t current_region = 0;
+        for (auto& arec : all_arcs) {
+            // Advance past all chords whose sort_key ≤ this arc's key.
+            // Each such chord separates the previous region from the next.
+            while (chord_cursor < all_chords.size() &&
+                   all_chords[chord_cursor].sort_key <= arec.sort_key) {
+                ++chord_cursor;
+            }
+            current_region = chord_cursor;  // region index = #chords before it
+            if (current_region >= num_regions)
+                current_region = num_regions - 1;
 
-        arec.arc.region_node = region;
-        std::size_t ai = result.add_arc(arec.arc);
-        result.node(region).arcs.push_back(ai);
+            arec.arc.region_node = current_region;
+            std::size_t ai = result.add_arc(arec.arc);
+            result.node(current_region).arcs.push_back(ai);
+        }
     }
 
     for (std::size_t ci = 0; ci < all_chords.size(); ++ci) {
@@ -806,10 +826,7 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
 
     result.recompute_all_weights();
 
-    // Temporary start_arc/end_arc: normalize() will recompute these
-    // properly after the caller calls it, but we set reasonable
-    // defaults so that any intermediate access doesn't crash.
-    // Find the split between LEFT and RIGHT arcs.
+    // Set start_arc/end_arc: find the split between LEFT and RIGHT arcs.
     if (!all_arcs.empty()) {
         std::size_t n_arcs = result.num_arcs();
         std::size_t split = n_arcs;

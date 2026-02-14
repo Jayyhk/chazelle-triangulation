@@ -531,11 +531,14 @@ void refine_region(Submap& submap,
 
     // ── Step 5: Insert internal chords into the submap ───────────
 
-    // Sort by y-coordinate for consistent insertion.
-    std::sort(internal_chords.begin(), internal_chords.end(),
-              [](const InternalChord& a, const InternalChord& b) {
-                  return a.y < b.y;
-              });
+    // §4.2: "extract the relevant information, i.e., the exit chords
+    // falling entirely within each region R.  This involves checking
+    // the exit chords of the computed submap of V(R*) and keeping
+    // only those both of whose endpoints lie on the arcs."
+    //
+    // The paper constructs S* directly — no sort is prescribed.
+    // Non-crossing horizontal chord insertions are order-independent,
+    // so we process chords in whatever order they were collected.
 
     // Build a set of edge pairs already present in the parent submap.
     // This prevents re-inserting chords that are still active.
