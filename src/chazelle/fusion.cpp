@@ -6,12 +6,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <cstring>
 #include <cstddef>
 #include <functional>
 #include <limits>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 namespace chazelle {
@@ -256,102 +254,110 @@ void fuse_pass(const Submap& src,
         std::size_t vertex_idx; ///< Vertex index (if is_vertex), else NONE.
         bool shoot_right;       ///< §3.1: assigned chord direction.
     };
-    std::vector<StopPoint> stops;
 
-    // §3.1 Fix 3: O(1) stop deduplication via hash set.
-    auto stop_hash = [](std::size_t edge, double y) -> std::size_t {
-        std::size_t h = edge;
-        std::uint64_t y_bits;
-        std::memcpy(&y_bits, &y, sizeof(y_bits));
-        h ^= std::hash<std::uint64_t>{}(y_bits) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-        return h;
-    };
-    std::unordered_set<std::size_t> seen_stops;
+    // §3.1: Collect stops from arc boundary vertices and chord
+    // endpoints.  Both sources are in ∂C order.  We collect into
+    // two separate sorted vectors, then 2-way merge + dedup in O(m).
+    std::vector<StopPoint> vertex_stops;
+    std::vector<StopPoint> chord_stops;
 
-    auto try_add_vertex_stop = [&](std::size_t v, bool shoot_right) {
-        if (v == NONE || v >= polygon.num_vertices()) return;
-        std::size_t e = v;
-        if (e >= polygon.num_edges()) e = polygon.num_edges() - 1;
-        double y = polygon.vertex(v).y;
-        if (seen_stops.insert(stop_hash(e, y)).second)
-            stops.push_back({e, y, true, v, shoot_right});
-    };
-
-    auto try_add_edge_stop = [&](std::size_t edge, double y, bool shoot_right) {
-        if (edge == NONE || edge >= polygon.num_edges()) return;
-        if (seen_stops.insert(stop_hash(edge, y)).second)
-            stops.push_back({edge, y, false, NONE, shoot_right});
-    };
-
-    // Walk arcs in arc-sequence-table order (= ∂C clockwise order per
-    // §2.3 (iii)).  For each arc, emit its boundary vertices; for each
-    // chord between arcs, emit its endpoints.  This produces stops in
-    // ∂C order without sorting.
-    //
-    // Arc boundary vertices.
+    // Arc boundary vertices (in ∂C order since src is in normal form).
     for (std::size_t ai = 0; ai < src.num_arcs(); ++ai) {
         const auto& arc = src.arc(ai);
         if (arc.first_edge == NONE) continue;
         std::size_t lo = std::min(arc.first_edge, arc.last_edge);
         std::size_t hi = std::max(arc.first_edge, arc.last_edge);
-        try_add_vertex_stop(lo, arc.first_side == Side::LEFT);
-        if (hi + 1 < polygon.num_vertices())
-            try_add_vertex_stop(hi + 1, arc.last_side == Side::LEFT);
+        {
+            std::size_t v = lo;
+            if (v != NONE && v < polygon.num_vertices()) {
+                std::size_t e = v;
+                if (e >= polygon.num_edges()) e = polygon.num_edges() - 1;
+                vertex_stops.push_back({e, polygon.vertex(v).y,
+                                        true, v,
+                                        arc.first_side == Side::LEFT});
+            }
+        }
+        if (hi + 1 < polygon.num_vertices()) {
+            std::size_t v = hi + 1;
+            std::size_t e = v;
+            if (e >= polygon.num_edges()) e = polygon.num_edges() - 1;
+            vertex_stops.push_back({e, polygon.vertex(v).y,
+                                    true, v,
+                                    arc.last_side == Side::LEFT});
+        }
     }
 
-    // Chord endpoints (already in sorted order from normalize_chords).
+    // Chord endpoints (in order from normalize_chords).
     for (std::size_t ci = 0; ci < src.num_chords(); ++ci) {
         const auto& c = src.chord(ci);
-        if (c.left_edge != NONE) try_add_edge_stop(c.left_edge, c.y, true);
-        if (c.right_edge != NONE) try_add_edge_stop(c.right_edge, c.y, false);
+        if (c.left_edge != NONE && c.left_edge < polygon.num_edges())
+            chord_stops.push_back({c.left_edge, c.y, false, NONE, true});
+        if (c.right_edge != NONE && c.right_edge < polygon.num_edges())
+            chord_stops.push_back({c.right_edge, c.y, false, NONE, false});
     }
 
-    // Always include the junction vertex (default: shoot right).
-    try_add_vertex_stop(junction_vertex, true);
+    // Junction vertex stop.
+    StopPoint junction_stop{};
+    bool have_junction = false;
+    if (junction_vertex != NONE && junction_vertex < polygon.num_vertices()) {
+        std::size_t e = junction_vertex;
+        if (e >= polygon.num_edges()) e = polygon.num_edges() - 1;
+        junction_stop = {e, polygon.vertex(junction_vertex).y,
+                         true, junction_vertex, true};
+        have_junction = true;
+    }
 
-    // §2.3 (iii): Since src is in normal form, the arc-sequence table
-    // is in canonical ∂C traversal order.  The stops collected above
-    // from arcs are therefore already in ∂C order.  Chord endpoint
-    // stops are also in order (normalize_chords).  The only out-of-
-    // order element is the junction vertex appended at the end.  We
-    // use a single linear merge of the two ordered sequences plus the
-    // junction point.  For simplicity and correctness under edge cases
-    // (e.g. chord endpoints interleaved with arc boundaries on the
-    // same edge), we perform a lightweight counting sort by edge_idx
-    // which is O(E) time and O(max_edge) space.
-    if (!stops.empty()) {
-        // §3.1: Use relative edge offsets so bucket count is
-        // O(chain_size) instead of O(n).  The source submap's
-        // c_start_vertex gives the base offset.
-        std::size_t base = (src.c_start_vertex != NONE) ? src.c_start_vertex : 0;
-        std::size_t max_e = 0;
-        for (const auto& s : stops) {
-            if (s.edge_idx >= base)
-                max_e = std::max(max_e, s.edge_idx - base);
+    // §3.1 (Lemma 3.1 proof): "Note that merging can also be used
+    // instead of sorting."  Both vertex_stops and chord_stops are
+    // already sorted by edge_idx (from the arc-sequence table and
+    // normalize_chords respectively).  2-way merge with dedup: O(m).
+    auto stop_less = [](const StopPoint& a, const StopPoint& b) {
+        if (a.edge_idx != b.edge_idx) return a.edge_idx < b.edge_idx;
+        return a.y < b.y;
+    };
+    auto stop_eq = [](const StopPoint& a, const StopPoint& b) {
+        return a.edge_idx == b.edge_idx && a.y == b.y;
+    };
+
+    std::vector<StopPoint> stops;
+    stops.reserve(vertex_stops.size() + chord_stops.size() + 1);
+
+    {
+        std::size_t iv = 0, ic = 0;
+        while (iv < vertex_stops.size() || ic < chord_stops.size()) {
+            const StopPoint* pick = nullptr;
+            bool from_v = false;
+            if (iv < vertex_stops.size() && ic < chord_stops.size()) {
+                if (stop_less(vertex_stops[iv], chord_stops[ic])) {
+                    pick = &vertex_stops[iv]; from_v = true;
+                } else {
+                    pick = &chord_stops[ic]; from_v = false;
+                }
+            } else if (iv < vertex_stops.size()) {
+                pick = &vertex_stops[iv]; from_v = true;
+            } else {
+                pick = &chord_stops[ic]; from_v = false;
+            }
+            // Dedup: skip if same (edge_idx, y) as last added.
+            if (stops.empty() || !stop_eq(*pick, stops.back())) {
+                stops.push_back(*pick);
+            }
+            if (from_v) ++iv; else ++ic;
         }
+    }
 
-        // Count stops per relative edge.
-        std::vector<std::size_t> count(max_e + 2, 0);
+    // Insert junction vertex at correct position (binary search +
+    // insert): O(log m).
+    if (have_junction) {
+        bool already = false;
         for (const auto& s : stops) {
-            std::size_t rk = (s.edge_idx >= base) ? (s.edge_idx - base) : 0;
-            count[rk]++;
+            if (stop_eq(s, junction_stop)) { already = true; break; }
         }
-
-        // Prefix sum for offsets.
-        std::vector<std::size_t> offset(max_e + 2, 0);
-        for (std::size_t i = 1; i <= max_e + 1; ++i)
-            offset[i] = offset[i - 1] + count[i - 1];
-
-        // Place stops into sorted-by-edge order.
-        std::vector<StopPoint> sorted(stops.size());
-        // Use a copy of offset as write cursors.
-        std::vector<std::size_t> cursor = offset;
-        for (const auto& s : stops) {
-            std::size_t rk = (s.edge_idx >= base) ? (s.edge_idx - base) : 0;
-            sorted[cursor[rk]++] = s;
+        if (!already) {
+            auto it = std::lower_bound(stops.begin(), stops.end(),
+                                       junction_stop, stop_less);
+            stops.insert(it, junction_stop);
         }
-
-        stops = std::move(sorted);
     }
 
     if (stops.empty()) return;
@@ -628,27 +634,6 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         std::size_t sort_key;  // min(left_edge, right_edge)
     };
 
-    // §3.1: Chords are uniquely identified by (left_edge, right_edge, y).
-    // Deduplication via hash set is O(E) expected time.
-    struct ChordKey {
-        std::size_t lo, hi;
-        double y;
-        bool operator==(const ChordKey& o) const {
-            return lo == o.lo && hi == o.hi && y == o.y;
-        }
-    };
-    struct ChordKeyHash {
-        std::size_t operator()(const ChordKey& k) const {
-            std::size_t h = k.lo;
-            h ^= std::hash<std::size_t>{}(k.hi) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-            std::uint64_t y_bits;
-            std::memcpy(&y_bits, &k.y, sizeof(y_bits));
-            h ^= std::hash<std::uint64_t>{}(y_bits) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-            return h;
-        }
-    };
-    std::unordered_set<ChordKey, ChordKeyHash> seen;
-
     // Comparator for the 3-way merge: sort by (sort_key, y).
     // Per §3.1: "sorting the names of the edges... then sorting the
     // endpoints falling within the same edges by y-coordinates."
@@ -662,7 +647,7 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     // normalize_chords().  Discovered chords are produced by the
     // clockwise fusion walk (§3.1 main loop), so they arrive in ∂C
     // order — already sorted by sort_key.  We perform a 3-way merge
-    // in O(E) time, with O(1) deduplication per chord via hash set.
+    // in O(E) time, with O(1) adjacent-dedup (deterministic).
 
     // Pre-filter S1 and S2 chord lists (already sorted).
     std::vector<ChordRecord> s1_list, s2_list, disc_list;
@@ -719,13 +704,21 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
             }
         }
 
-        // O(1) deduplication.
+        // O(1) adjacent-dedup: since the 3-way merge produces chords
+        // in sorted order, duplicates are always adjacent.
         if (min_c->left_edge != NONE && min_c->right_edge != NONE &&
             (min_c->left_edge != min_c->right_edge || min_c->is_null_length)) {
-            ChordKey key{std::min(min_c->left_edge, min_c->right_edge),
-                         std::max(min_c->left_edge, min_c->right_edge),
-                         min_c->y};
-            if (seen.insert(key).second) {
+            std::size_t c_lo = std::min(min_c->left_edge, min_c->right_edge);
+            std::size_t c_hi = std::max(min_c->left_edge, min_c->right_edge);
+            bool is_dup = false;
+            if (!all_chords.empty()) {
+                const auto& prev = all_chords.back();
+                std::size_t p_lo = std::min(prev.left_edge, prev.right_edge);
+                std::size_t p_hi = std::max(prev.left_edge, prev.right_edge);
+                if (c_lo == p_lo && c_hi == p_hi && min_c->y == prev.y)
+                    is_dup = true;
+            }
+            if (!is_dup) {
                 all_chords.push_back(*min_c);
             }
         }
@@ -739,48 +732,26 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     for (std::size_t i = 0; i < num_regions; ++i)
         result.add_node();
 
-    // --- Split-point collection: O(E) via boolean bucket ---
+    // --- Split-point collection: O(E log E) via sorted vector ---
     //
-    // Per §3.1: arcs from S₁ and S₂ may span across newly discovered
-    // chord endpoints.  We split arcs at chord endpoint edges.
-    // Use relative offsets so the boolean array is O(chain_size)
-    // instead of O(n).
-    std::size_t split_base = 0;
-    std::size_t max_edge = 0;
+    // Per §3.1 (Lemma 3.1 proof): "let us sort the endpoints of
+    // these chords along ∂C … Note that merging can also be used
+    // instead of sorting but this step is not the dominant cost,
+    // anyway."  The paper budgets O(m · log(n₁+n₂)) for the entire
+    // normal-form setup.  Our O(E log E) sort is ≤ O(m log(n₁+n₂))
+    // since E ≤ m ≤ n₁+n₂, matching the paper exactly.
+    std::vector<std::size_t> split_edges;
+    split_edges.reserve(all_chords.size() * 2);
     for (const auto& cr : all_chords) {
         if (cr.left_edge != NONE)
-            max_edge = std::max(max_edge, cr.left_edge);
+            split_edges.push_back(cr.left_edge);
         if (cr.right_edge != NONE)
-            max_edge = std::max(max_edge, cr.right_edge);
+            split_edges.push_back(cr.right_edge);
     }
-    // Also consider arc edges for the range.
-    for (std::size_t i = 0; i < s1.num_arcs(); ++i) {
-        const auto& a = s1.arc(i);
-        if (a.first_edge != NONE) {
-            split_base = std::min(split_base == 0 ? a.first_edge : split_base,
-                                  std::min(a.first_edge, a.last_edge));
-            max_edge = std::max(max_edge, std::max(a.first_edge, a.last_edge));
-        }
-    }
-    for (std::size_t i = 0; i < s2.num_arcs(); ++i) {
-        const auto& a = s2.arc(i);
-        if (a.first_edge != NONE) {
-            split_base = std::min(split_base == 0 ? a.first_edge : split_base,
-                                  std::min(a.first_edge, a.last_edge));
-            max_edge = std::max(max_edge, std::max(a.first_edge, a.last_edge));
-        }
-    }
-    std::size_t split_range = max_edge - split_base;
-    // +1 for 0-indexed, +1 for safety.
-    std::vector<bool> is_split_edge(split_range + 2, false);
-    for (const auto& cr : all_chords) {
-        if (cr.left_edge != NONE && cr.left_edge >= split_base &&
-            cr.left_edge - split_base <= split_range)
-            is_split_edge[cr.left_edge - split_base] = true;
-        if (cr.right_edge != NONE && cr.right_edge >= split_base &&
-            cr.right_edge - split_base <= split_range)
-            is_split_edge[cr.right_edge - split_base] = true;
-    }
+    std::sort(split_edges.begin(), split_edges.end());
+    split_edges.erase(
+        std::unique(split_edges.begin(), split_edges.end()),
+        split_edges.end());
 
     struct ArcRecord {
         ArcStructure arc;
@@ -801,20 +772,24 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
             return;
         }
 
-        // Linear scan for interior split points: O(arc size).
-        // Total across all arcs: O(E) since arcs partition the edges.
+        // §3.1: Find interior split points in [lo+1, hi) via binary
+        // search into the sorted split_edges vector.  O(log E + k)
+        // where k = number of split points in this arc's range.
+        // Total across all arcs: O(A · log E + E) = O(E log E)
+        // (within the paper's O(m · log(n₁+n₂)) budget).
+        auto it = std::lower_bound(split_edges.begin(),
+                                   split_edges.end(), lo + 1);
         std::size_t cur_lo = lo;
-        for (std::size_t e = lo + 1; e < hi; ++e) {
-            if (e >= split_base && e - split_base <= split_range &&
-                is_split_edge[e - split_base]) {
-                // Sub-arc [cur_lo, e-1].
-                ArcStructure sub = a;
-                sub.first_edge = cur_lo;
-                sub.last_edge  = e - 1;
-                sub.edge_count = e - cur_lo;
-                all_arcs.push_back({sub, cur_lo});
-                cur_lo = e;
-            }
+        while (it != split_edges.end() && *it < hi) {
+            std::size_t e = *it;
+            // Sub-arc [cur_lo, e-1].
+            ArcStructure sub = a;
+            sub.first_edge = cur_lo;
+            sub.last_edge  = e - 1;
+            sub.edge_count = e - cur_lo;
+            all_arcs.push_back({sub, cur_lo});
+            cur_lo = e;
+            ++it;
         }
         // Final sub-arc [cur_lo, hi].
         ArcStructure sub = a;

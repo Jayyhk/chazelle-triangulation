@@ -6,7 +6,6 @@
 #include <cassert>
 #include <cmath>
 #include <set>
-#include <unordered_set>
 #include <vector>
 
 namespace chazelle {
@@ -106,15 +105,11 @@ void RayShootingOracle::build_dual_graph() {
     // double_identify (O(log m) per endpoint) for each of the O(μ)
     // chord endpoints, giving O(μ log m) total.
     {
-        // Hash-based dedup for O(1) per edge check.
-        struct PairHash {
-            std::size_t operator()(std::pair<std::size_t,std::size_t> p) const {
-                return std::hash<std::size_t>()(p.first) * 31 +
-                       std::hash<std::size_t>()(p.second);
-            }
-        };
-        std::unordered_set<std::pair<std::size_t,std::size_t>, PairHash>
-            added_edges;
+        // §3.4: deterministic dedup for dual-graph edges.
+        // Use std::set for O(log μ) per insertion/lookup, giving
+        // O(μ log μ) total — deterministic and within the paper's
+        // O(μ log m) bound.
+        std::set<std::pair<std::size_t,std::size_t>> added_edges;
 
         // Record all type-(a) edges added above.
         for (std::size_t ci = 0; ci < submap_->num_chords(); ++ci) {

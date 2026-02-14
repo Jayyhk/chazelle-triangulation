@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cassert>
 #include <queue>
-#include <unordered_map>
 #include <vector>
 
 namespace chazelle {
@@ -42,7 +41,12 @@ void TreeDecomposition::build(const Submap& submap) {
         return;
     }
 
-    root_ = decompose(submap, all_nodes, all_chords, TD_NONE, 0);
+    // §2.3: Allocate a dense mapping vector once.  Shared by all
+    // recursion levels for O(1) lookup per node, giving O(N) per
+    // subproblem and O(m log m + 1) total — matching the paper exactly.
+    std::vector<std::size_t> node_id_map(submap.num_nodes(), NONE);
+
+    root_ = decompose(submap, all_nodes, all_chords, TD_NONE, 0, node_id_map);
 }
 
 std::size_t TreeDecomposition::decompose(
@@ -50,7 +54,8 @@ std::size_t TreeDecomposition::decompose(
     const std::vector<std::size_t>& subtree_nodes,
     const std::vector<std::size_t>& subtree_chords,
     std::size_t parent_td,
-    std::size_t depth) {
+    std::size_t depth,
+    std::vector<std::size_t>& node_id_map) {
 
     max_depth_ = std::max(max_depth_, depth);
 
@@ -68,34 +73,23 @@ std::size_t TreeDecomposition::decompose(
 
     // §2.3: O(m log m + 1) deterministic tree decomposition.
     //
-    // Use compact local indexing with vectors instead of hash maps.
-    // At each recursion level, we map the subtree's submap node IDs
-    // into a dense [0, N) range, so all lookups are O(1) array
-    // accesses.  Total work across all levels of each recursion depth
-    // is O(|subtree|), giving O(r log r) overall (¾ shrinkage).
+    // Use a dense vector (allocated once in build(), shared across
+    // all recursion levels) for O(1) submap-node-ID → local-index
+    // lookup.  Each level fills its entries, uses them, and clears
+    // them before recursing — O(N) per subproblem, giving
+    // O(m log m + 1) total across all levels (matching the paper).
 
     const std::size_t N = subtree_nodes.size();
     const std::size_t total_edges = subtree_chords.size();
 
-    // §2.3: "By using straightforward tree-labeling techniques we can
-    // find the centroid node, and from there, the first edge to be
-    // removed, in linear time.  Proceeding recursively gives us a
-    // simple O(m log m + 1)-time algorithm for computing the tree
-    // decomposition."
-    //
-    // Build a mapping: submap node ID → compact local index [0, N).
-    // Use a hash map for O(1) expected-time lookups, giving O(N) per
-    // recursion level and O(r log r) total — matching the paper's
-    // O(m log m + 1) bound.
-    std::unordered_map<std::size_t, std::size_t> id_map;
-    id_map.reserve(N);
+    // Fill the dense mapping: submap node ID → compact local index [0, N).
+    // O(N) time.
     for (std::size_t i = 0; i < N; ++i)
-        id_map[subtree_nodes[i]] = i;
+        node_id_map[subtree_nodes[i]] = i;
 
     auto compact_id = [&](std::size_t sid) -> std::size_t {
-        auto it = id_map.find(sid);
-        assert(it != id_map.end());
-        return it->second;
+        assert(sid < node_id_map.size() && node_id_map[sid] != NONE);
+        return node_id_map[sid];
     };
 
     // Build local adjacency: adj[local_id] → [(chord_idx, neighbor_local_id)]
@@ -252,9 +246,15 @@ std::size_t TreeDecomposition::decompose(
     auto [nodes_a, chords_a] = collect_side(side_a_root);
     auto [nodes_b, chords_b] = collect_side(side_b_root);
 
+    // Clear the dense mapping entries for this level before recursing.
+    // Each recursive call will fill its own entries in the same vector.
+    // O(N) cleanup — amortised O(m log m + 1) total across all levels.
+    for (std::size_t i = 0; i < N; ++i)
+        node_id_map[subtree_nodes[i]] = NONE;
+
     // Recurse on both sides.
-    std::size_t left  = decompose(submap, nodes_a, chords_a, td_idx, depth + 1);
-    std::size_t right = decompose(submap, nodes_b, chords_b, td_idx, depth + 1);
+    std::size_t left  = decompose(submap, nodes_a, chords_a, td_idx, depth + 1, node_id_map);
+    std::size_t right = decompose(submap, nodes_b, chords_b, td_idx, depth + 1, node_id_map);
 
     nodes_[td_idx].left_child  = left;
     nodes_[td_idx].right_child = right;

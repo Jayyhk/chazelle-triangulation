@@ -545,6 +545,50 @@ void refine_region(Submap& submap,
     // Chords removed by granularity enforcement are fully invalidated
     // (left_edge = NONE) by remove_chord(), so they are naturally
     // excluded.  This allows them to be rediscovered at finer grades.
+    //
+    // §4.2: Use a boolean vector indexed by (min_edge - base) for
+    // O(1) lookup.  The edge range is bounded by the region's arcs,
+    // so the vector size is O(region_edge_count) ⊆ O(n/γ).
+    std::size_t pc_base = SIZE_MAX, pc_max = 0;
+    for (const auto& r : region_arc_ranges) {
+        pc_base = std::min(pc_base, r.lo);
+        pc_max  = std::max(pc_max, r.hi);
+    }
+    if (pc_base == SIZE_MAX) pc_base = 0;
+    // Also include edges from existing chords.
+    for (std::size_t ci = 0; ci < submap.num_chords(); ++ci) {
+        const auto& c = submap.chord(ci);
+        if (c.left_edge == NONE || c.right_edge == NONE) continue;
+        if (c.region[0] == NONE || c.region[1] == NONE) continue;
+        if (submap.node(c.region[0]).deleted ||
+            submap.node(c.region[1]).deleted) continue;
+        std::size_t mn = std::min(c.left_edge, c.right_edge);
+        std::size_t mx = std::max(c.left_edge, c.right_edge);
+        pc_base = std::min(pc_base, mn);
+        pc_max  = std::max(pc_max, mx);
+    }
+    // Include internal chord edges for the range.
+    for (const auto& ic : internal_chords) {
+        std::size_t mn = std::min(ic.left_edge, ic.right_edge);
+        std::size_t mx = std::max(ic.left_edge, ic.right_edge);
+        pc_base = std::min(pc_base, mn);
+        pc_max  = std::max(pc_max, mx);
+    }
+    std::size_t pc_range = (pc_max >= pc_base) ? pc_max - pc_base + 1 : 0;
+
+    // parent_chords_present[min_edge - pc_base] maps to max_edge
+    // (NONE if no chord).  For simplicity, just use a bool vector.
+    std::vector<bool> parent_chord_exists(pc_range + 1, false);
+    // We encode (min, max) → bool by hashing into a map.
+    // Actually, a cleaner approach: since chords are identified by
+    // (min_edge, max_edge), store a vector of sets indexed by min_edge.
+    // But for O(M) total, use a vector of max_edges per min_edge.
+    // Simplest O(M) approach: just track (min_edge * large + max_edge)
+    // in a boolean bitmap — but that's 2D and wasteful.
+    //
+    // Keep std::set for parent chord dedup — it's O(M log M) total
+    // where M is the initial chord count (bounded by n/γ).  The
+    // inner-loop improvement below is the critical fix.
     std::set<std::pair<std::size_t, std::size_t>> parent_chords;
     for (std::size_t ci = 0; ci < submap.num_chords(); ++ci) {
         const auto& c = submap.chord(ci);
@@ -556,10 +600,47 @@ void refine_region(Submap& submap,
                               std::max(c.left_edge, c.right_edge));
     }
 
-    // Track all sub-regions created from the original region_idx.
-    // As chords are inserted, arcs move to new sub-regions; later
-    // chords must search the correct sub-region.
-    std::vector<std::size_t> live_subregions = {region_idx};
+    // §4.2 Step 5: edge→region index for O(1) chord-target lookup.
+    //
+    // Build a sorted list of (arc_lo, arc_hi, region_id) triples
+    // from the ORIGINAL region's arcs.  Since the submap is conformal,
+    // each region has ≤ 4 arcs (degree ≤ 4), so this index has at
+    // most 4 entries.  Binary search on ≤ 4 entries = O(1) per query;
+    // the linear update scan is also O(4) = O(1) per chord insertion.
+    // Total across k internal chords: O(k), matching Lemma 4.2.
+    struct ArcRangeEntry {
+        std::size_t lo;
+        std::size_t hi;
+        std::size_t region_id;
+    };
+    std::vector<ArcRangeEntry> arc_index;
+    for (std::size_t ai : submap.node(region_idx).arcs) {
+        const auto& a = submap.arc(ai);
+        if (a.first_edge == NONE) continue;
+        std::size_t a_lo = std::min(a.first_edge, a.last_edge);
+        std::size_t a_hi = std::max(a.first_edge, a.last_edge);
+        arc_index.push_back({a_lo, a_hi, region_idx});
+    }
+    std::sort(arc_index.begin(), arc_index.end(),
+              [](const ArcRangeEntry& a, const ArcRangeEntry& b) {
+                  return a.lo < b.lo;
+              });
+
+    // Helper: binary search arc_index for the entry containing edge e.
+    auto find_region_for_edge = [&](std::size_t e) -> std::size_t {
+        // Find the last entry with lo <= e.
+        std::size_t lo_s = 0, hi_s = arc_index.size();
+        while (lo_s < hi_s) {
+            std::size_t mid = lo_s + (hi_s - lo_s) / 2;
+            if (arc_index[mid].lo <= e) lo_s = mid + 1;
+            else hi_s = mid;
+        }
+        if (lo_s == 0) return NONE;
+        --lo_s;
+        if (e >= arc_index[lo_s].lo && e <= arc_index[lo_s].hi)
+            return arc_index[lo_s].region_id;
+        return NONE;
+    };
 
     for (auto& ic : internal_chords) {
         // Skip chords that already exist in the parent submap.
@@ -570,22 +651,10 @@ void refine_region(Submap& submap,
 
         std::size_t le_edge = ic.left_edge;
 
-        // Find which sub-region currently holds the arc containing
-        // this chord's left endpoint edge.
-        std::size_t target = NONE;
-        for (std::size_t sr : live_subregions) {
-            for (std::size_t ai : submap.node(sr).arcs) {
-                const auto& a = submap.arc(ai);
-                if (a.first_edge == NONE) continue;
-                std::size_t a_lo = std::min(a.first_edge, a.last_edge);
-                std::size_t a_hi = std::max(a.first_edge, a.last_edge);
-                if (le_edge >= a_lo && le_edge <= a_hi) {
-                    target = sr;
-                    break;
-                }
-            }
-            if (target != NONE) break;
-        }
+        // §4.2: O(1) lookup on the arc_index (≤ 4 entries for
+        // conformal submaps) to find which sub-region currently
+        // holds the arc containing this chord's left endpoint edge.
+        std::size_t target = find_region_for_edge(le_edge);
         if (target == NONE) continue;
 
         std::size_t new_region = submap.add_node();
@@ -659,6 +728,16 @@ void refine_region(Submap& submap,
             submap.node(new_region).arcs.push_back(ai);
         }
 
+        // Update arc_index: change region_id for moved arcs.
+        // Since move_arcs have ranges in [split_lo, split_hi), update
+        // any arc_index entry whose range overlaps that interval.
+        for (auto& entry : arc_index) {
+            if (entry.region_id == target &&
+                entry.lo < split_hi && entry.hi >= split_lo) {
+                entry.region_id = new_region;
+            }
+        }
+
         auto& ichords = submap.node(target).incident_chords;
         std::vector<std::size_t> keep_chords;
         std::vector<std::size_t> move_chords;
@@ -691,9 +770,6 @@ void refine_region(Submap& submap,
 
         submap.recompute_weight(target);
         submap.recompute_weight(new_region);
-
-        // Track the new sub-region for subsequent chord insertions.
-        live_subregions.push_back(new_region);
     }
 }
 

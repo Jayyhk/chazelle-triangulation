@@ -243,34 +243,10 @@ int lemma24_test(
             if (hit_lands_on_arc(hit, parent_submap, arc_j)) {
                 cand.y = pa_y;
                 cand.left_edge = ea;
-                // Resolve right_edge: find the edge on the hit
-                // arc whose x-intercept at y is closest to hit_x.
-                cand.right_edge = NONE;
-                if (hit.arc_idx != NONE && hit.arc_idx < parent_submap.num_arcs()) {
-                    const auto& ha = parent_submap.arc(hit.arc_idx);
-                    if (ha.first_edge != NONE) {
-                        std::size_t hlo = std::min(ha.first_edge, ha.last_edge);
-                        std::size_t hhi = std::max(ha.first_edge, ha.last_edge);
-                        double best_xd = std::numeric_limits<double>::infinity();
-                        for (std::size_t ei2 = hlo; ei2 <= hhi && ei2 < polygon.num_edges(); ++ei2) {
-                            const auto& e2 = polygon.edge(ei2);
-                            const auto& ep1 = polygon.vertex(e2.start_idx);
-                            const auto& ep2 = polygon.vertex(e2.end_idx);
-                            double ey_lo = std::min(ep1.y, ep2.y);
-                            double ey_hi = std::max(ep1.y, ep2.y);
-                            if (pa_y < ey_lo - 1e-12 || pa_y > ey_hi + 1e-12) continue;
-                            if (std::abs(ey_hi - ey_lo) < 1e-15) continue;
-                            double t2 = (pa_y - ep1.y) / (ep2.y - ep1.y);
-                            double ex = ep1.x + t2 * (ep2.x - ep1.x);
-                            double dx = std::abs(ex - hit.hit_x);
-                            if (dx < best_xd) {
-                                best_xd = dx;
-                                cand.right_edge = ei2;
-                            }
-                        }
-                        // No vertex fallback needed; right_edge is set to the hit edge.
-                    }
-                }
+                // §3 item (i): the oracle report includes the edge
+                // name.  Use hit.hit_edge directly — O(1) instead
+                // of an O(γ) linear scan over all arc edges.
+                cand.right_edge = hit.hit_edge;
                 if (cand.right_edge != NONE) {
                     cand.valid = true;
                     return 0; // success
@@ -292,32 +268,10 @@ int lemma24_test(
             if (hit_lands_on_arc(hit, parent_submap, arc_j)) {
                 cand.y = pb_y;
                 cand.left_edge = eb;
-                cand.right_edge = NONE;
-                if (hit.arc_idx != NONE && hit.arc_idx < parent_submap.num_arcs()) {
-                    const auto& ha = parent_submap.arc(hit.arc_idx);
-                    if (ha.first_edge != NONE) {
-                        std::size_t hlo = std::min(ha.first_edge, ha.last_edge);
-                        std::size_t hhi = std::max(ha.first_edge, ha.last_edge);
-                        double best_xd = std::numeric_limits<double>::infinity();
-                        for (std::size_t ei2 = hlo; ei2 <= hhi && ei2 < polygon.num_edges(); ++ei2) {
-                            const auto& e2 = polygon.edge(ei2);
-                            const auto& ep1 = polygon.vertex(e2.start_idx);
-                            const auto& ep2 = polygon.vertex(e2.end_idx);
-                            double ey_lo = std::min(ep1.y, ep2.y);
-                            double ey_hi = std::max(ep1.y, ep2.y);
-                            if (pb_y < ey_lo - 1e-12 || pb_y > ey_hi + 1e-12) continue;
-                            if (std::abs(ey_hi - ey_lo) < 1e-15) continue;
-                            double t2 = (pb_y - ep1.y) / (ep2.y - ep1.y);
-                            double ex = ep1.x + t2 * (ep2.x - ep1.x);
-                            double dx = std::abs(ex - hit.hit_x);
-                            if (dx < best_xd) {
-                                best_xd = dx;
-                                cand.right_edge = ei2;
-                            }
-                        }
-                        // No vertex fallback needed; right_edge is set to the hit edge.
-                    }
-                }
+                // §3 item (i): the oracle report includes the edge
+                // name.  Use hit.hit_edge directly — O(1) instead
+                // of an O(γ) linear scan over all arc edges.
+                cand.right_edge = hit.hit_edge;
                 if (cand.right_edge != NONE) {
                     cand.valid = true;
                     return 0; // success
@@ -488,35 +442,10 @@ ChordCandidate search_tree_decomposition(
                             ChordCandidate cand;
                             cand.y = pt.y;
                             cand.left_edge = v;
-                            // Resolve right_edge: find the edge on
-                            // the hit arc whose x-intercept is closest to hit_x.
-                            cand.right_edge = NONE;
-                            if (hit.arc_idx != NONE &&
-                                hit.arc_idx < parent_submap.num_arcs()) {
-                                const auto& ha = parent_submap.arc(hit.arc_idx);
-                                if (ha.first_edge != NONE) {
-                                    std::size_t hlo = std::min(ha.first_edge, ha.last_edge);
-                                    std::size_t hhi = std::max(ha.first_edge, ha.last_edge);
-                                    double best_xd = std::numeric_limits<double>::infinity();
-                                    for (std::size_t ei2 = hlo; ei2 <= hhi && ei2 < polygon.num_edges(); ++ei2) {
-                                        const auto& e2 = polygon.edge(ei2);
-                                        const auto& ep1 = polygon.vertex(e2.start_idx);
-                                        const auto& ep2 = polygon.vertex(e2.end_idx);
-                                        double ey_lo = std::min(ep1.y, ep2.y);
-                                        double ey_hi = std::max(ep1.y, ep2.y);
-                                        if (pt.y < ey_lo - 1e-12 || pt.y > ey_hi + 1e-12) continue;
-                                        if (std::abs(ey_hi - ey_lo) < 1e-15) continue;
-                                        double t2 = (pt.y - ep1.y) / (ep2.y - ep1.y);
-                                        double ex = ep1.x + t2 * (ep2.x - ep1.x);
-                                        double dx = std::abs(ex - hit.hit_x);
-                                        if (dx < best_xd) {
-                                            best_xd = dx;
-                                            cand.right_edge = ei2;
-                                        }
-                                    }
-                                    // No vertex fallback needed; right_edge is set to the hit edge.
-                                }
-                            }
+                            // §3 item (i): the oracle report includes
+                            // the edge name.  Use hit.hit_edge directly
+                            // — O(1) instead of O(γ) linear scan.
+                            cand.right_edge = hit.hit_edge;
                             // Skip if we couldn't resolve or got a self-loop.
                             if (cand.right_edge != NONE && cand.right_edge != v) {
                                 cand.valid = true;

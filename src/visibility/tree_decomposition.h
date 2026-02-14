@@ -82,13 +82,18 @@ private:
     /// @param subtree_chords The set of chord indices forming the subtree.
     /// @param parent_td      Parent index in the decomposition tree.
     /// @param depth          Current depth.
+    /// @param node_id_map    Dense vector (size ≥ num_nodes) mapping
+    ///                       submap node ID → compact local index.
+    ///                       Shared across all recursion levels for O(1)
+    ///                       lookup per node (§2.3: O(m log m+1) total).
     /// @return Index of the created TD node.
     std::size_t decompose(
         const Submap& submap,
         const std::vector<std::size_t>& subtree_nodes,
         const std::vector<std::size_t>& subtree_chords,
         std::size_t parent_td,
-        std::size_t depth);
+        std::size_t depth,
+        std::vector<std::size_t>& node_id_map);
 };
 
 } // namespace chazelle
