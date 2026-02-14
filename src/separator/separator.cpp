@@ -401,7 +401,8 @@ SeparatorResult find_separator(PlanarGraph& graph) {
                 l0 = l;
                 break;
             }
-            if (l == 0) { l0 = 0; break; }
+            // The paper proves l₀ must exist (proof by contradiction).
+            assert(l > 0 && "L-T Step 5: level l0 must exist");
         }
     }
 
@@ -410,14 +411,18 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     {
         double n_minus_k = n_comp - static_cast<double>(k_size);
         double bound = 2.0 * std::sqrt(n_minus_k);
+        bool found_l2 = false;
         for (std::size_t l = l1 + 1; l <= max_level; ++l) {
             double val = static_cast<double>(level_size[l])
                        + 2.0 * static_cast<double>(l - l1 - 1);
             if (val <= bound) {
                 l2 = l;
+                found_l2 = true;
                 break;
             }
         }
+        // The paper proves l₂ must exist (proof by contradiction).
+        assert(found_l2 && "L-T Step 5: level l2 must exist");
     }
 
     // Check if the middle region (levels l₀+1 .. l₂−1) is small enough.
@@ -468,19 +473,17 @@ SeparatorResult find_separator(PlanarGraph& graph) {
 
     // ── Steps 6–9: need a cycle separator in the middle region ──
 
-    // Step 6: Lipton-Tarjan graph shrinking.
-    // Contract levels 0..l₀ into a single supervertex x, and delete
-    // levels ≥ l₂.  Then rebuild BFS tree in the shrunken graph rooted
-    // at x, which has depth ≤ l₂ − l₀ − 1.  This bounds the
-    // fundamental cycle length to ≤ 2(l₂ − l₀ − 1) + 1 ≤ 2√(2n).
-    //
-    // Implementation: pick an arbitrary level-l₀ vertex as the
-    // supervertex x (it inherits all edges from levels 0..l₀ to
-    // levels l₀+1..l₂−1).  Soft-delete all other vertices outside
-    // [l₀, l₂−1].  Then rebuild BFS from x on the middle region.
-    std::vector<std::pair<std::size_t, bool>> step6_saved;
+    // Step 6: Per Lipton-Tarjan §3 Step 6, contract levels 0..l₀
+    // into a single supervertex x and delete levels ≥ l₂.  Edges
+    // from the contracted subtree to middle vertices (l₀+1..l₂-1)
+    // are redirected through x via an Euler tour of the subtree,
+    // preserving the planar embedding.  The BFS tree from x then has
+    // depth ≤ l₂ − l₀ − 1, bounding fundamental cycles.
+    std::vector<std::pair<std::size_t, bool>> step6_saved;  // vertex states
+    std::vector<std::pair<std::size_t, bool>> step6_edge_saved; // edge states
 
-    // Find a representative vertex at level l₀ to serve as supervertex x.
+    // In a connected BFS tree every level 0..max_level has vertices.
+    // The paper proves l₀ exists; level l₀ is therefore non-empty.
     std::size_t super_x = NONE;
     for (std::size_t v : comp.vertices) {
         if (graph.vertex(v).level == l0) {
@@ -488,23 +491,89 @@ SeparatorResult find_separator(PlanarGraph& graph) {
             break;
         }
     }
-    if (super_x == NONE) super_x = root; // fallback
+    assert(super_x != NONE && "BFS level l0 must have vertices");
 
-    // Soft-delete all vertices outside the middle region [l₀, l₂−1],
-    // except the supervertex x which stays at level l₀.
+    // 6a. Soft-delete vertices at levels ≥ l₂.
     for (std::size_t v : comp.vertices) {
-        std::size_t lv = graph.vertex(v).level;
-        if (lv < l0 || lv >= l2) {
-            step6_saved.emplace_back(v, graph.vertex(v).deleted);
-            graph.vertex(v).deleted = true;
-        } else if (lv == l0 && v != super_x) {
-            // Other l₀ vertices are also contracted into super_x.
+        if (graph.vertex(v).level >= l2) {
             step6_saved.emplace_back(v, graph.vertex(v).deleted);
             graph.vertex(v).deleted = true;
         }
     }
 
-    // Collect middle vertices (including the supervertex).
+    // 6b. Euler tour of the BFS tree at levels 0..l₀, per the paper:
+    //     "Construct a Boolean table … Scan the edges incident to
+    //      this tree clockwise around the tree."
+    //     For each edge (v,w) with v in the tree and table[w] false,
+    //     record w as needing a redirect edge from x.
+    struct RedirectInfo {
+        std::size_t w;          // middle vertex
+        std::size_t pos_at_w;   // edge CW-before (v,w) at w
+    };
+    std::vector<RedirectInfo> redirects;
+    std::vector<bool> table(nv, false);
+    for (std::size_t v : comp.vertices) {
+        if (graph.vertex(v).level <= l0)
+            table[v] = true;  // in contracted set
+    }
+
+    auto tree_scan = [&](auto&& self, std::size_t v) -> void {
+        graph.for_each_edge_cw(v, [&](std::size_t ei) {
+            std::size_t w = graph.edge(ei).other(v);
+            if (graph.vertex(w).deleted) return;  // l₂+ vertex
+            if (table[w]) {
+                // In contracted set or already connected to x.
+                // Recurse on tree children within levels 0..l₀.
+                if (graph.vertex(w).level <= l0 &&
+                    graph.edge(ei).is_tree &&
+                    graph.vertex(w).parent == v)
+                {
+                    self(self, w);
+                }
+            } else {
+                // First encounter with middle vertex w.
+                table[w] = true;
+                int ws = graph.edge(ei).side_of(w);
+                redirects.push_back({w, graph.edge(ei).ccw[ws]});
+            }
+        });
+    };
+    tree_scan(tree_scan, root);
+
+    // 6c. Soft-delete ALL edges of vertices at levels 0..l₀.
+    for (std::size_t v : comp.vertices) {
+        if (graph.vertex(v).level > l0) continue;
+        graph.for_each_edge_cw(v, [&](std::size_t ei) {
+            step6_edge_saved.emplace_back(ei, graph.edge(ei).deleted);
+            graph.edge(ei).deleted = true;
+        });
+    }
+
+    // 6d. Add redirect edges from super_x to each middle vertex
+    //     discovered during the Euler tour, in tour order.
+    std::size_t edges_before_redirect = graph.num_edges();
+    {
+        std::size_t last_x_edge = NONE;
+        for (auto& [w, pos_at_w] : redirects) {
+            std::size_t new_ei = graph.add_edge(
+                super_x, w, last_x_edge, pos_at_w);
+            last_x_edge = new_ei;
+        }
+    }
+
+    // 6e. Soft-delete 0..l₀ vertices except super_x; zero its cost
+    //     per the paper ("shrink to a single vertex of cost zero").
+    double saved_super_x_cost = graph.vertex(super_x).cost;
+    graph.vertex(super_x).cost = 0.0;
+    for (std::size_t v : comp.vertices) {
+        std::size_t lv = graph.vertex(v).level;
+        if ((lv < l0) || (lv == l0 && v != super_x)) {
+            step6_saved.emplace_back(v, graph.vertex(v).deleted);
+            graph.vertex(v).deleted = true;
+        }
+    }
+
+    // Collect middle vertices (including super_x).
     std::vector<std::size_t> middle_verts;
     middle_verts.push_back(super_x);
     for (std::size_t v : comp.vertices) {
@@ -514,27 +583,24 @@ SeparatorResult find_separator(PlanarGraph& graph) {
         }
     }
 
-    // Step 6 continued: Rebuild BFS spanning tree from super_x on the
-    // middle region.  This gives a new tree with depth ≤ l₂ − l₀ − 1,
-    // which is critical for bounding separator size.
+    // Step 7: Rebuild BFS from super_x (depth ≤ l₂ − l₀ − 1),
+    // compute descendant costs, and triangulate faces.
     std::size_t middle_max_level =
         bfs_spanning_tree(graph, middle_verts, super_x);
-
-    // Step 7: compute descendant costs and triangulate.
     compute_descendant_costs(graph, middle_verts, middle_max_level);
-    std::size_t edges_before_triangulation = graph.num_edges();
     triangulate_faces(graph, middle_verts);
 
     // Steps 8–9: Find a fundamental cycle that separates the middle.
-    // Find any non-tree edge among middle vertices.
+    // Per Step 8, choose any nontree edge in the contracted graph.
+    // After the middle-region BFS, levels have been reassigned, so
+    // we identify valid edges by checking for non-deleted neighbors.
     std::size_t cycle_edge = NONE;
     for (std::size_t v : middle_verts) {
         graph.for_each_edge_cw(v, [&](std::size_t ei) {
             if (cycle_edge != NONE) return;
             if (graph.edge(ei).is_tree) return;
             std::size_t w = graph.edge(ei).other(v);
-            std::size_t lw = graph.vertex(w).level;
-            if (lw > l0 && lw < l2) {
+            if (!graph.vertex(w).deleted) {
                 cycle_edge = ei;
             }
         });
@@ -619,12 +685,18 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     }
 
     // ── Step 10: assemble partition ─────────────────────────────
-    // Clean up edges added by triangulate_faces.
-    for (std::size_t ei = edges_before_triangulation; ei < graph.num_edges(); ++ei) {
+    // Clean up redirect edges and triangulation edges.
+    for (std::size_t ei = edges_before_redirect; ei < graph.num_edges(); ++ei) {
         graph.edge(ei).deleted = true;
     }
 
-    // Restore vertices deleted in Step 6.
+    // Restore edges soft-deleted during contraction.
+    for (auto& [ei, was_deleted] : step6_edge_saved) {
+        graph.edge(ei).deleted = was_deleted;
+    }
+
+    // Restore vertices deleted in Step 6 and super_x cost.
+    graph.vertex(super_x).cost = saved_super_x_cost;
     for (auto& [v, was_deleted] : step6_saved) {
         graph.vertex(v).deleted = was_deleted;
     }
