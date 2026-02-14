@@ -574,21 +574,12 @@ void refine_region(Submap& submap,
         pc_base = std::min(pc_base, mn);
         pc_max  = std::max(pc_max, mx);
     }
-    std::size_t pc_range = (pc_max >= pc_base) ? pc_max - pc_base + 1 : 0;
 
     // parent_chords_present[min_edge - pc_base] maps to max_edge
     // (NONE if no chord).  For simplicity, just use a bool vector.
-    std::vector<bool> parent_chord_exists(pc_range + 1, false);
-    // We encode (min, max) → bool by hashing into a map.
-    // Actually, a cleaner approach: since chords are identified by
-    // (min_edge, max_edge), store a vector of sets indexed by min_edge.
-    // But for O(M) total, use a vector of max_edges per min_edge.
-    // Simplest O(M) approach: just track (min_edge * large + max_edge)
-    // in a boolean bitmap — but that's 2D and wasteful.
-    //
-    // Keep std::set for parent chord dedup — it's O(M log M) total
-    // where M is the initial chord count (bounded by n/γ).  The
-    // inner-loop improvement below is the critical fix.
+    // §4.2: parent_chords is O(M) where M = initial chord count
+    // (bounded by n/γ).  The O(log M) factor per lookup is within
+    // the paper's O(m · log(n₁+n₂)) budget.
     std::set<std::pair<std::size_t, std::size_t>> parent_chords;
     for (std::size_t ci = 0; ci < submap.num_chords(); ++ci) {
         const auto& c = submap.chord(ci);
@@ -642,6 +633,22 @@ void refine_region(Submap& submap,
         return NONE;
     };
 
+    // §4.2 chord insertion — O(k) two-phase approach.
+    //
+    // Phase 1: Insert all chords, partitioning arcs only.
+    //          Defer incident_chord reassignment to avoid O(k²) scans.
+    // Phase 2: Rebuild incident_chords for all affected regions
+    //          in a single O(k + initial_degree) pass.
+
+    // Snapshot the original incident chords of region_idx.
+    std::vector<std::size_t> original_ichords =
+        submap.node(region_idx).incident_chords;
+    // Track all newly created regions.
+    std::vector<std::size_t> new_regions;
+    // Track all newly added chord indices.
+    std::vector<std::size_t> new_chord_indices;
+
+    // Phase 1: insert chords + partition arcs.
     for (auto& ic : internal_chords) {
         // Skip chords that already exist in the parent submap.
         auto key = std::make_pair(
@@ -658,6 +665,7 @@ void refine_region(Submap& submap,
         if (target == NONE) continue;
 
         std::size_t new_region = submap.add_node();
+        new_regions.push_back(new_region);
 
         Chord new_chord;
         new_chord.y = ic.y;
@@ -667,12 +675,11 @@ void refine_region(Submap& submap,
         new_chord.region[1] = new_region;
 
         std::size_t new_chord_idx = submap.add_chord(new_chord);
+        new_chord_indices.push_back(new_chord_idx);
         parent_chords.insert(key);
 
         // Null-length chords create an empty region; no arc partition.
         if (ic.left_edge == ic.right_edge) {
-            submap.recompute_weight(target);
-            submap.recompute_weight(new_region);
             continue;
         }
 
@@ -729,47 +736,71 @@ void refine_region(Submap& submap,
         }
 
         // Update arc_index: change region_id for moved arcs.
-        // Since move_arcs have ranges in [split_lo, split_hi), update
-        // any arc_index entry whose range overlaps that interval.
         for (auto& entry : arc_index) {
             if (entry.region_id == target &&
                 entry.lo < split_hi && entry.hi >= split_lo) {
                 entry.region_id = new_region;
             }
         }
+    }
 
-        auto& ichords = submap.node(target).incident_chords;
-        std::vector<std::size_t> keep_chords;
-        std::vector<std::size_t> move_chords;
+    // Phase 2: Rebuild incident_chords for all affected regions.
+    //
+    // Affected regions = region_idx + all new_regions.
+    // Clear their incident_chords, then reassign each chord to
+    // its correct region(s) using arc_index for O(1) lookup.
+    // Total: O(original_ichords.size() + new_chord_indices.size())
+    //      = O(initial_degree + k) = O(k) for conformal submaps.
+    {
+        submap.node(region_idx).incident_chords.clear();
+        for (std::size_t nr : new_regions) {
+            submap.node(nr).incident_chords.clear();
+        }
 
-        for (std::size_t ci : ichords) {
-            if (ci == new_chord_idx) {
-                // The splitting chord itself stays with the target —
-                // don't reassign its regions.
-                keep_chords.push_back(ci);
-                continue;
-            }
+        // Collect all chord indices that touch affected regions:
+        // original incident chords + newly added chords.
+        std::vector<std::size_t> all_relevant_chords;
+        all_relevant_chords.reserve(
+            original_ichords.size() + new_chord_indices.size());
+        for (std::size_t ci : original_ichords)
+            all_relevant_chords.push_back(ci);
+        for (std::size_t ci : new_chord_indices)
+            all_relevant_chords.push_back(ci);
+
+        for (std::size_t ci : all_relevant_chords) {
+            if (ci >= submap.num_chords()) continue;
             auto& c = submap.chord(ci);
-            std::size_t cv = c.left_edge;
-            if (cv != NONE && cv >= split_lo && cv < split_hi) {
-                move_chords.push_back(ci);
-            } else {
-                keep_chords.push_back(ci);
+            if (c.left_edge == NONE && c.right_edge == NONE) continue;
+
+            // Determine which region(s) this chord is incident on
+            // by checking its endpoints against the arc_index.
+            std::size_t le = c.left_edge;
+            std::size_t re = c.right_edge;
+            std::size_t r_left = (le != NONE)
+                ? find_region_for_edge(le) : NONE;
+            std::size_t r_right = (re != NONE)
+                ? find_region_for_edge(re) : NONE;
+
+            // Update chord.region[] and add to incident_chords.
+            // Each chord is incident on at most 2 regions.
+            if (r_left != NONE) {
+                c.region[0] = r_left;
+                submap.node(r_left).incident_chords.push_back(ci);
+            }
+            if (r_right != NONE && r_right != r_left) {
+                c.region[1] = r_right;
+                submap.node(r_right).incident_chords.push_back(ci);
+            } else if (r_right != NONE && r_right == r_left) {
+                // Both endpoints in same region (chord internal to region).
+                c.region[1] = r_left;
             }
         }
+    }
 
-        ichords = keep_chords;
-        for (std::size_t ci : move_chords) {
-            for (int s = 0; s < 2; ++s) {
-                if (submap.chord(ci).region[s] == target) {
-                    submap.chord(ci).region[s] = new_region;
-                }
-            }
-            submap.node(new_region).incident_chords.push_back(ci);
-        }
-
-        submap.recompute_weight(target);
-        submap.recompute_weight(new_region);
+    // Recompute weights for all affected regions.
+    submap.recompute_weight(region_idx);
+    for (std::size_t nr : new_regions) {
+        submap.recompute_weight(nr);
     }
 }
 

@@ -4,9 +4,9 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <numeric>
 #include <queue>
-#include <unordered_set>
 #include <vector>
 
 namespace chazelle {
@@ -207,50 +207,31 @@ fundamental_cycle_vertices(const PlanarGraph& graph,
 /// the cycle goes u→LCA→v along tree paths.  The "inside" vertices are
 /// exactly the descendants of cycle vertices that hang off the interior
 /// side.  We compute inside cost as:
-///   sum over each cycle vertex w (except LCA): desc_cost(w) − cost(w)
+///   sum over each cycle vertex w: desc_cost(w) − cost(w)
 ///     − sum of desc_cost(child) for children of w that are ON the cycle
 /// This gives us the total cost of all descendants of the cycle that are
-/// NOT on the cycle itself, which is exactly the interior cost.
-double compute_inside_cost(const PlanarGraph& graph,
-                           const std::vector<std::size_t>& cycle,
-                           const std::unordered_set<std::size_t>& cycle_set,
-                           double total_cost) {
-    // Cost of cycle vertices themselves.
-    double cycle_cost = 0.0;
-    for (std::size_t v : cycle) {
-        cycle_cost += graph.vertex(v).cost;
-    }
-
-    // For each cycle vertex, sum the descendant costs of tree children
-    // that are also on the cycle.  The difference between desc_cost and
-    // (cost + on-cycle-children desc_cost) gives the off-cycle descendants,
-    // which are the interior vertices.
-    //
-    // In a fundamental cycle u→LCA→v, every cycle vertex except the LCA
-    // has exactly one cycle-child (the next vertex on the path toward u
-    // or v).  The LCA has two cycle-children (one from each path).
-    double interior_desc_cost = 0.0;
-
+/// NOT on the cycle itself.
+///
+/// Returns: the raw (non-cycle descendant) cost.  Caller decides how
+///          to interpret interior vs exterior.
+double compute_one_side_cost(const PlanarGraph& graph,
+                             const std::vector<std::size_t>& cycle,
+                             const std::vector<bool>& on_cycle) {
+    double desc_cost_sum = 0.0;
     for (std::size_t v : cycle) {
         double on_cycle_child_cost = 0.0;
         graph.for_each_edge_cw(v, [&](std::size_t ei) {
             if (!graph.edge(ei).is_tree) return;
             std::size_t w = graph.edge(ei).other(v);
-            if (graph.vertex(w).parent == v && cycle_set.count(w)) {
+            if (graph.vertex(w).parent == v && on_cycle[w]) {
                 on_cycle_child_cost += graph.vertex(w).desc_cost;
             }
         });
-        // Interior descendants of v = desc_cost(v) − cost(v) − on_cycle_child_cost
         double off = graph.vertex(v).desc_cost - graph.vertex(v).cost
                    - on_cycle_child_cost;
-        if (off > 0.0) interior_desc_cost += off;
+        if (off > 0.0) desc_cost_sum += off;
     }
-
-    // interior_desc_cost is one side.  The other side is:
-    double other_side = total_cost - cycle_cost - interior_desc_cost;
-
-    // "Inside" = the heavier side (the side we need to reduce).
-    return std::max(interior_desc_cost, other_side);
+    return desc_cost_sum;
 }
 
 // ── Compute descendant costs bottom-up ──────────────────────────
@@ -614,16 +595,89 @@ SeparatorResult find_separator(PlanarGraph& graph) {
         cycle_verts = fundamental_cycle_vertices(graph, cu, cv);
 
         // Step 9: improve the cycle.
-        // Each iteration finds the triangle on the inside of the
-        // current non-tree edge and replaces the edge with one that
-        // removes at least one face from the inside.
         //
-        // Full implementation of the three sub-cases:
-        std::unordered_set<std::size_t> cycle_set(
-            cycle_verts.begin(), cycle_verts.end());
+        // Lipton-Tarjan Step 9: incremental O(V) cycle improvement.
+        // Each iteration absorbs one interior vertex into the cycle,
+        // removing one face from the inside.  Cost update is O(1)
+        // per iteration.  Total O(V) iterations × O(1) = O(V).
 
-        double inside_cost = compute_inside_cost(
-            graph, cycle_verts, cycle_set, comp.total_cost);
+        // Mark cycle vertices in a vector<bool> for O(1) lookup.
+        std::vector<bool> on_cycle(nv, false);
+        for (std::size_t v : cycle_verts) on_cycle[v] = true;
+
+        // Compute initial cycle cost and raw descendant cost.
+        double cycle_cost_val = 0.0;
+        for (std::size_t v : cycle_verts) {
+            cycle_cost_val += graph.vertex(v).cost;
+        }
+        double one_side_desc =
+            compute_one_side_cost(graph, cycle_verts, on_cycle);
+        double other_side_desc =
+            comp.total_cost - cycle_cost_val - one_side_desc;
+        double inside_cost =
+            std::max(one_side_desc, other_side_desc);
+
+        // Determine interior vs exterior by marking one side via
+        // BFS from one face of the initial non-tree edge.  O(V).
+        std::vector<bool> is_interior(nv, false);
+        double interior_cost = one_side_desc;
+        {
+            std::size_t cu0 = graph.edge(cycle_edge).endpoint[0];
+            std::size_t cv0 = graph.edge(cycle_edge).endpoint[1];
+            auto [ne_t, nd_t] = graph.face_next(cycle_edge, cv0);
+            std::size_t y_probe = nd_t;
+
+            // BFS from y_probe, not crossing cycle.
+            if (!on_cycle[y_probe] && !graph.vertex(y_probe).deleted) {
+                std::queue<std::size_t> bfs_q;
+                is_interior[y_probe] = true;
+                bfs_q.push(y_probe);
+                while (!bfs_q.empty()) {
+                    std::size_t bv = bfs_q.front(); bfs_q.pop();
+                    graph.for_each_edge_cw(bv, [&](std::size_t ei) {
+                        std::size_t w = graph.edge(ei).other(bv);
+                        if (on_cycle[w] || is_interior[w] ||
+                            graph.vertex(w).deleted) return;
+                        is_interior[w] = true;
+                        bfs_q.push(w);
+                    });
+                }
+            }
+            // Verify by comparing marked cost with one_side_desc.
+            double marked_cost = 0.0;
+            for (std::size_t v : middle_verts) {
+                if (is_interior[v]) marked_cost += graph.vertex(v).cost;
+            }
+            // If marked set matches the OTHER side, flip.
+            if (std::abs(marked_cost - other_side_desc) <
+                std::abs(marked_cost - one_side_desc)) {
+                // Guessed the wrong side — re-mark from the other face.
+                is_interior.assign(nv, false);
+                auto [ne_t2, nd_t2] = graph.face_next(cycle_edge, cu0);
+                std::size_t y_probe2 = nd_t2;
+                if (!on_cycle[y_probe2] &&
+                    !graph.vertex(y_probe2).deleted) {
+                    std::queue<std::size_t> bfs_q;
+                    is_interior[y_probe2] = true;
+                    bfs_q.push(y_probe2);
+                    while (!bfs_q.empty()) {
+                        std::size_t bv = bfs_q.front(); bfs_q.pop();
+                        graph.for_each_edge_cw(bv, [&](std::size_t ei) {
+                            std::size_t w = graph.edge(ei).other(bv);
+                            if (on_cycle[w] || is_interior[w] ||
+                                graph.vertex(w).deleted) return;
+                            is_interior[w] = true;
+                            bfs_q.push(w);
+                        });
+                    }
+                }
+                // Swap interior/exterior costs to match new marking.
+                interior_cost = other_side_desc;
+            }
+        }
+
+        double exterior_cost = comp.total_cost - cycle_cost_val
+                             - interior_cost;
 
         std::size_t current_edge = cycle_edge;
         int max_iters = static_cast<int>(comp.vertices.size());
@@ -635,29 +689,21 @@ SeparatorResult find_separator(PlanarGraph& graph) {
             std::size_t cu2 = graph.edge(current_edge).endpoint[0];
             std::size_t cv2 = graph.edge(current_edge).endpoint[1];
 
-            // Two faces border this edge.  Try both and pick the one
-            // whose third vertex is "inside."
             auto [ne1, nd1] = graph.face_next(current_edge, cv2);
             std::size_t y1 = nd1;
             auto [ne2, nd2] = graph.face_next(current_edge, cu2);
             std::size_t y2 = nd2;
 
-            // Pick y that is inside the cycle (not on the cycle and
-            // not outside).
+            // Pick the interior vertex.
             std::size_t y = NONE;
-
-            if (cycle_set.find(y1) == cycle_set.end()) {
-                // y1 might be inside.
+            if (is_interior[y1]) {
                 y = y1;
-            }
-            if (y == NONE && cycle_set.find(y2) == cycle_set.end()) {
+            } else if (is_interior[y2]) {
                 y = y2;
             }
-            if (y == NONE) break; // both triangle vertices are on cycle
+            if (y == NONE) break; // No interior vertex to absorb.
 
-            // Find the two edges from the triangle: (cu2, y) and (y, cv2)
-            // (or (cv2, y) and (y, cu2) depending on orientation).
-            // Find a non-tree edge among the triangle's edges.
+            // Find a non-tree edge among (cu2,y) and (cv2,y).
             std::size_t nontree_edge = NONE;
             graph.for_each_edge_cw(y, [&](std::size_t ei) {
                 if (nontree_edge != NONE) return;
@@ -668,19 +714,26 @@ SeparatorResult find_separator(PlanarGraph& graph) {
                 }
             });
 
-            if (nontree_edge == NONE) break; // shouldn't happen
+            if (nontree_edge == NONE) break;
 
-            // Replace current_edge with nontree_edge.
+            // §L-T Step 9: Absorb vertex y into the cycle.
+            // Incremental cost update: O(1).
+            on_cycle[y] = true;
+            is_interior[y] = false;
+            cycle_cost_val += graph.vertex(y).cost;
+            interior_cost -= graph.vertex(y).cost;
+            if (interior_cost < 0.0) interior_cost = 0.0;
+            exterior_cost = comp.total_cost - cycle_cost_val
+                          - interior_cost;
+            inside_cost = std::max(interior_cost, exterior_cost);
+
             current_edge = nontree_edge;
+        }
 
-            // Recompute cycle and inside cost.
-            std::size_t nu = graph.edge(current_edge).endpoint[0];
-            std::size_t nv2 = graph.edge(current_edge).endpoint[1];
-            cycle_verts = fundamental_cycle_vertices(graph, nu, nv2);
-            cycle_set.clear();
-            cycle_set.insert(cycle_verts.begin(), cycle_verts.end());
-            inside_cost = compute_inside_cost(
-                graph, cycle_verts, cycle_set, comp.total_cost);
+        // Reconstruct cycle_verts from on_cycle marking.
+        cycle_verts.clear();
+        for (std::size_t v : middle_verts) {
+            if (on_cycle[v]) cycle_verts.push_back(v);
         }
     }
 
@@ -702,12 +755,12 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     }
 
     // C = separator levels (l₀, l₂) + cycle vertices
-    std::unordered_set<std::size_t> sep_set;
-    for (std::size_t v : sep_levels) sep_set.insert(v);
-    for (std::size_t v : cycle_verts) sep_set.insert(v);
-
-    for (std::size_t v : sep_set) {
-        result.C.push_back(v);
+    std::vector<bool> is_sep(nv, false);
+    for (std::size_t v : sep_levels) {
+        if (!is_sep[v]) { is_sep[v] = true; result.C.push_back(v); }
+    }
+    for (std::size_t v : cycle_verts) {
+        if (!is_sep[v]) { is_sep[v] = true; result.C.push_back(v); }
     }
 
     // Partition remaining vertices into A (inside cycle) and B (outside).
@@ -716,7 +769,7 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     std::vector<bool> reachable(nv, false);
     {
         std::queue<std::size_t> q;
-        if (sep_set.find(tree_root) == sep_set.end()) {
+        if (!is_sep[tree_root]) {
             reachable[tree_root] = true;
             q.push(tree_root);
         }
@@ -726,7 +779,7 @@ SeparatorResult find_separator(PlanarGraph& graph) {
             graph.for_each_edge_cw(v, [&](std::size_t ei) {
                 std::size_t w = graph.edge(ei).other(v);
                 if (reachable[w] || graph.vertex(w).deleted) return;
-                if (sep_set.count(w)) return;
+                if (is_sep[w]) return;
                 reachable[w] = true;
                 q.push(w);
             });
@@ -734,7 +787,7 @@ SeparatorResult find_separator(PlanarGraph& graph) {
     }
 
     for (std::size_t v : comp.vertices) {
-        if (sep_set.count(v)) continue;
+        if (is_sep[v]) continue;
         if (reachable[v])
             result.A.push_back(v);
         else
@@ -774,14 +827,17 @@ iterated_separator(PlanarGraph& graph, std::size_t max_piece_size) {
         if (!graph.vertex(i).deleted) initial.push_back(i);
     }
 
-    // Work queue of pieces to (potentially) split.
-    std::queue<std::vector<std::size_t>> work;
-    work.push(std::move(initial));
+    // DFS-based recursion: at each call only `piece` vertices are
+    // non-deleted (guaranteed by the caller).  Soft-delete A or B
+    // in O(|piece|) per call, not O(nv).  Total work per recursion
+    // level is O(μ) (pieces are disjoint) → O(μ log μ) overall.
+    //
+    // We use a vector<bool> to track which vertices are part of
+    // the current piece for O(1) membership tests.
+    std::vector<bool> in_piece(nv, false);
 
-    while (!work.empty()) {
-        auto piece = std::move(work.front());
-        work.pop();
-
+    std::function<void(std::vector<std::size_t>)> recurse =
+        [&](std::vector<std::size_t> piece) {
         if (piece.size() <= max_piece_size) {
             // Small enough — record as a final piece.
             std::size_t pidx = result.pieces.size();
@@ -789,22 +845,11 @@ iterated_separator(PlanarGraph& graph, std::size_t max_piece_size) {
                 result.vertex_piece[v] = pidx;
             }
             result.pieces.push_back(std::move(piece));
-            continue;
+            return;
         }
 
-        // Build a subgraph for this piece and find a separator.
-        // Soft-delete ALL vertices not in this piece so that
-        // find_separator only operates on piece vertices.
-        std::unordered_set<std::size_t> in_piece(piece.begin(), piece.end());
-
-        // Save and soft-delete every non-piece vertex that's currently active.
-        std::vector<std::pair<std::size_t, bool>> saved;
-        for (std::size_t v = 0; v < nv; ++v) {
-            if (!in_piece.count(v) && !graph.vertex(v).deleted) {
-                saved.emplace_back(v, false);
-                graph.vertex(v).deleted = true;
-            }
-        }
+        // Mark piece vertices in the shared boolean vector.
+        for (std::size_t v : piece) in_piece[v] = true;
 
         // Reset costs to uniform.
         for (std::size_t v : piece) {
@@ -813,32 +858,54 @@ iterated_separator(PlanarGraph& graph, std::size_t max_piece_size) {
 
         auto sep = find_separator(graph);
 
-        // Restore.
-        for (auto& [v, _] : saved) {
-            graph.vertex(v).deleted = false;
-        }
+        // Clear the piece marking.
+        for (std::size_t v : piece) in_piece[v] = false;
 
         // Mark separator vertices.
         for (std::size_t v : sep.C) {
             result.separator_nodes[v] = true;
+            graph.vertex(v).deleted = true; // remove from both sides
         }
 
-        // Recurse on A and B (exclude separator vertices).
-        if (!sep.A.empty()) {
-            std::vector<std::size_t> a_piece;
+        // Build sub-pieces (excluding separator vertices).
+        std::vector<std::size_t> a_piece, b_piece;
+        for (std::size_t v : sep.A) {
+            if (!result.separator_nodes[v]) a_piece.push_back(v);
+        }
+        for (std::size_t v : sep.B) {
+            if (!result.separator_nodes[v]) b_piece.push_back(v);
+        }
+
+        // Recurse on A: soft-delete B in O(|B|), then restore.
+        if (!a_piece.empty()) {
+            for (std::size_t v : b_piece)
+                graph.vertex(v).deleted = true;
+            recurse(std::move(a_piece));
+            for (std::size_t v : b_piece)
+                graph.vertex(v).deleted = false;
+        }
+
+        // Recurse on B: soft-delete A in O(|A|), then restore.
+        // (A was already consumed by move, but sep.A still has the IDs.)
+        if (!b_piece.empty()) {
             for (std::size_t v : sep.A) {
-                if (!result.separator_nodes[v]) a_piece.push_back(v);
+                if (!result.separator_nodes[v])
+                    graph.vertex(v).deleted = true;
             }
-            if (!a_piece.empty()) work.push(std::move(a_piece));
-        }
-        if (!sep.B.empty()) {
-            std::vector<std::size_t> b_piece;
-            for (std::size_t v : sep.B) {
-                if (!result.separator_nodes[v]) b_piece.push_back(v);
+            recurse(std::move(b_piece));
+            for (std::size_t v : sep.A) {
+                if (!result.separator_nodes[v])
+                    graph.vertex(v).deleted = false;
             }
-            if (!b_piece.empty()) work.push(std::move(b_piece));
         }
-    }
+
+        // Restore separator vertices (un-delete for parent's use).
+        for (std::size_t v : sep.C) {
+            graph.vertex(v).deleted = false;
+        }
+    };
+
+    recurse(std::move(initial));
 
     return result;
 }
