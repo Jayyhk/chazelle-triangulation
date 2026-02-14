@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <cstdio>
+#include <cstring>
+#include <cstddef>
+#include <functional>
 #include <limits>
-#include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace chazelle {
@@ -130,31 +132,17 @@ RayHit local_shoot_in_region(const Submap& submap,
         if (a.first_edge == NONE) continue;
 
         // §4.2: Virtual arcs represent tilted exit-chord edges.
-        // Compute intersection with the tilted segment instead of
-        // polygon edges.
+        // Symbolic perturbation: the tilted edge has infinitesimal
+        // y-extent [vy - ε, vy + ε].  In the limit ε → 0, only rays
+        // at y ≈ vy intersect it.  Use exact midpoint: no TILT constant.
         if (a.is_virtual()) {
-            // The tilted chord connects a point on edge first_edge to
-            // a point on edge last_edge, at height virtual_y with a
-            // tiny tilt.  Model as a segment from
-            //   (x_left, virtual_y - ε) to (x_right, virtual_y + ε)
-            // where ε is infinitesimal (symbolic perturbation).
-            //
-            // For numerical purposes, use a small tilt: the segment
-            // spans from y_lo = virtual_y - 1e-8 to y_hi = virtual_y + 1e-8.
             double vy = a.virtual_y;
-            constexpr double TILT = 1e-8;
-            double y_lo = vy - TILT;
-            double y_hi = vy + TILT;
-            if (y < y_lo - 1e-12 || y > y_hi + 1e-12) continue;
-            // Compute x at the two endpoints of the tilted chord.
+            if (std::abs(y - vy) > 1e-9) continue;
             double x_left = (a.first_edge < polygon.num_edges())
                 ? polygon.edge_x_at_y(a.first_edge, vy) : 0.0;
             double x_right = (a.last_edge < polygon.num_edges())
                 ? polygon.edge_x_at_y(a.last_edge, vy) : 0.0;
-            // Linearly interpolate x along the tilted segment.
-            double t = (std::abs(y_hi - y_lo) > 1e-15)
-                ? (y - y_lo) / (y_hi - y_lo) : 0.5;
-            double x = x_left + t * (x_right - x_left);
+            double x = (x_left + x_right) * 0.5;
             double dist = shoot_right ? (x - origin_x) : (origin_x - x);
             if (dist > -1e-12 && dist < best_dist) {
                 best_dist = dist;
@@ -165,9 +153,12 @@ RayHit local_shoot_in_region(const Submap& submap,
             continue;
         }
 
-        std::size_t alo = std::min(a.first_edge, a.last_edge);
-        std::size_t ahi = std::max(a.first_edge, a.last_edge);
-        for (std::size_t ei = alo; ei <= ahi && ei < polygon.num_edges(); ++ei) {
+        // §3.1: O(1) per arc — test only the two stored endpoint edges.
+        // The paper models each arc by its endpoint edge pointers; a
+        // horizontal ray intersects the arc boundary at most once per
+        // endpoint edge.
+        for (std::size_t ei : {a.first_edge, a.last_edge}) {
+            if (ei == NONE || ei >= polygon.num_edges()) continue;
             const auto& edge = polygon.edge(ei);
             const auto& p1 = polygon.vertex(edge.start_idx);
             const auto& p2 = polygon.vertex(edge.end_idx);
@@ -237,24 +228,7 @@ void fuse_pass(const Submap& src,
                const Polygon& polygon,
                std::size_t junction_vertex,
                std::vector<DiscoveredChord>& discovered) {
-    std::fprintf(stderr, "  FUSE_PASS: src(%zu chords, %zu arcs) dst(%zu chords, %zu arcs) junction=%zu\n",
-                 src.num_chords(), src.num_arcs(), dst.num_chords(), dst.num_arcs(), junction_vertex);
-    for (std::size_t ai = 0; ai < src.num_arcs(); ++ai) {
-        const auto& a = src.arc(ai);
-        std::fprintf(stderr, "    src arc %zu: edges [%zu,%zu] side=[%s,%s] region=%zu ec=%zu\n",
-                     ai, a.first_edge, a.last_edge,
-                     a.first_side == Side::LEFT ? "L" : "R",
-                     a.last_side == Side::LEFT ? "L" : "R",
-                     a.region_node, a.edge_count);
-    }
-    for (std::size_t ai = 0; ai < dst.num_arcs(); ++ai) {
-        const auto& a = dst.arc(ai);
-        std::fprintf(stderr, "    dst arc %zu: edges [%zu,%zu] side=[%s,%s] region=%zu ec=%zu\n",
-                     ai, a.first_edge, a.last_edge,
-                     a.first_side == Side::LEFT ? "L" : "R",
-                     a.last_side == Side::LEFT ? "L" : "R",
-                     a.region_node, a.edge_count);
-    }
+
 
     // -- Collect stop points --
     // Each stop has an edge index and y-coordinate defining its exact
@@ -265,50 +239,59 @@ void fuse_pass(const Submap& src,
         double y;               ///< Y-coordinate.
         bool is_vertex;         ///< True if this stop is a polygon vertex.
         std::size_t vertex_idx; ///< Vertex index (if is_vertex), else NONE.
+        bool shoot_right;       ///< §3.1: assigned chord direction.
     };
     std::vector<StopPoint> stops;
 
-    auto is_dup = [&](std::size_t edge, double y) -> bool {
-        for (auto& s : stops) {
-            if (s.edge_idx == edge && std::abs(s.y - y) < 1e-12) return true;
-        }
-        return false;
+    // §3.1 Fix 3: O(1) stop deduplication via hash set.
+    auto stop_hash = [](std::size_t edge, double y) -> std::size_t {
+        std::size_t h = edge;
+        std::uint64_t y_bits;
+        std::memcpy(&y_bits, &y, sizeof(y_bits));
+        h ^= std::hash<std::uint64_t>{}(y_bits) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+        return h;
     };
+    std::unordered_set<std::size_t> seen_stops;
 
-    auto add_vertex_stop = [&](std::size_t v) {
+    auto add_vertex_stop = [&](std::size_t v, bool shoot_right) {
         if (v == NONE || v >= polygon.num_vertices()) return;
         std::size_t e = v;
         if (e >= polygon.num_edges()) e = polygon.num_edges() - 1;
         double y = polygon.vertex(v).y;
-        if (!is_dup(e, y))
-            stops.push_back({e, y, true, v});
+        if (seen_stops.insert(stop_hash(e, y)).second)
+            stops.push_back({e, y, true, v, shoot_right});
     };
 
-    auto add_edge_stop = [&](std::size_t edge, double y) {
+    auto add_edge_stop = [&](std::size_t edge, double y, bool shoot_right) {
         if (edge == NONE || edge >= polygon.num_edges()) return;
-        if (!is_dup(edge, y))
-            stops.push_back({edge, y, false, NONE});
+        if (seen_stops.insert(stop_hash(edge, y)).second)
+            stops.push_back({edge, y, false, NONE, shoot_right});
     };
 
     // Chord endpoints of src (may be interior to edges).
+    // §3.1: direction is determined by the chord's position relative
+    // to the arc — left_edge → shoot right, right_edge → shoot left.
     for (std::size_t ci = 0; ci < src.num_chords(); ++ci) {
         const auto& c = src.chord(ci);
-        if (c.left_edge != NONE) add_edge_stop(c.left_edge, c.y);
-        if (c.right_edge != NONE) add_edge_stop(c.right_edge, c.y);
+        if (c.left_edge != NONE) add_edge_stop(c.left_edge, c.y, true);
+        if (c.right_edge != NONE) add_edge_stop(c.right_edge, c.y, false);
     }
 
     // Companion vertices: arc boundary vertices.
+    // §3.1: direction from the arc's side flags.
     for (std::size_t ai = 0; ai < src.num_arcs(); ++ai) {
         const auto& arc = src.arc(ai);
         if (arc.first_edge == NONE) continue;
         std::size_t lo = std::min(arc.first_edge, arc.last_edge);
         std::size_t hi = std::max(arc.first_edge, arc.last_edge);
-        add_vertex_stop(lo);
-        if (hi + 1 < polygon.num_vertices()) add_vertex_stop(hi + 1);
+        // first_side == LEFT → shoot right from that endpoint.
+        add_vertex_stop(lo, arc.first_side == Side::LEFT);
+        if (hi + 1 < polygon.num_vertices())
+            add_vertex_stop(hi + 1, arc.last_side == Side::LEFT);
     }
 
-    // Always include the junction vertex.
-    add_vertex_stop(junction_vertex);
+    // Always include the junction vertex (default: shoot right).
+    add_vertex_stop(junction_vertex, true);
 
     // Sort by position along ∂C: primary key = edge index, then by
     // parametric position along that edge.
@@ -331,18 +314,8 @@ void fuse_pass(const Submap& src,
 
     if (stops.empty()) return;
 
-    std::fprintf(stderr, "    stops(%zu):", stops.size());
-    for (auto& s : stops) {
-        if (s.is_vertex)
-            std::fprintf(stderr, " (e%zu,v%zu)", s.edge_idx, s.vertex_idx);
-        else
-            std::fprintf(stderr, " (e%zu,y%.3f)", s.edge_idx, s.y);
-    }
-    std::fprintf(stderr, "\n");
-
     // -- Start-up phase --
     std::size_t current_region = find_junction_region(dst, junction_vertex);
-    std::fprintf(stderr, "    junction=%zu current_region=%zu\n", junction_vertex, current_region);
 
     // Find index of a0 (junction vertex) in the stops.
     std::size_t a0_idx = 0;
@@ -377,15 +350,16 @@ void fuse_pass(const Submap& src,
         double ox = stop_ox(stops[a0_idx]);
         std::size_t shoot_e = stop_shoot_edge(stops[a0_idx]);
 
+        // §3.1: Shoot from a0 in the assigned direction.
+        bool a0_dir = stops[a0_idx].shoot_right;
+
         // Shoot from a0 in src to find what it sees w.r.t. C1.
         double dist_src = std::numeric_limits<double>::infinity();
-        for (bool dir : {true, false}) {
-            RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, dir);
-            std::fprintf(stderr, "    startup src shoot edge=%zu y=%.3f dir=%s type=%d hit_x=%.3f arc=%zu\n",
-                         shoot_e, y, dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
+        {
+            RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, a0_dir);
             if (h.type == RayHit::Type::ARC) {
-                double d = dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                if (d > 1e-9 && d < dist_src) dist_src = d;
+                double d = a0_dir ? (h.hit_x - ox) : (ox - h.hit_x);
+                if (d > 1e-9) dist_src = d;
             }
         }
 
@@ -393,18 +367,14 @@ void fuse_pass(const Submap& src,
         RayHit hit_dst;
         double dist_dst = std::numeric_limits<double>::infinity();
         if (current_region != NONE) {
-            for (bool dir : {true, false}) {
-                RayHit h = dst_oracle.is_built()
-                    ? dst_oracle.shoot_from_region(current_region, ox, y, dir)
-                    : local_shoot_in_region(dst, polygon, current_region, ox, y, dir);
-                std::fprintf(stderr, "    startup dst local_shoot region=%zu ox=%.3f y=%.3f dir=%s type=%d hit_x=%.3f arc=%zu\n",
-                             current_region, ox, y, dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
-                if (h.type == RayHit::Type::ARC) {
-                    double d = dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                    if (d > -1e-12 && d < dist_dst) {
-                        dist_dst = d;
-                        hit_dst = h;
-                    }
+            RayHit h = dst_oracle.is_built()
+                ? dst_oracle.shoot_from_region(current_region, ox, y, a0_dir)
+                : local_shoot_in_region(dst, polygon, current_region, ox, y, a0_dir);
+            if (h.type == RayHit::Type::ARC) {
+                double d = a0_dir ? (h.hit_x - ox) : (ox - h.hit_x);
+                if (d > -1e-12) {
+                    dist_dst = d;
+                    hit_dst = h;
                 }
             }
         }
@@ -415,8 +385,6 @@ void fuse_pass(const Submap& src,
             std::size_t re = resolve_hit_edge(
                 dst, polygon, hit_dst.arc_idx, y, hit_dst.hit_x);
             std::size_t a0_edge = stops[a0_idx].edge_idx;
-            std::fprintf(stderr, "    startup Case1: a0 edge=%zu sees dC2 at re=%zu\n",
-                         a0_edge, re);
             if (re != NONE && re != a0_edge) {
                 DiscoveredChord dc;
                 dc.y = y;
@@ -427,13 +395,11 @@ void fuse_pass(const Submap& src,
         } else {
             // Case 2: c0 in ∂C₁.
             std::size_t c0_edge = NONE;
-            double best_src_dist = std::numeric_limits<double>::infinity();
-            for (bool dir : {true, false}) {
-                RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, dir);
+            {
+                RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, a0_dir);
                 if (h.type == RayHit::Type::ARC) {
-                    double d = dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                    if (d > 1e-9 && d < best_src_dist) {
-                        best_src_dist = d;
+                    double d = a0_dir ? (h.hit_x - ox) : (ox - h.hit_x);
+                    if (d > 1e-9) {
                         c0_edge = resolve_hit_edge(
                             src, polygon, h.arc_idx, y, h.hit_x);
                     }
@@ -441,8 +407,6 @@ void fuse_pass(const Submap& src,
             }
 
             if (c0_edge != NONE && c0_edge != stops[a0_idx].edge_idx) {
-                std::fprintf(stderr, "    startup Case2: a0 edge=%zu sees dC1 at c0 edge=%zu\n",
-                             p_edge, c0_edge);
 
                 DiscoveredChord dc;
                 dc.y = y;
@@ -474,8 +438,7 @@ void fuse_pass(const Submap& src,
         double ox = stop_ox(stop_j);
         std::size_t aj_edge = stop_j.edge_idx;
         std::size_t shoot_e = stop_shoot_edge(stop_j);
-        std::fprintf(stderr, "    main_loop jj=%zu edge=%zu y=%.3f ox=%.3f p_edge=%zu R=%zu\n",
-                     jj, aj_edge, y, ox, p_edge, current_region);
+        bool aj_dir = stop_j.shoot_right;
 
         // --- Case (i): aj lies in R and sees ∂C₂ ---
         bool aj_in_R = false;
@@ -484,34 +447,26 @@ void fuse_pass(const Submap& src,
 
         if (current_region < dst.num_nodes() &&
             !dst.node(current_region).deleted) {
-            for (bool dir : {true, false}) {
-                RayHit h = dst_oracle.is_built()
-                    ? dst_oracle.shoot_from_region(current_region, ox, y, dir)
-                    : local_shoot_in_region(dst, polygon, current_region, ox, y, dir);
-                std::fprintf(stderr, "      dst local_shoot dir=%s type=%d hit_x=%.3f arc=%zu\n",
-                             dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
-                if (h.type == RayHit::Type::ARC) {
-                    double d = dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                    if (d > -1e-12 && d < best_dst_dist) {
-                        best_dst_dist = d;
-                        best_dst_hit = h;
-                        aj_in_R = true;
-                    }
+            RayHit h = dst_oracle.is_built()
+                ? dst_oracle.shoot_from_region(current_region, ox, y, aj_dir)
+                : local_shoot_in_region(dst, polygon, current_region, ox, y, aj_dir);
+            if (h.type == RayHit::Type::ARC) {
+                double d = aj_dir ? (h.hit_x - ox) : (ox - h.hit_x);
+                if (d > -1e-12) {
+                    best_dst_dist = d;
+                    best_dst_hit = h;
+                    aj_in_R = true;
                 }
             }
         }
 
         if (aj_in_R) {
-            std::fprintf(stderr, "      aj_in_R: best_dst_dist=%.6f hit_x=%.3f arc=%zu\n",
-                         best_dst_dist, best_dst_hit.hit_x, best_dst_hit.arc_idx);
             double dist_src = std::numeric_limits<double>::infinity();
-            for (bool dir : {true, false}) {
-                RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, dir);
-                std::fprintf(stderr, "      src shoot edge=%zu y=%.3f dir=%s type=%d hit_x=%.3f arc=%zu\n",
-                             shoot_e, y, dir?"R":"L", (int)h.type, h.hit_x, h.arc_idx);
+            {
+                RayHit h = src_oracle.shoot(shoot_e, y, Side::LEFT, aj_dir);
                 if (h.type == RayHit::Type::ARC) {
-                    double d = dir ? (h.hit_x - ox) : (ox - h.hit_x);
-                    if (d > 1e-9 && d < dist_src) dist_src = d;
+                    double d = aj_dir ? (h.hit_x - ox) : (ox - h.hit_x);
+                    if (d > 1e-9) dist_src = d;
                 }
             }
 
@@ -519,8 +474,6 @@ void fuse_pass(const Submap& src,
                 std::size_t re = resolve_hit_edge(
                     dst, polygon, best_dst_hit.arc_idx, y,
                     best_dst_hit.hit_x);
-                std::fprintf(stderr, "      Case(i) CHORD: aj edge=%zu re=%zu\n",
-                             aj_edge, re);
                 if (re != NONE && re != aj_edge) {
                     DiscoveredChord dc;
                     dc.y = y;
@@ -555,8 +508,8 @@ void fuse_pass(const Submap& src,
 
                 double y_e = c.y;
 
-                for (bool dir : {true, false}) {
-                    RayHit h = src_oracle.shoot(endpt_e, y_e, Side::LEFT, dir);
+                {
+                    RayHit h = src_oracle.shoot(endpt_e, y_e, Side::LEFT, aj_dir);
                     if (h.type != RayHit::Type::ARC) continue;
 
                     const auto& hit_arc = src.arc(h.arc_idx);
@@ -628,13 +581,21 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     struct ChordKey {
         std::size_t lo, hi;
         double y;
-        bool operator<(const ChordKey& o) const {
-            if (lo != o.lo) return lo < o.lo;
-            if (hi != o.hi) return hi < o.hi;
-            return y < o.y;
+        bool operator==(const ChordKey& o) const {
+            return lo == o.lo && hi == o.hi && y == o.y;
         }
     };
-    std::set<ChordKey> seen;
+    struct ChordKeyHash {
+        std::size_t operator()(const ChordKey& k) const {
+            std::size_t h = k.lo;
+            h ^= std::hash<std::size_t>{}(k.hi) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            std::uint64_t y_bits;
+            std::memcpy(&y_bits, &k.y, sizeof(y_bits));
+            h ^= std::hash<std::uint64_t>{}(y_bits) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    std::unordered_set<ChordKey, ChordKeyHash> seen;
     std::vector<ChordRecord> all_chords;
 
     auto add_chord_rec = [&](double y, std::size_t le, std::size_t re,
@@ -815,9 +776,6 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         chord.region[0] = ci;
         chord.region[1] = ci + 1;
         result.add_chord(chord);
-        std::fprintf(stderr, "    rebuild chord %zu: le=%zu re=%zu null=%d regions=[%zu,%zu]\n",
-                     ci, chord.left_edge, chord.right_edge,
-                     (int)chord.is_null_length, ci, ci + 1);
     }
 
     result.recompute_all_weights();

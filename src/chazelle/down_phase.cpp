@@ -422,10 +422,6 @@ void refine_region(Submap& submap,
             // Junction vertex between layer[i] and layer[i+1].
             std::size_t junction = layer[i].end_vertex;
 
-            std::fprintf(stderr, "    merge step: left(%zu chords, %zu arcs) + right(%zu chords, %zu arcs)\n",
-                         layer[i].submap.num_chords(), layer[i].submap.num_arcs(),
-                         layer[i+1].submap.num_chords(), layer[i+1].submap.num_arcs());
-
             // Ensure oracles are built.
             if (!layer[i].oracle.is_built())
                 layer[i].oracle.build(layer[i].submap, polygon, gamma_merge);
@@ -436,9 +432,6 @@ void refine_region(Submap& submap,
             Submap fused = fuse(layer[i].submap, layer[i].oracle,
                                 layer[i+1].submap, layer[i+1].oracle,
                                 polygon, junction);
-
-            std::fprintf(stderr, "    fused: %zu chords, %zu arcs\n",
-                         fused.num_chords(), fused.num_arcs());
 
             // Restore conformality on the fused result.
             restore_conformality(fused, storage, polygon, gamma_merge);
@@ -592,7 +585,6 @@ void refine_region(Submap& submap,
 
         // Null-length chords create an empty region; no arc partition.
         if (ic.left_edge == ic.right_edge) {
-            std::fprintf(stderr, "    Step5 null-chord le=%zu: skip partition\n", ic.left_edge);
             submap.recompute_weight(target);
             submap.recompute_weight(new_region);
             continue;
@@ -604,10 +596,6 @@ void refine_region(Submap& submap,
         std::size_t split_hi = (ic.right_edge != NONE)
                                    ? ic.right_edge : split_lo;
         if (split_lo > split_hi) std::swap(split_lo, split_hi);
-
-        std::fprintf(stderr, "    Step5 partition le=%zu re=%zu split=[%zu,%zu) target=%zu (%zu arcs)\n",
-                     ic.left_edge, ic.right_edge, split_lo, split_hi, target,
-                     submap.node(target).arcs.size());
 
         auto& arcs = submap.node(target).arcs;
         std::vector<std::size_t> keep_arcs;
@@ -627,8 +615,6 @@ void refine_region(Submap& submap,
                 keep_arcs.push_back(ai);
             }
         }
-
-        std::fprintf(stderr, "      keep=%zu move=%zu\n", keep_arcs.size(), move_arcs.size());
 
         if (move_arcs.empty() && keep_arcs.size() > 1) {
             std::size_t best_idx = 0;
@@ -738,41 +724,21 @@ void process_grade(Submap& submap,
     // Refine each region.
     for (std::size_t r : regions) {
         if (submap.node(r).deleted) continue;
-        std::fprintf(stderr, "  >> refine_region(r=%zu, grade=%zu, weight=%zu, arcs=%zu, ichords=%zu)\n",
-                     r, grade, submap.node(r).weight, submap.node(r).arcs.size(),
-                     submap.node(r).incident_chords.size());
         std::size_t pre_chords = submap.num_chords();
         refine_region(submap, r, storage, polygon, grade);
         std::size_t post_chords = submap.num_chords();
         if (post_chords > pre_chords) {
-            std::fprintf(stderr, "  refine_region(r=%zu, grade=%zu): added %zu chords\n",
-                         r, grade, post_chords - pre_chords);
-            for (std::size_t ci = pre_chords; ci < post_chords; ++ci) {
-                const auto& c = submap.chord(ci);
-                std::fprintf(stderr, "    new chord %zu: le=%zu re=%zu r0=%zu r1=%zu null=%d\n",
-                             ci, c.left_edge, c.right_edge,
-                             c.region[0], c.region[1], (int)c.is_null_length);
-            }
+            // New chords were added during refinement.
         }
     }
 
     // Restore conformality after chord reinterpretation (§4.2).
-    std::fprintf(stderr, "  >> restore_conformality start (grade=%zu)\n", grade);
     std::size_t pre_conf = submap.num_chords();
     restore_conformality(submap, storage, polygon, fine_gamma);
     std::size_t post_conf = submap.num_chords();
     if (post_conf > pre_conf) {
-        std::fprintf(stderr, "  restore_conformality(grade=%zu): added %zu chords\n",
-                     grade, post_conf - pre_conf);
-        for (std::size_t ci = pre_conf; ci < post_conf; ++ci) {
-            const auto& c = submap.chord(ci);
-            std::fprintf(stderr, "    conf chord %zu: le=%zu re=%zu r0=%zu r1=%zu null=%d\n",
-                         ci, c.left_edge, c.right_edge,
-                         c.region[0], c.region[1], (int)c.is_null_length);
-        }
+        // Conformality restoration added new chords.
     }
-
-    std::fprintf(stderr, "  >> restore_conformality done (grade=%zu)\n", grade);
 
     // Enforce granularity — but NOT at the final grade, where the
     // goal is the complete V(P) (Chazelle §4.2 / Theorem 4.3).
@@ -782,10 +748,7 @@ void process_grade(Submap& submap,
     // the fine granularity and only check chords that existed before
     // the refinement step.
     if (!is_final) {
-        std::fprintf(stderr, "  >> enforce_granularity start (grade=%zu, fine_gamma=%zu, max_chord=%zu)\n",
-                     grade, fine_gamma, original_chord_count);
         enforce_granularity(submap, fine_gamma, original_chord_count);
-        std::fprintf(stderr, "  >> enforce_granularity done (grade=%zu)\n", grade);
     }
 
     // §2.3: Restore normal form.  Refinement, conformality restoration,
@@ -808,27 +771,7 @@ Submap down_phase(const Polygon& polygon, GradeStorage& storage) {
     assert(storage.num_grades() > 0);
     Submap current = storage.get(p, 0).submap;
 
-    // DEBUG: dump initial submap
-    std::fprintf(stderr, "DOWN_PHASE START: p=%zu, %zu nodes, %zu chords, %zu arcs\n",
-                 p, current.num_nodes(), current.num_chords(), current.num_arcs());
-    for (std::size_t ni = 0; ni < current.num_nodes(); ++ni) {
-        const auto& nd = current.node(ni);
-        if (nd.deleted) continue;
-        std::fprintf(stderr, "  node %zu: %zu arcs, %zu ichords, w=%zu\n",
-                     ni, nd.arcs.size(), nd.incident_chords.size(), nd.weight);
-        for (std::size_t ai : nd.arcs) {
-            const auto& a = current.arc(ai);
-            std::fprintf(stderr, "    arc %zu: edges [%zu,%zu] side=[%d,%d]\n",
-                         ai, a.first_edge, a.last_edge,
-                         (int)a.first_side, (int)a.last_side);
-        }
-    }
-    for (std::size_t ci = 0; ci < current.num_chords(); ++ci) {
-        const auto& c = current.chord(ci);
-        std::fprintf(stderr, "  chord %zu: y=%.3f le=%zu re=%zu r0=%zu r1=%zu null=%d\n",
-                     ci, c.y, c.left_edge, c.right_edge,
-                     c.region[0], c.region[1], (int)c.is_null_length);
-    }
+
 
     // Process grades following the paper's recursive structure (Lemma 4.2):
     //   λ → ⌈βλ⌉ → ⌈β⌈βλ⌉⌉ → … → constant.
@@ -839,27 +782,15 @@ Submap down_phase(const Polygon& polygon, GradeStorage& storage) {
     // The final step (λ reaching a small constant) produces V(P).
     std::size_t lambda = p;
     while (lambda >= 1) {
-        std::fprintf(stderr, "=== process_grade lambda=%zu (p=%zu) ===\n", lambda, p);
         std::size_t next_lambda = (lambda + 4) / 5;  // ⌈βλ⌉ = ⌈λ/5⌉
         bool is_final = (next_lambda == 0 || next_lambda >= lambda);
         process_grade(current, storage, polygon, lambda, is_final);
-        std::fprintf(stderr, "=== process_grade lambda=%zu done ===\n", lambda);
         if (is_final) break;
         lambda = next_lambda;
     }
 
     // §4.2: Null-length chords at y-extrema are discovered naturally
     // by the algorithm during the down-phase refinement.
-
-    // DEBUG: dump the visibility map
-    std::fprintf(stderr, "DOWN_PHASE FINAL: %zu nodes, %zu chords, %zu arcs\n",
-                 current.num_nodes(), current.num_chords(), current.num_arcs());
-    for (std::size_t ci = 0; ci < current.num_chords(); ++ci) {
-        const auto& c = current.chord(ci);
-        std::fprintf(stderr, "  chord %zu: y=%.3f le=%zu re=%zu r0=%zu r1=%zu null=%d\n",
-                     ci, c.y, c.left_edge, c.right_edge,
-                     c.region[0], c.region[1], (int)c.is_null_length);
-    }
 
     // The visibility map is complete.
     return current;

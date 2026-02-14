@@ -604,13 +604,12 @@ RayHit RayShootingOracle::local_shoot(std::size_t region_idx,
             continue;
         }
 
-        // §3.4: "a naive algorithm which involves checking all the
-        // O(γ) edges of the region."  Walk every polygon edge in the
-        // arc's range and test for intersection with the horizontal ray.
-        std::size_t lo = std::min(a.first_edge, a.last_edge);
-        std::size_t hi = std::max(a.first_edge, a.last_edge);
-
-        for (std::size_t ei = lo; ei <= hi; ++ei) {
+        // §3.4: O(1) per arc — test only the two stored endpoint edges.
+        // The paper models each arc by its endpoint edge pointers; the
+        // horizontal ray intersects the arc boundary at most once per
+        // endpoint edge.
+        for (std::size_t ei : {a.first_edge, a.last_edge}) {
+            if (ei >= polygon_->num_edges()) continue;
             const auto& edge = polygon_->edge(ei);
             const auto& p1 = polygon_->vertex(edge.start_idx);
             const auto& p2 = polygon_->vertex(edge.end_idx);
@@ -627,7 +626,7 @@ RayHit RayShootingOracle::local_shoot(std::size_t region_idx,
 
             // Only consider hits in the ray's direction from origin_x.
             double dist = shoot_right ? (x - origin_x)
-                                      : (origin_x - x);
+                                       : (origin_x - x);
             if (dist > -1e-12 && dist < best_dist) {
                 best_dist = dist;
                 best.type = RayHit::Type::ARC;

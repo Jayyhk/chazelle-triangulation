@@ -247,6 +247,31 @@ std::size_t Submap::remove_chord(std::size_t chord_idx) {
     nodes_[absorbed].incident_chords.clear();
     nodes_[absorbed].arcs.clear();
 
+    // §2.3 Fix 8: Refresh adj_arcs on all chords incident to survivor.
+    // After merging, the arc indices in adj_arcs may be stale (arcs
+    // were transferred from absorbed, chord regions changed).
+    for (std::size_t ci : nodes_[survivor].incident_chords) {
+        Chord& ch = chords_[ci];
+        ch.num_adj_arcs = 0;
+        for (int s = 0; s < 2; ++s) {
+            std::size_t r = ch.region[s];
+            if (r == NONE || r >= nodes_.size()) continue;
+            for (std::size_t ai : nodes_[r].arcs) {
+                if (ch.num_adj_arcs >= 4) break;
+                const auto& a = arc_sequence_[ai];
+                if (a.first_edge == NONE) continue;
+                std::size_t alo = std::min(a.first_edge, a.last_edge);
+                std::size_t ahi = std::max(a.first_edge, a.last_edge);
+                bool adj = false;
+                if (ch.left_edge != NONE && ch.left_edge >= alo && ch.left_edge <= ahi + 1)
+                    adj = true;
+                if (ch.right_edge != NONE && ch.right_edge >= alo && ch.right_edge <= ahi + 1)
+                    adj = true;
+                if (adj) ch.adj_arcs[ch.num_adj_arcs++] = ai;
+            }
+        }
+    }
+
     // Fully invalidate the removed chord so that it is not counted
     // by any subsequent deduplication check (e.g. parent_chords in
     // the down-phase).

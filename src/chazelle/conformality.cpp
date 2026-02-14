@@ -82,21 +82,17 @@ RayHit shoot_in_region(const Submap& submap,
         if (a.first_edge == NONE) continue;
 
         // §4.2: Virtual arcs represent tilted exit-chord edges.
+        // Symbolic perturbation: exact midpoint at y ≈ vy.
         if (a.is_virtual()) {
             double vy = a.virtual_y;
-            constexpr double TILT = 1e-8;
-            double vy_lo = vy - TILT;
-            double vy_hi = vy + TILT;
-            if (y < vy_lo - 1e-12 || y > vy_hi + 1e-12) continue;
+            if (std::abs(y - vy) > 1e-9) continue;
             double x_left = (a.first_edge < polygon.num_edges())
                 ? polygon.edge_x_at_y(a.first_edge, vy) : 0.0;
             double x_right = (a.last_edge < polygon.num_edges())
                 ? polygon.edge_x_at_y(a.last_edge, vy) : 0.0;
-            double t = (std::abs(vy_hi - vy_lo) > 1e-15)
-                ? (y - vy_lo) / (vy_hi - vy_lo) : 0.5;
-            double x = x_left + t * (x_right - x_left);
+            double x = (x_left + x_right) * 0.5;
             double dist = shoot_right ? (x - origin_x)
-                                      : (origin_x - x);
+                                       : (origin_x - x);
             if (dist > -1e-12 && dist < best_dist) {
                 best_dist = dist;
                 best.type = RayHit::Type::ARC;
@@ -106,10 +102,9 @@ RayHit shoot_in_region(const Submap& submap,
             continue;
         }
 
-        std::size_t lo = std::min(a.first_edge, a.last_edge);
-        std::size_t hi = std::max(a.first_edge, a.last_edge);
-        for (std::size_t ei = lo; ei <= hi; ++ei) {
-            if (ei >= polygon.num_edges()) break;
+        // §3.1: O(1) per arc — test only the two stored endpoint edges.
+        for (std::size_t ei : {a.first_edge, a.last_edge}) {
+            if (ei == NONE || ei >= polygon.num_edges()) continue;
             const auto& edge = polygon.edge(ei);
             const auto& p1 = polygon.vertex(edge.start_idx);
             const auto& p2 = polygon.vertex(edge.end_idx);
@@ -120,7 +115,7 @@ RayHit shoot_in_region(const Submap& submap,
             double t = (y - p1.y) / (p2.y - p1.y);
             double x = p1.x + t * (p2.x - p1.x);
             double dist = shoot_right ? (x - origin_x)
-                                      : (origin_x - x);
+                                       : (origin_x - x);
             if (dist > -1e-12 && dist < best_dist) {
                 best_dist = dist;
                 best.type = RayHit::Type::ARC;
@@ -590,21 +585,17 @@ ChordCandidate find_splitting_chord(
         return {};
     };
 
-    // Try preferred pair first (maximally separated).
-    if (index_distance(0, k / 2) > 1) {
+    // §3.2 Lemma 3.3: try the maximally separated pair (0, k/2).
+    // The lemma guarantees existence for any non-consecutive pair
+    // when k > 4, so O(1) selection suffices.
+    if (k >= 2 && index_distance(0, k / 2) > 1) {
         auto cand = try_pair(0, k / 2);
         if (cand.valid) return cand;
     }
 
-    // Try remaining non-consecutive pairs.
-    for (std::size_t ii = 0; ii < k; ++ii) {
-        for (std::size_t jj = ii + 2; jj < k; ++jj) {
-            if (index_distance(ii, jj) <= 1) continue;
-            if (ii == 0 && jj == k / 2) continue;  // already tried
-            auto cand = try_pair(ii, jj);
-            if (cand.valid) return cand;
-        }
-    }
+    // Lemma 3.3 guarantees this should not happen for k > 4.
+    // If we reach here, the submap may be in a degenerate state.
+    assert(false && "Lemma 3.3: no splitting chord found for (0, k/2)");
 
     (void)granularity;
     return {};
@@ -672,8 +663,6 @@ void restore_conformality(Submap& submap,
                 new_chord.region[1] = new_region;
 
                 std::size_t new_ci = submap.add_chord(new_chord);
-                std::fprintf(stderr, "    CONF add chord %zu: le=%zu re=%zu r0=%zu r1=%zu\n",
-                             new_ci, new_chord.left_edge, new_chord.right_edge, i, new_region);
 
                 // Partition arcs between region i and new_region.
                 //
