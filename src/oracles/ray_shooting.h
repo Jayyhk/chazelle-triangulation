@@ -74,6 +74,15 @@ public:
     RayHit shoot_from_region(std::size_t region_idx, double origin_x,
                              double y, bool shoot_right) const;
 
+    /// §4.1 oracle (i): Shoot a horizontal ray from an EXTERNAL point
+    /// (origin_x, y) — i.e., a point NOT on this submap's chain ∂C_μ.
+    /// Uses the vertical-line structure to identify the starting region,
+    /// then delegates to shoot_from_region with the caller-supplied
+    /// origin_x.  This is the cross-chain query needed by the per-
+    /// subarc oracle decomposition.
+    RayHit shoot_from_point(double origin_x, double y,
+                            bool shoot_right) const;
+
     /// Is this oracle built and ready for queries?
     bool is_built() const { return built_; }
 
@@ -100,6 +109,11 @@ private:
 
     /// Separator hierarchy from iterated Lipton-Tarjan.
     IteratedSeparatorResult separator_hierarchy_;
+
+    /// Compact list of separator dual-node indices (|D*| = O(μ^{2/3})).
+    /// Pre-built from separator_hierarchy_.separator_nodes to avoid
+    /// scanning the full O(μ) boolean array during queries.
+    std::vector<std::size_t> separator_list_;
 
     /// Vertical-line structure: sorted list of chord y-coordinates
     /// for initial region identification.

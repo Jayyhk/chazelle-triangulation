@@ -1,5 +1,7 @@
 #include "chazelle/fusion.h"
 #include "geometry/perturbation.h"
+#include "oracles/arc_cutting.h"
+#include "chazelle/grade_storage.h"
 
 #include <algorithm>
 #include <cassert>
@@ -36,16 +38,20 @@ double origin_x_for_vertex(const Polygon& polygon, std::size_t v) {
     return pt.x;
 }
 
-/// Do local shooting from point (origin_x, y) within a specific region
-/// of a submap.  Checks all arcs (at most 4 by conformality) and chords
-/// bounding the region.  Returns the nearest hit.
+/// §3.1 / §4.1 oracle (i): Per-subarc local shooting from (origin_x, y)
+/// within a specific region of a submap.
 ///
-/// This is the core primitive of §3.1: "local shooting".
+/// For each arc A in the region, decomposes A into O(g(γ)) = O(log γ)
+/// dyadic pieces via arc-cutting and queries each piece's canonical
+/// submap oracle via shoot_from_point().  Chords are checked directly.
+///
+/// Total cost per call: O(f(γ)) where f(γ) = O(λ · 2^{β²λ/3+2βλ/3}).
 RayHit local_shoot_in_region(const Submap& submap,
                               const Polygon& polygon,
                               std::size_t region_idx,
                               double origin_x, double y,
-                              bool shoot_right) {
+                              bool shoot_right,
+                              const GradeStorage& storage) {
     const auto& nd = submap.node(region_idx);
     RayHit best;
     best.start_region = region_idx;
@@ -80,19 +86,13 @@ RayHit local_shoot_in_region(const Submap& submap,
         if (a.first_edge == NONE) continue;
 
         // §4.2: Virtual arcs represent tilted exit-chord edges.
-        // Symbolic perturbation logic:
-        // A tilted chord is formally `y = virtual_y + ε * x`.
-        // In the limit ε -> 0, it acts as a horizontal segment at `virtual_y`.
         if (a.is_virtual()) {
             double vy = a.virtual_y;
-            // Exact y comparison.
             if (y != vy) continue;
-
             double x_left = (a.first_edge < polygon.num_edges())
                 ? polygon.edge_x_at_y(a.first_edge, vy) : 0.0;
             double x_right = (a.last_edge < polygon.num_edges())
                 ? polygon.edge_x_at_y(a.last_edge, vy) : 0.0;
-            // Midpoint approximation for hit x is fine topology-wise.
             double x = (x_left + x_right) * 0.5;
             double dist = shoot_right ? (x - origin_x) : (origin_x - x);
             if (dist > 0.0 && dist < best_dist) {
@@ -105,39 +105,71 @@ RayHit local_shoot_in_region(const Submap& submap,
             continue;
         }
 
-        // §3.1 local shooting: "Using the appropriate ray-shooters, we
-        // can find that point by checking each arc in turn and finding
-        // the nearest hit."  When the oracle is not available, iterate
-        // ALL edges of the arc [first_edge..last_edge] — not just the
-        // two stored endpoints.  Each arc has at most O(γ) edges by
-        // granularity, and conformality limits us to ≤4 arcs, so the
-        // total work is O(γ) per local shoot.
         std::size_t e_lo = std::min(a.first_edge, a.last_edge);
         std::size_t e_hi = std::max(a.first_edge, a.last_edge);
-        for (std::size_t ei = e_lo; ei <= e_hi && ei < polygon.num_edges(); ++ei) {
-            const auto& edge = polygon.edge(ei);
-            const auto& p1 = polygon.vertex(edge.start_idx);
-            const auto& p2 = polygon.vertex(edge.end_idx);
-            
-            double y_lo = std::min(p1.y, p2.y);
-            double y_hi = std::max(p1.y, p2.y);
 
-            // Exact bounds check.
-            if (y < y_lo || y > y_hi) continue;
-            if (p1.y == p2.y) continue; 
-
-            // Exact intersection computation.
-            double x = horizontal_ray_x_intercept(p1, p2, y);
-
-            double dist = shoot_right ? (x - origin_x) : (origin_x - x);
-            // Strict check.
-            if (dist > 0.0 && dist < best_dist) {
-                best_dist = dist;
-                best.type = RayHit::Type::ARC;
-                best.arc_idx = ai;
-                best.hit_x = x;
-                best.hit_edge = ei;
+        // Single-edge arc: O(1) direct check.
+        if (e_lo == e_hi) {
+            if (e_lo < polygon.num_edges()) {
+                const auto& edge = polygon.edge(e_lo);
+                const auto& p1 = polygon.vertex(edge.start_idx);
+                const auto& p2 = polygon.vertex(edge.end_idx);
+                double y_lo = std::min(p1.y, p2.y);
+                double y_hi = std::max(p1.y, p2.y);
+                if (y >= y_lo && y <= y_hi && p1.y != p2.y) {
+                    double x = horizontal_ray_x_intercept(p1, p2, y);
+                    double dist = shoot_right ? (x - origin_x) : (origin_x - x);
+                    if (dist > 0.0 && dist < best_dist) {
+                        best_dist = dist;
+                        best.type = RayHit::Type::ARC;
+                        best.arc_idx = ai;
+                        best.hit_x = x;
+                        best.hit_edge = e_lo;
+                    }
+                }
             }
+            continue;
+        }
+
+        // §4.1: Decompose the arc into O(log γ) dyadic pieces.
+        // For each piece, use the canonical submap's oracle.
+        auto pieces = cut_arc(e_lo, e_hi + 1, polygon);
+
+        for (const auto& piece : pieces) {
+            if (piece.grade < storage.num_grades() &&
+                piece.chain_index < storage.num_chains(piece.grade)) {
+                const auto& cs = storage.get(piece.grade, piece.chain_index);
+                if (cs.oracle.is_built()) {
+                    auto hit = cs.oracle.shoot_from_point(
+                                   origin_x, y, shoot_right);
+                    // Accept only arc hits within the original arc's
+                    // edge range.
+                    if (hit.type == RayHit::Type::ARC &&
+                        hit.hit_edge != NONE &&
+                        hit.hit_edge >= e_lo &&
+                        hit.hit_edge <= e_hi) {
+                        double dist = shoot_right
+                            ? (hit.hit_x - origin_x)
+                            : (origin_x - hit.hit_x);
+                        if (dist > 0.0 && dist < best_dist) {
+                            best_dist = dist;
+                            best.type = RayHit::Type::ARC;
+                            best.arc_idx = ai;
+                            best.hit_x = hit.hit_x;
+                            best.hit_edge = hit.hit_edge;
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            // §4.1: The up-phase builds oracles for ALL grades
+            // (including grade 0).  If we reach here, the oracle
+            // is missing — this is a programming error, not an
+            // expected case.  The paper guarantees: "all these
+            // shooting structures have been computed."
+            assert(false && "missing oracle for arc piece — "
+                           "up-phase should have built it");
         }
     }
 
@@ -198,9 +230,10 @@ std::size_t find_junction_region(const Submap& dst,
 void fuse_pass(const Submap& src,
                const RayShootingOracle& src_oracle,
                const Submap& dst,
-               const RayShootingOracle& dst_oracle,
+               const RayShootingOracle& /*dst_oracle*/,
                const Polygon& polygon,
                std::size_t junction_vertex,
+               const GradeStorage& storage,
                std::vector<DiscoveredChord>& discovered) {
 
 
@@ -287,12 +320,22 @@ void fuse_pass(const Submap& src,
     // same edge), we perform a lightweight counting sort by edge_idx
     // which is O(E) time and O(max_edge) space.
     if (!stops.empty()) {
+        // §3.1: Use relative edge offsets so bucket count is
+        // O(chain_size) instead of O(n).  The source submap's
+        // c_start_vertex gives the base offset.
+        std::size_t base = (src.c_start_vertex != NONE) ? src.c_start_vertex : 0;
         std::size_t max_e = 0;
-        for (const auto& s : stops) max_e = std::max(max_e, s.edge_idx);
+        for (const auto& s : stops) {
+            if (s.edge_idx >= base)
+                max_e = std::max(max_e, s.edge_idx - base);
+        }
 
-        // Count stops per edge.
+        // Count stops per relative edge.
         std::vector<std::size_t> count(max_e + 2, 0);
-        for (const auto& s : stops) count[s.edge_idx]++;
+        for (const auto& s : stops) {
+            std::size_t rk = (s.edge_idx >= base) ? (s.edge_idx - base) : 0;
+            count[rk]++;
+        }
 
         // Prefix sum for offsets.
         std::vector<std::size_t> offset(max_e + 2, 0);
@@ -303,8 +346,10 @@ void fuse_pass(const Submap& src,
         std::vector<StopPoint> sorted(stops.size());
         // Use a copy of offset as write cursors.
         std::vector<std::size_t> cursor = offset;
-        for (const auto& s : stops)
-            sorted[cursor[s.edge_idx]++] = s;
+        for (const auto& s : stops) {
+            std::size_t rk = (s.edge_idx >= base) ? (s.edge_idx - base) : 0;
+            sorted[cursor[rk]++] = s;
+        }
 
         stops = std::move(sorted);
     }
@@ -364,9 +409,7 @@ void fuse_pass(const Submap& src,
         RayHit hit_dst;
         double dist_dst = std::numeric_limits<double>::infinity();
         if (current_region != NONE) {
-            RayHit h = dst_oracle.is_built()
-                ? dst_oracle.shoot_from_region(current_region, ox, y, a0_dir)
-                : local_shoot_in_region(dst, polygon, current_region, ox, y, a0_dir);
+            RayHit h = local_shoot_in_region(dst, polygon, current_region, ox, y, a0_dir, storage);
             if (h.type == RayHit::Type::ARC) {
                 double d = a0_dir ? (h.hit_x - ox) : (ox - h.hit_x);
                 if (d > 0.0) {
@@ -413,11 +456,18 @@ void fuse_pass(const Submap& src,
                 p_edge = c0_edge;
                 p_y = y;
 
-                for (std::size_t i = 0; i < stops.size(); ++i) {
-                    if (stops[i].edge_idx >= c0_edge) {
-                        start_k = i;
-                        break;
+                // §3.1: Binary search for start_k since stops are
+                // sorted by edge_idx.  O(log m) instead of O(m).
+                {
+                    std::size_t lo_s = 0, hi_s = stops.size();
+                    while (lo_s < hi_s) {
+                        std::size_t mid = lo_s + (hi_s - lo_s) / 2;
+                        if (stops[mid].edge_idx < c0_edge)
+                            lo_s = mid + 1;
+                        else
+                            hi_s = mid;
                     }
+                    start_k = lo_s;
                 }
             }
         }
@@ -443,9 +493,7 @@ void fuse_pass(const Submap& src,
 
         if (current_region < dst.num_nodes() &&
             !dst.node(current_region).deleted) {
-            RayHit h = dst_oracle.is_built()
-                ? dst_oracle.shoot_from_region(current_region, ox, y, aj_dir)
-                : local_shoot_in_region(dst, polygon, current_region, ox, y, aj_dir);
+            RayHit h = local_shoot_in_region(dst, polygon, current_region, ox, y, aj_dir, storage);
             if (h.type == RayHit::Type::ARC) {
                 double d = aj_dir ? (h.hit_x - ox) : (ox - h.hit_x);
                 if (d > 0.0) {
@@ -695,9 +743,9 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
     //
     // Per §3.1: arcs from S₁ and S₂ may span across newly discovered
     // chord endpoints.  We split arcs at chord endpoint edges.
-    // Instead of sorting split_edges O(E log E), we use a boolean
-    // array indexed by edge index (bucket approach) for O(E) dedup
-    // and membership testing.
+    // Use relative offsets so the boolean array is O(chain_size)
+    // instead of O(n).
+    std::size_t split_base = 0;
     std::size_t max_edge = 0;
     for (const auto& cr : all_chords) {
         if (cr.left_edge != NONE)
@@ -705,13 +753,33 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         if (cr.right_edge != NONE)
             max_edge = std::max(max_edge, cr.right_edge);
     }
+    // Also consider arc edges for the range.
+    for (std::size_t i = 0; i < s1.num_arcs(); ++i) {
+        const auto& a = s1.arc(i);
+        if (a.first_edge != NONE) {
+            split_base = std::min(split_base == 0 ? a.first_edge : split_base,
+                                  std::min(a.first_edge, a.last_edge));
+            max_edge = std::max(max_edge, std::max(a.first_edge, a.last_edge));
+        }
+    }
+    for (std::size_t i = 0; i < s2.num_arcs(); ++i) {
+        const auto& a = s2.arc(i);
+        if (a.first_edge != NONE) {
+            split_base = std::min(split_base == 0 ? a.first_edge : split_base,
+                                  std::min(a.first_edge, a.last_edge));
+            max_edge = std::max(max_edge, std::max(a.first_edge, a.last_edge));
+        }
+    }
+    std::size_t split_range = max_edge - split_base;
     // +1 for 0-indexed, +1 for safety.
-    std::vector<bool> is_split_edge(max_edge + 2, false);
+    std::vector<bool> is_split_edge(split_range + 2, false);
     for (const auto& cr : all_chords) {
-        if (cr.left_edge != NONE && cr.left_edge <= max_edge)
-            is_split_edge[cr.left_edge] = true;
-        if (cr.right_edge != NONE && cr.right_edge <= max_edge)
-            is_split_edge[cr.right_edge] = true;
+        if (cr.left_edge != NONE && cr.left_edge >= split_base &&
+            cr.left_edge - split_base <= split_range)
+            is_split_edge[cr.left_edge - split_base] = true;
+        if (cr.right_edge != NONE && cr.right_edge >= split_base &&
+            cr.right_edge - split_base <= split_range)
+            is_split_edge[cr.right_edge - split_base] = true;
     }
 
     struct ArcRecord {
@@ -737,7 +805,8 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
         // Total across all arcs: O(E) since arcs partition the edges.
         std::size_t cur_lo = lo;
         for (std::size_t e = lo + 1; e < hi; ++e) {
-            if (e <= max_edge && is_split_edge[e]) {
+            if (e >= split_base && e - split_base <= split_range &&
+                is_split_edge[e - split_base]) {
                 // Sub-arc [cur_lo, e-1].
                 ArcStructure sub = a;
                 sub.first_edge = cur_lo;
@@ -827,14 +896,15 @@ Submap rebuild_submap(const Submap& s1, const Submap& s2,
 Submap fuse(const Submap& s1, const RayShootingOracle& oracle1,
             const Submap& s2, const RayShootingOracle& oracle2,
             const Polygon& polygon,
-            std::size_t junction_vertex) {
+            std::size_t junction_vertex,
+            const GradeStorage& storage) {
     if (s1.num_nodes() == 0) return Submap(s2);
     if (s2.num_nodes() == 0) return Submap(s1);
 
     std::vector<DiscoveredChord> discovered;
 
-    fuse_pass(s1, oracle1, s2, oracle2, polygon, junction_vertex, discovered);
-    fuse_pass(s2, oracle2, s1, oracle1, polygon, junction_vertex, discovered);
+    fuse_pass(s1, oracle1, s2, oracle2, polygon, junction_vertex, storage, discovered);
+    fuse_pass(s2, oracle2, s1, oracle1, polygon, junction_vertex, storage, discovered);
 
     return rebuild_submap(s1, s2, discovered, polygon);
 }

@@ -57,7 +57,7 @@ CanonicalSubmap merge_submaps(std::size_t grade,
 
     // Stage 1: Fusion.
     Submap fused = fuse(sub1, ora1, sub2, ora2,
-                        polygon, junction_vertex);
+                        polygon, junction_vertex, storage);
 
     // Stage 2: Conformality restoration.
     restore_conformality(fused, storage, polygon, gamma);

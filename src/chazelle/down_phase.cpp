@@ -438,7 +438,7 @@ void refine_region(Submap& submap,
             // Fuse the two submaps.
             Submap fused = fuse(layer[i].submap, layer[i].oracle,
                                 layer[i+1].submap, layer[i+1].oracle,
-                                polygon, junction);
+                                polygon, junction, storage);
 
             // Restore conformality on the fused result.
             restore_conformality(fused, storage, polygon, gamma_merge);

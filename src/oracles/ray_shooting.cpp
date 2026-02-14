@@ -36,6 +36,14 @@ void RayShootingOracle::build(const Submap& submap,
 
     if (mu > 0) {
         separator_hierarchy_ = iterated_separator(dual_graph_, max_piece);
+
+        // Build compact separator list: O(μ^{2/3}) entries.
+        // This avoids scanning the full O(μ) boolean array per query.
+        separator_list_.clear();
+        for (std::size_t v = 0; v < separator_hierarchy_.separator_nodes.size(); ++v) {
+            if (separator_hierarchy_.separator_nodes[v])
+                separator_list_.push_back(v);
+        }
     }
 
     built_ = true;
@@ -412,6 +420,52 @@ RayHit RayShootingOracle::shoot(std::size_t edge_idx, double y,
     return RayHit{};
 }
 
+RayHit RayShootingOracle::shoot_from_point(double origin_x, double y,
+                                            bool shoot_right) const {
+    assert(built_);
+
+    // §4.1 oracle (i): shoot from a point that is EXTERNAL to
+    // this submap's chain C_μ.  The point lies outside C_μ's double
+    // boundary, so double_identify would return empty.  Instead, use
+    // the vertical-line structure to identify the starting region at
+    // height y, then call shoot_from_region with the caller-supplied
+    // origin_x.
+    //
+    // The vertical-line structure partitions the y-axis by chord
+    // y-coordinates.  For a point at height y, the region at
+    // (x = ∞, y) is found by binary search.  Since the point is
+    // exterior to C_μ, this correctly identifies the region on the
+    // boundary-facing side of C_μ closest to the point.
+    std::size_t vline_region = NONE;
+    if (!vertical_line_.empty()) {
+        auto it = std::lower_bound(
+            vertical_line_.begin(), vertical_line_.end(), y,
+            [](const VerticalEntry& entry, double val) {
+                return entry.y < val;
+            });
+        if (it != vertical_line_.begin()) {
+            auto prev_it = std::prev(it);
+            vline_region = prev_it->region_above;
+        } else {
+            vline_region = vertical_line_.front().region_below;
+        }
+    } else if (submap_->num_nodes() > 0) {
+        // No chords → single region.
+        for (std::size_t ri = 0; ri < submap_->num_nodes(); ++ri) {
+            if (!submap_->node(ri).deleted) {
+                vline_region = ri;
+                break;
+            }
+        }
+    }
+
+    if (vline_region != NONE) {
+        return shoot_from_region(vline_region, origin_x, y, shoot_right);
+    }
+
+    return RayHit{};
+}
+
 RayHit RayShootingOracle::shoot_from_region(std::size_t region_idx,
                                              double origin_x,
                                              double y,
@@ -462,9 +516,9 @@ RayHit RayShootingOracle::shoot_from_region(std::size_t region_idx,
     };
 
     // Step 1: Shoot in all D* (separator) regions.
-    for (std::size_t v = 0; v < separator_hierarchy_.separator_nodes.size(); ++v) {
-        if (!separator_hierarchy_.separator_nodes[v]) continue;
-
+    // Use the compact separator_list_ (O(μ^{2/3}) entries) instead
+    // of scanning the full O(μ) boolean array.
+    for (std::size_t v : separator_list_) {
         std::size_t rgn = dual_to_region(v);
         if (rgn == NONE) continue;
 

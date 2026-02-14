@@ -14,6 +14,7 @@
 
 #include "visibility/submap.h"
 #include "oracles/ray_shooting.h"
+#include "chazelle/grade_storage.h"
 #include "geometry/polygon.h"
 
 #include <cstddef>
@@ -35,6 +36,7 @@ namespace chazelle {
 Submap fuse(const Submap& s1, const RayShootingOracle& oracle1,
             const Submap& s2, const RayShootingOracle& oracle2,
             const Polygon& polygon,
-            std::size_t junction_vertex);
+            std::size_t junction_vertex,
+            const GradeStorage& storage);
 
 } // namespace chazelle

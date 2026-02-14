@@ -481,18 +481,22 @@ void Submap::normalize() {
     // Within LEFT group: ascending by min(first_edge, last_edge).
     // Within RIGHT group: descending by min(first_edge, last_edge).
 
-    // Find max edge index for bucket sizing.
+    // §3.1 (Lemma 3.1 proof): Use relative edge offsets so bucket count
+    // is O(chain_size) instead of O(max_absolute_edge) = O(n).  This
+    // prevents O(n²) total across all chains at a grade.
+    std::size_t base = (c_start_vertex != NONE) ? c_start_vertex : 0;
     std::size_t max_key = 0;
     for (std::size_t i = 0; i < n; ++i) {
         const auto& a = arc_sequence_[i];
         if (a.first_edge == NONE) continue;
         std::size_t k = std::min(a.first_edge, a.last_edge);
-        max_key = std::max(max_key, k);
+        assert(k >= base);
+        max_key = std::max(max_key, k - base);
     }
 
     // Counting sort: group 0 (LEFT, ascending), group 1 (RIGHT, descending).
-    // For LEFT:  sort key = min(first_edge, last_edge), ascending
-    // For RIGHT: sort key = max_key - min(first_edge, last_edge), ascending
+    // For LEFT:  sort key = min(first_edge, last_edge) - base, ascending
+    // For RIGHT: sort key = max_key - (min(first_edge, last_edge) - base), ascending
     //            (reversing the order gives descending)
     std::size_t bucket_size = max_key + 2;
 
@@ -507,7 +511,7 @@ void Submap::normalize() {
             ++invalid_count;
             continue;
         }
-        std::size_t k = std::min(a.first_edge, a.last_edge);
+        std::size_t k = std::min(a.first_edge, a.last_edge) - base;
         if (a.first_side == Side::LEFT) {
             left_count[k]++;
         } else {
@@ -538,7 +542,7 @@ void Submap::normalize() {
             perm[inv_cursor++] = i;
             continue;
         }
-        std::size_t k = std::min(a.first_edge, a.last_edge);
+        std::size_t k = std::min(a.first_edge, a.last_edge) - base;
         if (a.first_side == Side::LEFT) {
             perm[left_cursor[k]++] = i;
         } else {
@@ -639,18 +643,21 @@ void Submap::normalize_chords() {
     // instead of sorting."  We use counting sort by min(left_edge,
     // right_edge) for O(E) time instead of O(E log E).
     std::size_t nc = chords_.size();
+    // §3.1: Use relative edge offsets so bucket count is O(chain_size).
+    std::size_t base = (c_start_vertex != NONE) ? c_start_vertex : 0;
     std::size_t max_key = 0;
     for (const auto& c : chords_) {
         std::size_t k = std::min(c.left_edge, c.right_edge);
-        if (k != NONE) max_key = std::max(max_key, k);
+        if (k != NONE && k >= base) max_key = std::max(max_key, k - base);
     }
 
     std::size_t bucket_size = max_key + 2;
     std::vector<std::size_t> count(bucket_size, 0);
     for (const auto& c : chords_) {
         std::size_t k = std::min(c.left_edge, c.right_edge);
-        if (k == NONE) k = max_key + 1;
-        count[std::min(k, max_key + 1)]++;
+        if (k == NONE || k < base) k = base + max_key + 1;
+        std::size_t rk = std::min(k - base, max_key + 1);
+        count[rk]++;
     }
 
     std::vector<std::size_t> offset(bucket_size, 0);
@@ -661,9 +668,9 @@ void Submap::normalize_chords() {
     std::vector<Chord> sorted(nc);
     for (const auto& c : chords_) {
         std::size_t k = std::min(c.left_edge, c.right_edge);
-        if (k == NONE) k = max_key + 1;
-        k = std::min(k, max_key + 1);
-        sorted[cursor[k]++] = c;
+        if (k == NONE || k < base) k = base + max_key + 1;
+        std::size_t rk = std::min(k - base, max_key + 1);
+        sorted[cursor[rk]++] = c;
     }
     chords_ = std::move(sorted);
 

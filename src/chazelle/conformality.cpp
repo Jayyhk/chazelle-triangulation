@@ -39,21 +39,29 @@ bool hit_lands_on_arc(const RayHit& hit, const Submap& submap,
     return false;
 }
 
-/// Perform local shooting from a point (origin_x, y) in region R of the
-/// CURRENT-LEVEL submap (not the subarc's canonical submap).
-/// Returns the first arc/chord hit and its x-coordinate.
+/// §3.2 / §4.1 oracle (i): Per-subarc local shooting from (origin_x, y)
+/// in region R of the CURRENT-LEVEL submap.
+///
+/// For each arc A of R, decomposes A into O(g(γ)) = O(log γ) dyadic
+/// pieces via arc-cutting and queries each piece's canonical submap
+/// oracle via shoot_from_point().  For chords, checks directly (O(1)).
+///
+/// Total cost: O(f(γ)) per call, where f(γ) = O(λ · 2^{β²λ/3+2βλ/3}).
+/// This matches the paper's requirement for Lemma 3.2 / Lemma 3.4.
+///
+/// @param storage  Grade storage for canonical submap oracle lookups.
 RayHit shoot_in_region(const Submap& submap,
                        std::size_t region_idx,
                        const Polygon& polygon,
                        double origin_x, double y,
-                       bool shoot_right) {
-    // Naive local shoot: walk all edges of arcs/chords in this region.
+                       bool shoot_right,
+                       const GradeStorage& storage) {
     const auto& nd = submap.node(region_idx);
     RayHit best;
     best.start_region = region_idx;
     double best_dist = std::numeric_limits<double>::infinity();
 
-    // Test chords.
+    // Test chords.  O(degree) = O(1) per conformal region.
     for (std::size_t ci : nd.incident_chords) {
         const auto& c = submap.chord(ci);
         if (std::abs(c.y - y) > 1e-12) continue;
@@ -62,7 +70,6 @@ RayHit shoot_in_region(const Submap& submap,
             c.right_edge < polygon.num_edges()) {
             double lx = polygon.edge_x_at_y(c.left_edge, c.y);
             double rx = polygon.edge_x_at_y(c.right_edge, c.y);
-            // Use the chord endpoint nearest in the shooting direction.
             double chord_x = shoot_right ? std::min(lx, rx)
                                          : std::max(lx, rx);
             double dist = shoot_right ? (chord_x - origin_x)
@@ -76,13 +83,16 @@ RayHit shoot_in_region(const Submap& submap,
         }
     }
 
-    // Test arcs.
+    // Test arcs.  For each arc, use the per-subarc oracle (§4.1):
+    // decompose into O(log γ) dyadic pieces, query each piece's
+    // canonical submap oracle.  The point (origin_x, y) is EXTERNAL
+    // to each piece's chain, so the oracle reports the first arc
+    // edge hit (not a chord).
     for (std::size_t ai : nd.arcs) {
         const auto& a = submap.arc(ai);
         if (a.first_edge == NONE) continue;
 
         // §4.2: Virtual arcs represent tilted exit-chord edges.
-        // Symbolic perturbation: exact midpoint at y ≈ vy.
         if (a.is_virtual()) {
             double vy = a.virtual_y;
             if (std::abs(y - vy) > 1e-9) continue;
@@ -103,31 +113,79 @@ RayHit shoot_in_region(const Submap& submap,
             continue;
         }
 
-        // §3.1 local shooting: iterate ALL edges of the arc
-        // [first_edge..last_edge].  Each arc has at most O(γ) edges
-        // by granularity; conformality limits us to ≤4 arcs per region,
-        // so total work is O(γ) per local shoot.
         std::size_t e_lo = std::min(a.first_edge, a.last_edge);
         std::size_t e_hi = std::max(a.first_edge, a.last_edge);
-        for (std::size_t ei = e_lo; ei <= e_hi && ei < polygon.num_edges(); ++ei) {
-            const auto& edge = polygon.edge(ei);
-            const auto& p1 = polygon.vertex(edge.start_idx);
-            const auto& p2 = polygon.vertex(edge.end_idx);
-            double y_lo = std::min(p1.y, p2.y);
-            double y_hi = std::max(p1.y, p2.y);
-            if (y < y_lo || y > y_hi) continue;
-            if (y_hi == y_lo) continue;
-            double t = (y - p1.y) / (p2.y - p1.y);
-            double x = p1.x + t * (p2.x - p1.x);
-            double dist = shoot_right ? (x - origin_x)
-                                       : (origin_x - x);
-            if (dist > -1e-12 && dist < best_dist) {
-                best_dist = dist;
-                best.type = RayHit::Type::ARC;
-                best.arc_idx = ai;
-                best.hit_x = x;
-                best.hit_edge = ei;
+
+        // Single-edge arc: O(1) direct check.
+        if (e_lo == e_hi) {
+            if (e_lo < polygon.num_edges()) {
+                const auto& edge = polygon.edge(e_lo);
+                const auto& p1 = polygon.vertex(edge.start_idx);
+                const auto& p2 = polygon.vertex(edge.end_idx);
+                double y_lo = std::min(p1.y, p2.y);
+                double y_hi = std::max(p1.y, p2.y);
+                if (y >= y_lo && y <= y_hi && y_hi != y_lo) {
+                    double t = (y - p1.y) / (p2.y - p1.y);
+                    double x = p1.x + t * (p2.x - p1.x);
+                    double dist = shoot_right ? (x - origin_x)
+                                               : (origin_x - x);
+                    if (dist > -1e-12 && dist < best_dist) {
+                        best_dist = dist;
+                        best.type = RayHit::Type::ARC;
+                        best.arc_idx = ai;
+                        best.hit_x = x;
+                        best.hit_edge = e_lo;
+                    }
+                }
             }
+            continue;
+        }
+
+        // §4.1: Decompose the arc into O(log γ) dyadic pieces.
+        // For each piece, use the canonical submap's oracle
+        // (shoot_from_point) to find the nearest arc edge hit.
+        auto pieces = cut_arc(e_lo, e_hi + 1, polygon);
+
+        for (const auto& piece : pieces) {
+            // Look up canonical submap for this piece.
+            if (piece.grade < storage.num_grades() &&
+                piece.chain_index < storage.num_chains(piece.grade)) {
+                const auto& cs = storage.get(piece.grade, piece.chain_index);
+                if (cs.oracle.is_built()) {
+                    auto hit = cs.oracle.shoot_from_point(
+                                   origin_x, y, shoot_right);
+                    // Accept only arc hits within the original arc's
+                    // edge range.  The point is exterior to C_μ, so
+                    // the first hit is an arc edge (not a chord).
+                    // Chord hits (if any, due to numerical edge cases)
+                    // are safely ignored — they are internal to C_μ
+                    // and not part of the parent region's boundary.
+                    if (hit.type == RayHit::Type::ARC &&
+                        hit.hit_edge != NONE &&
+                        hit.hit_edge >= e_lo &&
+                        hit.hit_edge <= e_hi) {
+                        double dist = shoot_right
+                            ? (hit.hit_x - origin_x)
+                            : (origin_x - hit.hit_x);
+                        if (dist > -1e-12 && dist < best_dist) {
+                            best_dist = dist;
+                            best.type = RayHit::Type::ARC;
+                            best.arc_idx = ai;
+                            best.hit_x = hit.hit_x;
+                            best.hit_edge = hit.hit_edge;
+                        }
+                    }
+                    continue;  // Oracle handled this piece.
+                }
+            }
+
+            // §4.1: The up-phase builds oracles for ALL grades
+            // (including grade 0).  If we reach here, the oracle
+            // is missing — this is a programming error, not an
+            // expected case.  The paper guarantees: "all these
+            // shooting structures have been computed."
+            assert(false && "missing oracle for arc piece — "
+                           "up-phase should have built it");
         }
     }
 
@@ -158,7 +216,8 @@ int lemma24_test(
     const ArcStructure& arc_j,
     std::size_t alpha_start,  // start vertex of subarc α
     std::size_t alpha_end,    // end vertex of subarc α
-    ChordCandidate& cand) {
+    ChordCandidate& cand,
+    const GradeStorage& storage) {
 
     // Centroid chord endpoints: edge indices a, b.
     std::size_t ea = centroid_chord.left_edge;
@@ -180,7 +239,7 @@ int lemma24_test(
         // Shoot in both directions from a in the parent submap's region.
         for (bool dir : {true, false}) {
             auto hit = shoot_in_region(parent_submap, region_idx, polygon,
-                                       origin_x, pa_y, dir);
+                                       origin_x, pa_y, dir, storage);
             if (hit_lands_on_arc(hit, parent_submap, arc_j)) {
                 cand.y = pa_y;
                 cand.left_edge = ea;
@@ -229,7 +288,7 @@ int lemma24_test(
         double origin_x = polygon.edge_x_at_y(eb, pb_y);
         for (bool dir : {true, false}) {
             auto hit = shoot_in_region(parent_submap, region_idx, polygon,
-                                       origin_x, pb_y, dir);
+                                       origin_x, pb_y, dir, storage);
             if (hit_lands_on_arc(hit, parent_submap, arc_j)) {
                 cand.y = pb_y;
                 cand.left_edge = eb;
@@ -368,7 +427,8 @@ ChordCandidate search_tree_decomposition(
     const CanonicalSubmap& cs,
     std::size_t alpha_start,
     std::size_t alpha_end,
-    const ArcStructure& arc_j) {
+    const ArcStructure& arc_j,
+    const GradeStorage& storage) {
 
     const auto& cs_submap = cs.submap;
 
@@ -423,7 +483,7 @@ ChordCandidate search_tree_decomposition(
                     for (bool dir : {true, false}) {
                         auto hit = shoot_in_region(
                             parent_submap, region_idx, polygon,
-                            origin_x, pt.y, dir);
+                            origin_x, pt.y, dir, storage);
                         if (hit_lands_on_arc(hit, parent_submap, arc_j)) {
                             ChordCandidate cand;
                             cand.y = pt.y;
@@ -478,7 +538,7 @@ ChordCandidate search_tree_decomposition(
         int result = lemma24_test(
             parent_submap, region_idx, polygon,
             cs_submap, centroid, arc_j,
-            alpha_start, alpha_end, cand);
+            alpha_start, alpha_end, cand, storage);
 
         if (result == 0) {
             return cand; // success
@@ -582,7 +642,7 @@ ChordCandidate find_splitting_chord(
             auto cand = search_tree_decomposition(
                 submap, region_idx, polygon, cs,
                 piece.start_vertex, piece.end_vertex,
-                arc_j_final);
+                arc_j_final, storage);
             if (cand.valid) return cand;
         }
 
