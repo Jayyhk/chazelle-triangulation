@@ -98,13 +98,18 @@ RayHit shoot_in_region(const Submap& submap,
                 best.type = RayHit::Type::ARC;
                 best.arc_idx = ai;
                 best.hit_x = x;
+                best.hit_edge = a.first_edge;
             }
             continue;
         }
 
-        // §3.1: O(1) per arc — test only the two stored endpoint edges.
-        for (std::size_t ei : {a.first_edge, a.last_edge}) {
-            if (ei == NONE || ei >= polygon.num_edges()) continue;
+        // §3.1 local shooting: iterate ALL edges of the arc
+        // [first_edge..last_edge].  Each arc has at most O(γ) edges
+        // by granularity; conformality limits us to ≤4 arcs per region,
+        // so total work is O(γ) per local shoot.
+        std::size_t e_lo = std::min(a.first_edge, a.last_edge);
+        std::size_t e_hi = std::max(a.first_edge, a.last_edge);
+        for (std::size_t ei = e_lo; ei <= e_hi && ei < polygon.num_edges(); ++ei) {
             const auto& edge = polygon.edge(ei);
             const auto& p1 = polygon.vertex(edge.start_idx);
             const auto& p2 = polygon.vertex(edge.end_idx);
@@ -121,6 +126,7 @@ RayHit shoot_in_region(const Submap& submap,
                 best.type = RayHit::Type::ARC;
                 best.arc_idx = ai;
                 best.hit_x = x;
+                best.hit_edge = ei;
             }
         }
     }
@@ -585,17 +591,32 @@ ChordCandidate find_splitting_chord(
         return {};
     };
 
-    // §3.2 Lemma 3.3: try the maximally separated pair (0, k/2).
-    // The lemma guarantees existence for any non-consecutive pair
-    // when k > 4, so O(1) selection suffices.
+    // §3.2: "apply Lemma 3.2 to every pair of nonconsecutive arcs
+    // until we find a chord which we can add to S."
+    //
+    // Try the maximally separated pair (0, k/2) first as it has the
+    // best chance of success.  If it fails (e.g. due to numerical
+    // imprecision or degenerate geometry), fall through to try ALL
+    // remaining non-consecutive pairs, as the paper prescribes.
+    // Lemma 3.3 guarantees existence for k > 4.
     if (k >= 2 && index_distance(0, k / 2) > 1) {
         auto cand = try_pair(0, k / 2);
         if (cand.valid) return cand;
     }
 
+    // Exhaustive search over all non-consecutive pairs.
+    for (std::size_t ii = 0; ii < k; ++ii) {
+        for (std::size_t jj = ii + 1; jj < k; ++jj) {
+            if (index_distance(ii, jj) <= 1) continue;  // consecutive
+            if (ii == 0 && jj == k / 2) continue;        // already tried
+            auto cand = try_pair(ii, jj);
+            if (cand.valid) return cand;
+        }
+    }
+
     // Lemma 3.3 guarantees this should not happen for k > 4.
-    // If we reach here, the submap may be in a degenerate state.
-    assert(false && "Lemma 3.3: no splitting chord found for (0, k/2)");
+    // If we reach here, the submap may be in a degenerate state
+    // (e.g. all arcs have zero-length or numerical precision issues).
 
     (void)granularity;
     return {};

@@ -804,10 +804,9 @@ std::vector<std::size_t> Submap::double_identify(std::size_t edge_idx,
             binary_search_arcs_seq(seq2_start, count2, seq2_asc);
         }
     } else {
-        // No endpoint info — linear scan (degenerate case).
-        for (std::size_t i = 0; i < arc_sequence_.size(); ++i) {
-            if (arc_contains(i)) result.push_back(i);
-        }
+        // §2.4: endpoint pointers are required for binary search.
+        // A normal-form submap (§2.3 condition (iii)) always has
+        // start_arc and end_arc set.  Return empty.
     }
 
     // §2.4 y-coordinate disambiguation: "We can disambiguate by

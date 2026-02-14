@@ -348,8 +348,9 @@ RayHit RayShootingOracle::shoot(std::size_t edge_idx, double y,
                     }
                 }
             }
-            // Final fallback.
-            if (start_region == NONE) {
+            // §2.4: Side-based disambiguation should always find a
+            // match in a well-formed normal-form submap.
+            if (start_region == NONE && !arcs.empty()) {
                 start_region = submap_->arc(arcs[0]).region_node;
             }
         }
@@ -692,12 +693,12 @@ RayHit RayShootingOracle::local_shoot(std::size_t region_idx,
             continue;
         }
 
-        // §3.4: O(1) per arc — test only the two stored endpoint edges.
-        // The paper models each arc by its endpoint edge pointers; the
-        // horizontal ray intersects the arc boundary at most once per
-        // endpoint edge.
-        for (std::size_t ei : {a.first_edge, a.last_edge}) {
-            if (ei >= polygon_->num_edges()) continue;
+        // §3.4: Iterate ALL edges of the arc [first_edge..last_edge].
+        // Each arc has at most O(γ) edges by granularity; conformality
+        // limits us to ≤4 arcs per region, so total work is O(γ).
+        std::size_t e_lo = std::min(a.first_edge, a.last_edge);
+        std::size_t e_hi = std::max(a.first_edge, a.last_edge);
+        for (std::size_t ei = e_lo; ei <= e_hi && ei < polygon_->num_edges(); ++ei) {
             const auto& edge = polygon_->edge(ei);
             const auto& p1 = polygon_->vertex(edge.start_idx);
             const auto& p2 = polygon_->vertex(edge.end_idx);

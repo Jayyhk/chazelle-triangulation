@@ -27,47 +27,6 @@ struct DiscoveredChord {
     bool is_null_length = false;
 };
 
-/// Given a ray hit on an arc of a submap, resolve which polygon edge
-/// the hit point lies on.  Returns the edge index.
-///
-/// Per §3.1 Remark 1, chord endpoints are arbitrary points on ∂C,
-/// identified by their edge index.
-///
-/// Use strict equality/inequality for symbolic perturbation consistency.
-std::size_t resolve_hit_edge(const Submap& submap,
-                              const Polygon& polygon,
-                              std::size_t arc_idx,
-                              double ray_y) {
-    const auto& arc = submap.arc(arc_idx);
-    if (arc.first_edge == NONE) return NONE;
-
-    std::size_t lo = std::min(arc.first_edge, arc.last_edge);
-    std::size_t hi = std::max(arc.first_edge, arc.last_edge);
-
-    // In the symbolic perturbation model, general position is assumed.
-    // A horizontal ray at `ray_y` intersects exactly one edge of the chain
-    // [lo, hi], unless ray_y coincides with a vertex y-coordinate.
-    // Even then, consistency is handled by the lexicographic order in predicates.
-    // Here we just need to find *which* edge covers ray_y.
-
-    for (std::size_t ei = lo; ei <= hi && ei < polygon.num_edges(); ++ei) {
-        const auto& edge = polygon.edge(ei);
-        const auto& p1 = polygon.vertex(edge.start_idx);
-        const auto& p2 = polygon.vertex(edge.end_idx);
-
-        double y_lo = std::min(p1.y, p2.y);
-        double y_hi = std::max(p1.y, p2.y);
-
-        // Exact comparison.
-        if (ray_y < y_lo || ray_y > y_hi) continue;
-        if (p1.y == p2.y) continue; // Horizontal edges shouldn't exist in filtered input.
-
-        return ei;
-    }
-
-    return NONE;
-}
-
 /// Compute the x-coordinate of a point on ∂C at height y, on the
 /// polygon edge incident on vertex v.
 double origin_x_for_vertex(const Polygon& polygon, std::size_t v) {
@@ -141,16 +100,21 @@ RayHit local_shoot_in_region(const Submap& submap,
                 best.type = RayHit::Type::ARC;
                 best.arc_idx = ai;
                 best.hit_x = x;
+                best.hit_edge = a.first_edge;
             }
             continue;
         }
 
-        // §3.1: O(1) per arc — test only the two stored endpoint edges.
-        // The paper models each arc by its endpoint edge pointers; a
-        // horizontal ray intersects the arc boundary at most once per
-        // endpoint edge.
-        for (std::size_t ei : {a.first_edge, a.last_edge}) {
-            if (ei == NONE || ei >= polygon.num_edges()) continue;
+        // §3.1 local shooting: "Using the appropriate ray-shooters, we
+        // can find that point by checking each arc in turn and finding
+        // the nearest hit."  When the oracle is not available, iterate
+        // ALL edges of the arc [first_edge..last_edge] — not just the
+        // two stored endpoints.  Each arc has at most O(γ) edges by
+        // granularity, and conformality limits us to ≤4 arcs, so the
+        // total work is O(γ) per local shoot.
+        std::size_t e_lo = std::min(a.first_edge, a.last_edge);
+        std::size_t e_hi = std::max(a.first_edge, a.last_edge);
+        for (std::size_t ei = e_lo; ei <= e_hi && ei < polygon.num_edges(); ++ei) {
             const auto& edge = polygon.edge(ei);
             const auto& p1 = polygon.vertex(edge.start_idx);
             const auto& p2 = polygon.vertex(edge.end_idx);
@@ -172,6 +136,7 @@ RayHit local_shoot_in_region(const Submap& submap,
                 best.type = RayHit::Type::ARC;
                 best.arc_idx = ai;
                 best.hit_x = x;
+                best.hit_edge = ei;
             }
         }
     }
@@ -185,26 +150,37 @@ RayHit local_shoot_in_region(const Submap& submap,
 /// encoded in the normal-form representation of S2 (namely, pointers
 /// to incident arcs), we can find, in constant time, in which region
 /// of S2 the point a0 lies."
+///
+/// The junction vertex is at one of the two endpoints of C₂.  The
+/// normal-form stores start_arc / end_arc pointers (§2.3 condition
+/// (iii)), so we can look up the region in O(1).
 std::size_t find_junction_region(const Submap& dst,
                                   std::size_t junction_vertex) {
-    for (std::size_t ai = 0; ai < dst.num_arcs(); ++ai) {
-        const auto& a = dst.arc(ai);
-        if (a.first_edge == NONE) continue;
-        std::size_t lo = std::min(a.first_edge, a.last_edge);
-        std::size_t hi = std::max(a.first_edge, a.last_edge);
-        if (junction_vertex == lo || junction_vertex == hi + 1) {
-            if (a.region_node != NONE) return a.region_node;
+    // §2.3 (iii): start_arc and end_arc point to the arcs passing
+    // through the endpoints of C.  The junction vertex matches one
+    // of them; its region_node is the answer.
+    if (dst.start_arc != NONE && dst.start_arc < dst.num_arcs()) {
+        const auto& a = dst.arc(dst.start_arc);
+        if (a.first_edge != NONE) {
+            std::size_t lo = std::min(a.first_edge, a.last_edge);
+            std::size_t hi = std::max(a.first_edge, a.last_edge);
+            if (junction_vertex >= lo && junction_vertex <= hi + 1) {
+                if (a.region_node != NONE) return a.region_node;
+            }
         }
     }
-    for (std::size_t ai = 0; ai < dst.num_arcs(); ++ai) {
-        const auto& a = dst.arc(ai);
-        if (a.first_edge == NONE) continue;
-        std::size_t lo = std::min(a.first_edge, a.last_edge);
-        std::size_t hi = std::max(a.first_edge, a.last_edge);
-        if (junction_vertex >= lo && junction_vertex <= hi + 1) {
-            if (a.region_node != NONE) return a.region_node;
+    if (dst.end_arc != NONE && dst.end_arc < dst.num_arcs()) {
+        const auto& a = dst.arc(dst.end_arc);
+        if (a.first_edge != NONE) {
+            std::size_t lo = std::min(a.first_edge, a.last_edge);
+            std::size_t hi = std::max(a.first_edge, a.last_edge);
+            if (junction_vertex >= lo && junction_vertex <= hi + 1) {
+                if (a.region_node != NONE) return a.region_node;
+            }
         }
     }
+    // §3.1: If neither endpoint arc covers the junction vertex,
+    // the submap has a single region (trivial case).  Return it.
     for (std::size_t i = 0; i < dst.num_nodes(); ++i) {
         if (!dst.node(i).deleted) return i;
     }
@@ -401,8 +377,10 @@ void fuse_pass(const Submap& src,
         }
 
         if (hit_dst.type == RayHit::Type::ARC && dist_dst <= dist_src) {
-            std::size_t re = resolve_hit_edge(
-                dst, polygon, hit_dst.arc_idx, y);
+            // §3 item (i): the ray-shooting report always includes
+            // the edge name.  hit_edge is set by local_shoot /
+            // shoot_from_region — no post-hoc linear scan needed.
+            std::size_t re = hit_dst.hit_edge;
             std::size_t a0_edge = stops[a0_idx].edge_idx;
             if (re != NONE && re != a0_edge) {
                 DiscoveredChord dc;
@@ -419,8 +397,8 @@ void fuse_pass(const Submap& src,
                 if (h.type == RayHit::Type::ARC) {
                     double d = a0_dir ? (h.hit_x - ox) : (ox - h.hit_x);
                     if (d > 0.0) {
-                        c0_edge = resolve_hit_edge(
-                            src, polygon, h.arc_idx, y);
+                        // §3 item (i): oracle always reports the hit edge.
+                        c0_edge = h.hit_edge;
                     }
                 }
             }
@@ -489,8 +467,8 @@ void fuse_pass(const Submap& src,
             }
 
             if (best_dst_dist <= dist_src) {
-                std::size_t re = resolve_hit_edge(
-                    dst, polygon, best_dst_hit.arc_idx, y);
+                // §3 item (i): oracle always reports the hit edge.
+                std::size_t re = best_dst_hit.hit_edge;
                 if (re != NONE && re != aj_edge) {
                     DiscoveredChord dc;
                     dc.y = y;
@@ -540,8 +518,8 @@ void fuse_pass(const Submap& src,
                     std::size_t seg_hi = std::max(p_edge, aj_edge);
                     if (h_lo > seg_hi || h_hi < seg_lo) continue;
 
-                    std::size_t p_prime_e = resolve_hit_edge(
-                        src, polygon, h.arc_idx, y_e);
+                    // §3 item (i): oracle always reports the hit edge.
+                    std::size_t p_prime_e = h.hit_edge;
                     if (p_prime_e == NONE) continue;
                     if (p_prime_e <= p_edge) continue;
 
