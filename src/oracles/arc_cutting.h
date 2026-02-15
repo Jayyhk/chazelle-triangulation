@@ -1,9 +1,14 @@
 #pragma once
 
-/// Arc-Cutting Oracle — Chazelle §3.4.
+/// Arc-Cutting Oracle — Chazelle §3.4 / §4.1.
 ///
-/// Given a subarc of ∂C, decompose it into O(log γ) chains from prior
+/// Given a subarc of ∂C, decompose it into O(λ) chains from prior
 /// grades whose canonical submaps have already been computed in the up-phase.
+/// (§4.1: g(γ) = O(λ), where γ = 2^⌈βλ⌉.  Equivalently O(log γ) since
+/// β = 1/5, but the paper parameterises in terms of λ.)
+///
+/// Plus at most 2 single-edge pieces at the endpoints of the subarc
+/// (these arise when the subarc is not aligned to a grade-1 boundary).
 ///
 /// This is a thin utility function (~10 lines of logic): binary decomposition
 /// of the arc's vertex range into dyadic intervals, each matching a chain
@@ -25,12 +30,15 @@ struct ArcPiece {
     std::size_t end_vertex;   ///< End vertex of this piece.
 };
 
-/// Decompose an arc's vertex range [start, end) into O(log γ) dyadic
-/// intervals.  Each interval corresponds to a chain at some grade λ' < λ
-/// whose canonical submap is available in grade_storage.
+/// Decompose an arc's vertex range [start, end) into O(λ) dyadic
+/// intervals (§4.1: g(γ) = O(λ)).  Each interval corresponds to a chain
+/// at some grade λ' < λ whose canonical submap is available in
+/// grade_storage.  Grade-0 pieces at the endpoints are the "at most two
+/// single-edge pieces" of §4.1.
 ///
-/// O(log γ) total — each piece is computed in O(1) via bit manipulation,
-/// and there are at most O(log γ) pieces in the greedy decomposition.
+/// O(λ) total — each piece is computed in O(1) via bit manipulation,
+/// and there are at most O(⌈βλ⌉) = O(λ) pieces in the greedy
+/// decomposition (since arcs have ≤ γ = 2^⌈βλ⌉ edges).
 ///
 /// @param start_vertex  First vertex index of the arc (inclusive).
 /// @param end_vertex    Past-the-end vertex index of the arc (exclusive).
