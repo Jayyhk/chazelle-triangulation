@@ -731,7 +731,8 @@ SeparatorResult find_separator_impl(PlanarGraph& graph,
         while (inside_cost > 2.0 / 3.0 * comp.total_cost
                && max_iters-- > 0)
         {
-            // Find the triangle on the inside of current_edge.
+            // §L-T Step 9: find the triangle (v_i, y, w_i) inside
+            // the current cycle and classify the two new edges.
             std::size_t cu2 = graph.edge(current_edge).endpoint[0];
             std::size_t cv2 = graph.edge(current_edge).endpoint[1];
 
@@ -740,40 +741,162 @@ SeparatorResult find_separator_impl(PlanarGraph& graph,
             auto [ne2, nd2] = graph.face_next(current_edge, cu2);
             std::size_t y2 = nd2;
 
-            // Pick the interior vertex.
+            // Pick the interior vertex y and identify edges
+            // vi_y_edge = (v_i, y) and y_wi_edge = (y, w_i)
+            // using the face traversal of the interior triangle.
             std::size_t y = NONE;
+            std::size_t vi_y_edge = NONE;
+            std::size_t y_wi_edge = NONE;
             if (is_interior[y1]) {
                 y = y1;
+                // Triangle via face_next(current_edge, cv2):
+                //   cv2→y via ne1, then y→cu2 via next edge.
+                y_wi_edge = ne1;
+                vi_y_edge = graph.face_next(ne1, y1).edge_idx;
             } else if (is_interior[y2]) {
                 y = y2;
+                // Triangle via face_next(current_edge, cu2):
+                //   cu2→y via ne2, then y→cv2 via next edge.
+                vi_y_edge = ne2;
+                y_wi_edge = graph.face_next(ne2, y2).edge_idx;
             }
-            if (y == NONE) break; // No interior vertex to absorb.
+            if (y == NONE) break;
 
-            // Find a non-tree edge among (cu2,y) and (cv2,y).
-            std::size_t nontree_edge = NONE;
-            graph.for_each_edge_cw(y, [&](std::size_t ei) {
-                if (nontree_edge != NONE) return;
-                if (graph.edge(ei).is_tree) return;
-                std::size_t w = graph.edge(ei).other(y);
-                if (w == cu2 || w == cv2) {
-                    nontree_edge = ei;
+            bool vi_y_tree = graph.edge(vi_y_edge).is_tree;
+            bool y_wi_tree = graph.edge(y_wi_edge).is_tree;
+
+            if (vi_y_tree || y_wi_tree) {
+                // ── Case 1: one tree edge, one nontree ──────────
+                // The new fundamental cycle has one fewer interior
+                // face.  y moves from interior to cycle boundary;
+                // cost update is simply −cost(y).
+                std::size_t next_edge = vi_y_tree ? y_wi_edge
+                                                  : vi_y_edge;
+                on_cycle[y] = true;
+                is_interior[y] = false;
+                cycle_cost_val += graph.vertex(y).cost;
+                interior_cost -= graph.vertex(y).cost;
+                if (interior_cost < 0.0) interior_cost = 0.0;
+                current_edge = next_edge;
+            } else {
+                // ── Case 2 (§L-T Step 9, case 3c): both nontree ─
+                // Walk parent pointers from y to the current cycle
+                // to find z.  The tree path y → … → z joins the
+                // cycle, splitting the interior into two sub-cycles
+                // A (around (v_i, y)) and B (around (y, w_i)).
+                double path_cost = 0.0;
+                {
+                    std::size_t cur = y;
+                    while (!on_cycle[cur]) {
+                        on_cycle[cur] = true;
+                        is_interior[cur] = false;
+                        path_cost += graph.vertex(cur).cost;
+                        cur = graph.vertex(cur).parent;
+                    }
                 }
-            });
+                cycle_cost_val += path_cost;
+                double remaining = interior_cost - path_cost;
+                if (remaining < 0.0) remaining = 0.0;
 
-            if (nontree_edge == NONE) break;
+                // Seed each sub-cycle from the face of its nontree
+                // edge opposite the triangle (v_i, y, w_i).
+                auto pick_seed = [&](std::size_t edge,
+                                     std::size_t tri_third)
+                    -> std::size_t
+                {
+                    std::size_t eu = graph.edge(edge).endpoint[0];
+                    std::size_t ev = graph.edge(edge).endpoint[1];
+                    std::size_t d0 =
+                        graph.face_next(edge, ev).dest;
+                    std::size_t d1 =
+                        graph.face_next(edge, eu).dest;
+                    if (d0 == tri_third) return d1;
+                    return d0;
+                };
+                std::size_t seed_a = pick_seed(vi_y_edge, cv2);
+                std::size_t seed_b = pick_seed(y_wi_edge, cu2);
 
-            // §L-T Step 9: Absorb vertex y into the cycle.
-            // Incremental cost update: O(1).
-            on_cycle[y] = true;
-            is_interior[y] = false;
-            cycle_cost_val += graph.vertex(y).cost;
-            interior_cost -= graph.vertex(y).cost;
-            if (interior_cost < 0.0) interior_cost = 0.0;
+                // Alternating BFS to compute interior costs of the
+                // two sub-cycles.  O(min(|A|,|B|)) per iteration;
+                // O(n) total across all Step-9 iterations.
+                double cost_a = 0.0, cost_b = 0.0;
+                std::vector<std::size_t> vis_a, vis_b;
+                std::queue<std::size_t> qa, qb;
+
+                auto try_seed = [&](std::size_t s,
+                                    std::queue<std::size_t>& q,
+                                    double& cost,
+                                    std::vector<std::size_t>& vis) {
+                    if (s < graph.num_vertices() &&
+                        is_interior[s])
+                    {
+                        is_interior[s] = false;
+                        cost += graph.vertex(s).cost;
+                        vis.push_back(s);
+                        q.push(s);
+                    }
+                };
+                try_seed(seed_a, qa, cost_a, vis_a);
+                try_seed(seed_b, qb, cost_b, vis_b);
+
+                auto bfs_step = [&](std::queue<std::size_t>& q,
+                                    double& cost,
+                                    std::vector<std::size_t>& vis) {
+                    if (q.empty()) return;
+                    std::size_t bv = q.front(); q.pop();
+                    graph.for_each_edge_cw(bv, [&](std::size_t ei) {
+                        std::size_t w = graph.edge(ei).other(bv);
+                        if (!is_interior[w]) return;
+                        is_interior[w] = false;
+                        cost += graph.vertex(w).cost;
+                        vis.push_back(w);
+                        q.push(w);
+                    });
+                };
+
+                // Alternate until one side's queue empties.
+                while (!qa.empty() && !qb.empty()) {
+                    bfs_step(qa, cost_a, vis_a);
+                    bfs_step(qb, cost_b, vis_b);
+                }
+
+                // The side that finished is the smaller one.
+                // Derive the larger side's cost from the total.
+                if (qa.empty() && !vis_a.empty()) {
+                    cost_b = remaining - cost_a;
+                } else if (qb.empty() && !vis_b.empty()) {
+                    cost_a = remaining - cost_b;
+                } else {
+                    // Both finished or no seeds found.
+                    if (vis_a.empty() && !vis_b.empty())
+                        cost_a = remaining - cost_b;
+                    else if (vis_b.empty() && !vis_a.empty())
+                        cost_b = remaining - cost_a;
+                    else if (vis_a.empty() && vis_b.empty())
+                        cost_b = remaining;
+                }
+                if (cost_a < 0.0) cost_a = 0.0;
+                if (cost_b < 0.0) cost_b = 0.0;
+
+                // Pick the heavier sub-cycle.
+                if (cost_a >= cost_b) {
+                    current_edge = vi_y_edge;
+                    interior_cost = cost_a;
+                    // Restore A's vertices to is_interior.
+                    for (std::size_t v : vis_a)
+                        is_interior[v] = true;
+                } else {
+                    current_edge = y_wi_edge;
+                    interior_cost = cost_b;
+                    // Restore B's vertices to is_interior.
+                    for (std::size_t v : vis_b)
+                        is_interior[v] = true;
+                }
+            }
             exterior_cost = comp.total_cost - cycle_cost_val
                           - interior_cost;
+            if (exterior_cost < 0.0) exterior_cost = 0.0;
             inside_cost = std::max(interior_cost, exterior_cost);
-
-            current_edge = nontree_edge;
         }
 
         // Reconstruct cycle_verts from on_cycle marking.

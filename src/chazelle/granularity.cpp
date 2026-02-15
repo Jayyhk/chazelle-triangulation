@@ -101,6 +101,7 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
         // their edge_counts summed; all others contribute individually.
         std::size_t left_group = 0;
         std::size_t right_group = 0;
+        std::size_t bridge_group = 0;  // arcs touching BOTH endpoints
         std::size_t merged_weight = 0;
 
         auto scan_arcs = [&](const SubmapNode& nd) {
@@ -117,9 +118,18 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
                 bool touches_right = re_disappears && (
                     c.right_edge >= alo && c.right_edge <= ahi + 1);
 
-                if (touches_left)  left_group  += ec;
-                if (touches_right) right_group += ec;
-                if (!touches_left && !touches_right) {
+                if (touches_left && touches_right) {
+                    // §3.3: arc spans both disappearing endpoints.
+                    // Track separately to avoid double-counting when
+                    // computing merged weight.
+                    bridge_group += ec;
+                    left_group   += ec;
+                    right_group  += ec;
+                } else if (touches_left) {
+                    left_group  += ec;
+                } else if (touches_right) {
+                    right_group += ec;
+                } else {
                     merged_weight = std::max(merged_weight, ec);
                 }
             }
@@ -127,8 +137,16 @@ void enforce_granularity(Submap& submap, std::size_t gamma,
         scan_arcs(n0);
         scan_arcs(n1);
 
-        merged_weight = std::max(merged_weight,
-                                 std::max(left_group, right_group));
+        // §3.3: When both endpoints disappear and an arc bridges them,
+        // all arcs touching either endpoint merge into a single arc.
+        // Weight = left_group + right_group − bridge_group (de-dup).
+        if (bridge_group > 0) {
+            std::size_t combined = left_group + right_group - bridge_group;
+            merged_weight = std::max(merged_weight, combined);
+        } else {
+            merged_weight = std::max(merged_weight,
+                                     std::max(left_group, right_group));
+        }
 
         if (merged_weight > gamma) continue;
 

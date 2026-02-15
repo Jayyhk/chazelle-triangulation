@@ -403,27 +403,31 @@ ChordCandidate search_tree_decomposition(
         const auto& td_node = td.node(cur);
 
         if (td_node.is_leaf()) {
-            // §3.2 leaf: test only the arc boundary vertices of the
-            // leaf region that fall within α = [alpha_start, alpha_end).
-            // A conformal region has ≤ 4 arcs, each with 2 boundary
-            // vertices → at most 8 candidate vertices = O(1).  This
-            // matches the paper's O(f(γ)) work at the leaf instead of
-            // the prior O(γ · f(γ)) exhaustive scan.
+            // §3.2, Lemma 3.2: "If we reach a leaf, we examine each
+            // vertex of the region associated with it and, among those
+            // belonging to α, we check whether any of them can see A₂.
+            // Since there are only O(h(γ₂)) vertices in the region…"
+            //
+            // Sα is h(γ)-granular conformal, so the leaf region has
+            // ≤ 4 arcs each with ≤ h(γ) edges → O(h(γ)) vertices.
+            // We iterate ALL such vertices in [alpha_start, alpha_end).
             std::size_t leaf_region = td_node.region_idx;
             if (leaf_region == TD_NONE || leaf_region >= cs_submap.num_nodes())
                 break;
 
             const auto& leaf_nd = cs_submap.node(leaf_region);
-            // Collect boundary vertices from this region's arcs.
+            // Iterate all vertices in each arc of the leaf region
+            // that fall within α = [alpha_start, alpha_end).
             for (std::size_t ai : leaf_nd.arcs) {
                 const auto& a = cs_submap.arc(ai);
                 if (a.first_edge == NONE) continue;
                 std::size_t lo = std::min(a.first_edge, a.last_edge);
                 std::size_t hi = std::max(a.first_edge, a.last_edge);
-                // Arc boundary vertices only: lo and hi+1.
-                std::size_t boundary[] = {lo, hi + 1};
-                for (std::size_t v : boundary) {
-                    if (v < alpha_start || v >= alpha_end) continue;
+                // Arc spans edges [lo, hi] → vertices lo .. hi+1.
+                // Clamp to α's range [alpha_start, alpha_end).
+                std::size_t v_lo = (lo > alpha_start) ? lo : alpha_start;
+                std::size_t v_hi_excl = (hi + 2 < alpha_end) ? hi + 2 : alpha_end;
+                for (std::size_t v = v_lo; v < v_hi_excl; ++v) {
                     if (v >= polygon.num_vertices()) continue;
 
                     const auto& pt = polygon.vertex(v);
