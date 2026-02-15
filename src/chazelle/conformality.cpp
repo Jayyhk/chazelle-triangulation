@@ -403,21 +403,26 @@ ChordCandidate search_tree_decomposition(
         const auto& td_node = td.node(cur);
 
         if (td_node.is_leaf()) {
-            // Exhaustive check: test each vertex in this leaf's region
-            // that belongs to α = [alpha_start, alpha_end).
+            // §3.2 leaf: test only the arc boundary vertices of the
+            // leaf region that fall within α = [alpha_start, alpha_end).
+            // A conformal region has ≤ 4 arcs, each with 2 boundary
+            // vertices → at most 8 candidate vertices = O(1).  This
+            // matches the paper's O(f(γ)) work at the leaf instead of
+            // the prior O(γ · f(γ)) exhaustive scan.
             std::size_t leaf_region = td_node.region_idx;
             if (leaf_region == TD_NONE || leaf_region >= cs_submap.num_nodes())
                 break;
 
             const auto& leaf_nd = cs_submap.node(leaf_region);
-            // Collect vertex range from this region's arcs.
+            // Collect boundary vertices from this region's arcs.
             for (std::size_t ai : leaf_nd.arcs) {
                 const auto& a = cs_submap.arc(ai);
                 if (a.first_edge == NONE) continue;
                 std::size_t lo = std::min(a.first_edge, a.last_edge);
                 std::size_t hi = std::max(a.first_edge, a.last_edge);
-                // Each edge ei corresponds to vertex ei and ei+1.
-                for (std::size_t v = lo; v <= hi + 1; ++v) {
+                // Arc boundary vertices only: lo and hi+1.
+                std::size_t boundary[] = {lo, hi + 1};
+                for (std::size_t v : boundary) {
                     if (v < alpha_start || v >= alpha_end) continue;
                     if (v >= polygon.num_vertices()) continue;
 

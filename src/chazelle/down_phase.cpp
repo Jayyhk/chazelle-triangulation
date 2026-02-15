@@ -494,11 +494,17 @@ void refine_region(Submap& submap,
     std::vector<InternalChord> internal_chords;
 
     // Deduplication: track which (min_edge) values have been seen.
-    // Edge indices are within the merged submap's range; use a
-    // vector<bool> for O(1) lookup.  Size is bounded by
-    // merged_submap's edge count, which is O(n/γ).
-    std::size_t merged_num_edges = polygon.num_edges();  // upper bound on edge idx
-    std::vector<bool> seen(merged_num_edges + 1, false);
+    // Edge indices are within the region's arc range; use a
+    // vector<bool> for O(1) lookup.  Size is bounded by the
+    // region's edge span (O(γ)), not the whole polygon (O(n)).
+    std::size_t seen_lo = SIZE_MAX, seen_hi = 0;
+    for (const auto& r : region_arc_ranges) {
+        seen_lo = std::min(seen_lo, r.lo);
+        seen_hi = std::max(seen_hi, r.hi);
+    }
+    if (seen_lo == SIZE_MAX) seen_lo = 0;
+    std::size_t seen_range = (seen_hi >= seen_lo) ? (seen_hi - seen_lo + 1) : 0;
+    std::vector<bool> seen(seen_range, false);
 
     for (std::size_t ci = 0; ci < merged_submap.num_chords(); ++ci) {
         const auto& chord = merged_submap.chord(ci);
@@ -513,11 +519,11 @@ void refine_region(Submap& submap,
             !chord.is_null_length)
             continue;
 
-        // Deduplicate by min_edge index — O(1) lookup.
+        // Deduplicate by min_edge index — O(1) lookup with offset.
         std::size_t min_edge = std::min(chord.left_edge, chord.right_edge);
-        if (min_edge < seen.size()) {
-            if (seen[min_edge]) continue;
-            seen[min_edge] = true;
+        if (min_edge >= seen_lo && min_edge - seen_lo < seen_range) {
+            if (seen[min_edge - seen_lo]) continue;
+            seen[min_edge - seen_lo] = true;
         }
 
         // Check both endpoints lie on R's actual arcs.
@@ -551,21 +557,21 @@ void refine_region(Submap& submap,
     // excluded.  This allows them to be rediscovered at finer grades.
     //
     // §4.2: Use a boolean vector indexed by (min_edge - base) for
-    // O(1) lookup.  The edge range is bounded by the region's arcs,
-    // so the vector size is O(region_edge_count) ⊆ O(n/γ).
+    // O(1) lookup.  The edge range is bounded by the region's arcs
+    // plus its incident chords (degree ≤ 4 for conformal submaps),
+    // so the vector size is O(γ) per region.
     std::size_t pc_base = SIZE_MAX, pc_max = 0;
     for (const auto& r : region_arc_ranges) {
         pc_base = std::min(pc_base, r.lo);
         pc_max  = std::max(pc_max, r.hi);
     }
     if (pc_base == SIZE_MAX) pc_base = 0;
-    // Also include edges from existing chords.
-    for (std::size_t ci = 0; ci < submap.num_chords(); ++ci) {
+    // Include edges from incident chords of this region only (O(1)
+    // for conformal submaps).  The all-chords scan was O(total_chords)
+    // per region, making it superlinear across O(n/γ) regions.
+    for (std::size_t ci : submap.node(region_idx).incident_chords) {
         const auto& c = submap.chord(ci);
         if (c.left_edge == NONE || c.right_edge == NONE) continue;
-        if (c.region[0] == NONE || c.region[1] == NONE) continue;
-        if (submap.node(c.region[0]).deleted ||
-            submap.node(c.region[1]).deleted) continue;
         std::size_t mn = std::min(c.left_edge, c.right_edge);
         std::size_t mx = std::max(c.left_edge, c.right_edge);
         pc_base = std::min(pc_base, mn);

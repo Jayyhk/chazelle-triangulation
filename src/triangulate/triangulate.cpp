@@ -46,11 +46,13 @@ std::size_t diagonal(std::vector<VertexNode>& nodes,
 /// and recurse on each.  If no diagonal is found, the polygon is
 /// unimonotone — triangulate it directly via Algorithm 3.
 ///
-/// O(n) total: each vertex is visited exactly once per recursion level.
-/// The do...while(current!=first) loop terminates naturally when the
-/// walk returns to the starting vertex.  No done-flags needed —
-/// diagonal() is idempotent (clears trapezoid_idx on first call,
-/// returns FM_NONE on subsequent calls).
+/// O(n) total: the done flag (VertexNode::done) prevents revisiting
+/// vertices across recursive calls.  Each vertex has diagonal() called
+/// at most once globally — when the walk reaches a done vertex, it
+/// stops.  Between the two sub-polygon recursions the diagonal-endpoint
+/// done flags are reset (their linked-list adjacency changed, so their
+/// trapezoid classification may differ).  Total walk steps across all
+/// algo2 calls = O(n).
 void algo2(std::vector<VertexNode>& nodes,
            std::vector<Trapezoid>& traps,
            std::size_t first,
@@ -58,8 +60,12 @@ void algo2(std::vector<VertexNode>& nodes,
            std::vector<Triangle>& out) {
     std::size_t current = first;
 
-    // Walk the polygon looking for a Class B diagonal.
-    do {
+    // FM Algorithm 2: walk using done flags.
+    // The while condition exits when the current vertex is already done
+    // (either from this walk wrapping around, or from a parent's walk).
+    while (!nodes[current].done) {
+        nodes[current].done = true;
+
         std::size_t bottom = diagonal(nodes, traps, current);
         if (bottom != FM_NONE) {
             // Split the linked list into two disjoint sub-polygons
@@ -75,6 +81,13 @@ void algo2(std::vector<VertexNode>& nodes,
             nodes[bottom].prev  = current;
 
             algo2(nodes, traps, bottom, current, out);
+
+            // §FM Algorithm 2: reset done flags for the diagonal
+            // endpoints so they can be re-examined in sub-polygon 2
+            // (their linked-list adjacency changed, which may alter
+            // the Class A/B classification of their trapezoids).
+            nodes[current].done = false;
+            nodes[bottom].done = false;
 
             // --- Sub-polygon 2: current → save_next → … → bottom → current ---
             nodes[current].next = save_current_next;
@@ -99,7 +112,7 @@ void algo2(std::vector<VertexNode>& nodes,
         }
 
         current = nodes[current].next;
-    } while (current != first);
+    }
 
     // No Class B trapezoid found — polygon is unimonotone.
     triangulate_monotone(nodes, first, last, out);

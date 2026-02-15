@@ -29,6 +29,9 @@ struct ArcPiece {
 /// intervals.  Each interval corresponds to a chain at some grade λ' < λ
 /// whose canonical submap is available in grade_storage.
 ///
+/// O(log γ) total — each piece is computed in O(1) via bit manipulation,
+/// and there are at most O(log γ) pieces in the greedy decomposition.
+///
 /// @param start_vertex  First vertex index of the arc (inclusive).
 /// @param end_vertex    Past-the-end vertex index of the arc (exclusive).
 /// @param polygon       The polygon (for chain decomposition info).
@@ -45,20 +48,27 @@ cut_arc(std::size_t start_vertex, std::size_t end_vertex,
     // We greedily find the largest dyadic interval starting at `pos`.
     std::size_t pos = start_vertex;
     while (pos < end_vertex) {
-        // Find the largest power of 2 that:
-        //   1. Divides pos (so [pos, pos+2^k] is a valid chain boundary).
-        //   2. Doesn't exceed end_vertex (pos + 2^k ≤ end_vertex).
-        //   3. Doesn't exceed num_grades (valid grade).
         std::size_t remaining = end_vertex - pos;
-        std::size_t k = 0;
-        std::size_t len = 1;
 
-        while (len * 2 <= remaining &&
-               (pos % (len * 2)) == 0 &&
-               k + 1 <= polygon.num_grades()) {
-            len *= 2;
-            ++k;
-        }
+        // Find the largest k such that:
+        //   1. 2^k divides pos (alignment constraint).
+        //   2. 2^k ≤ remaining (doesn't overshoot end_vertex).
+        //   3. k ≤ num_grades (valid grade).
+        // Use bit manipulation for O(1):
+        //   max_k_alignment = number of trailing zeros of pos (if pos > 0),
+        //                     or a large number (if pos == 0, all k work).
+        //   max_k_remaining = floor(log2(remaining)).
+        std::size_t max_k_align = (pos == 0)
+            ? static_cast<std::size_t>(64)
+            : static_cast<std::size_t>(__builtin_ctzll(
+                  static_cast<unsigned long long>(pos)));
+        std::size_t max_k_fit = (remaining == 0)
+            ? static_cast<std::size_t>(0)
+            : static_cast<std::size_t>(63 - __builtin_clzll(
+                  static_cast<unsigned long long>(remaining)));
+        std::size_t k = std::min(max_k_align,
+                        std::min(max_k_fit, polygon.num_grades()));
+        std::size_t len = std::size_t(1) << k;
 
         ArcPiece piece;
         piece.grade = k;
