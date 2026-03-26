@@ -52,11 +52,20 @@ public:
             vertices_[vertex_index + 1]);
     }
 
+    /// [C91 §2.2]: Count nonnull-length edges in [lo, hi] inclusive.
+    /// O(1) via prefix sums.  Used to compute region weight: "the
+    /// maximum number of nonnull length edges in any of its arcs."
+    std::size_t count_nonnull_edges(std::size_t lo,
+                                     std::size_t hi) const noexcept;
+
 private:
     std::vector<Point> vertices_;
     std::vector<Edge>  edges_;
+    /// nonnull_prefix_[i] = number of nonnull-length edges in [0, i).
+    std::vector<std::size_t> nonnull_prefix_;
 
     void build_edges();
+    void build_nonnull_prefix();
 };
 
 } // namespace chazelle

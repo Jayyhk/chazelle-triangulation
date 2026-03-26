@@ -48,3 +48,27 @@ target_compile_options(2.1-tests PRIVATE
     -UNDEBUG
 )
 add_test(NAME 2.1-tests COMMAND 2.1-tests)
+
+add_executable(2.2-tests tests/2.2-tests.cpp ${LIB_SOURCES})
+target_include_directories(2.2-tests PRIVATE src)
+target_compile_options(2.2-tests PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
+    -UNDEBUG
+)
+add_test(NAME 2.2-tests COMMAND 2.2-tests)
+
+add_executable(2.3-tests tests/2.3-tests.cpp ${LIB_SOURCES})
+target_include_directories(2.3-tests PRIVATE src)
+target_compile_options(2.3-tests PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
+    -UNDEBUG
+)
+add_test(NAME 2.3-tests COMMAND 2.3-tests)
+
+add_executable(2.4-tests tests/2.4-tests.cpp ${LIB_SOURCES})
+target_include_directories(2.4-tests PRIVATE src)
+target_compile_options(2.4-tests PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
+    -UNDEBUG
+)
+add_test(NAME 2.4-tests COMMAND 2.4-tests)
