@@ -15,3 +15,28 @@ target_include_directories(chazelle PRIVATE src)
 target_compile_options(chazelle PRIVATE
     -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
 )
+
+# --- Tests ---
+enable_testing()
+
+# Collect library sources (everything except main.cpp)
+file(GLOB_RECURSE LIB_SOURCES src/*.cpp)
+list(FILTER LIB_SOURCES EXCLUDE REGEX "src/main\\.cpp$")
+
+function(add_chazelle_test NAME)
+    add_executable(${NAME} tests/${NAME}.cpp ${LIB_SOURCES})
+    target_include_directories(${NAME} PRIVATE src)
+    target_compile_options(${NAME} PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
+        -UNDEBUG
+    )
+    add_test(NAME ${NAME} COMMAND ${NAME})
+endfunction()
+
+add_executable(2.0-tests tests/2.0-tests.cpp ${LIB_SOURCES})
+target_include_directories(2.0-tests PRIVATE src)
+target_compile_options(2.0-tests PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
+    -UNDEBUG
+)
+add_test(NAME 2.0-tests COMMAND 2.0-tests)

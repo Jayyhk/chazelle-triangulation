@@ -51,6 +51,16 @@ inline bool symbolic_y_leq(SymbolicY a, SymbolicY b) noexcept {
     return !symbolic_y_less(b, a);
 }
 
+/// True if a's perturbed y is strictly greater than b's.
+inline bool symbolic_y_greater(SymbolicY a, SymbolicY b) noexcept {
+    return symbolic_y_less(b, a);
+}
+
+/// True if a's perturbed y is greater than or equal to b's.
+inline bool symbolic_y_geq(SymbolicY a, SymbolicY b) noexcept {
+    return !symbolic_y_less(a, b);
+}
+
 /// True if a and b represent the identical symbolic y-coordinate.
 inline bool symbolic_y_equal(SymbolicY a, SymbolicY b) noexcept {
     return a.y == b.y && a.tag == b.tag;
@@ -73,6 +83,11 @@ inline SymbolicY symbolic_y_of(const Point& p) noexcept {
 /// True if point a's perturbed y is strictly below point b's.
 inline bool point_y_below(const Point& a, const Point& b) noexcept {
     return symbolic_y_less(symbolic_y_of(a), symbolic_y_of(b));
+}
+
+/// True if point a's perturbed y is strictly above point b's.
+inline bool point_y_above(const Point& a, const Point& b) noexcept {
+    return symbolic_y_less(symbolic_y_of(b), symbolic_y_of(a));
 }
 
 /// -1 if a below b, +1 if a above b, 0 if same vertex.
