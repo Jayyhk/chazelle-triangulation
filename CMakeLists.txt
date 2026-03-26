@@ -40,3 +40,11 @@ target_compile_options(2.0-tests PRIVATE
     -UNDEBUG
 )
 add_test(NAME 2.0-tests COMMAND 2.0-tests)
+
+add_executable(2.1-tests tests/2.1-tests.cpp ${LIB_SOURCES})
+target_include_directories(2.1-tests PRIVATE src)
+target_compile_options(2.1-tests PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
+    -UNDEBUG
+)
+add_test(NAME 2.1-tests COMMAND 2.1-tests)

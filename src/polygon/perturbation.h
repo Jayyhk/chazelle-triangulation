@@ -95,4 +95,36 @@ inline int point_y_order(const Point& a, const Point& b) noexcept {
     return symbolic_y_compare(symbolic_y_of(a), symbolic_y_of(b));
 }
 
+// ── Local y-extremum classification ([C91 §2.1]) ───────────────
+//
+// [C91 §2.1]: "Each vertex of C that is not a local extremum in the
+// y-direction gives rise to two companion vertices in ∂C...
+// But what about local extrema? For each such vertex of C, if it is
+// not one of the two endpoints, we create a total of four vertices
+// in ∂C."
+//
+// These tests determine which case applies (Fig. 2.2):
+//   Case 1 (non-extremum): 2 ∂C vertices
+//   Case 2 (y-extremum, non-endpoint): 4 ∂C vertices + NLC
+//   Case 3 (endpoint): 2 ∂C vertices (duplicates)
+
+/// True if curr is a local y-minimum (strictly below both neighbors).
+inline bool is_local_y_minimum(const Point& prev, const Point& curr,
+                               const Point& next) noexcept {
+    return point_y_below(curr, prev) && point_y_below(curr, next);
+}
+
+/// True if curr is a local y-maximum (strictly above both neighbors).
+inline bool is_local_y_maximum(const Point& prev, const Point& curr,
+                               const Point& next) noexcept {
+    return point_y_above(curr, prev) && point_y_above(curr, next);
+}
+
+/// True if curr is a local y-extremum (minimum or maximum).
+inline bool is_local_y_extremum(const Point& prev, const Point& curr,
+                                const Point& next) noexcept {
+    return is_local_y_minimum(prev, curr, next) ||
+           is_local_y_maximum(prev, curr, next);
+}
+
 } // namespace chazelle
