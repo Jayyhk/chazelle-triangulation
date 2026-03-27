@@ -17,6 +17,10 @@ void TreeDecomposition::build(const Submap& submap) {
     assert(submap.is_conformal() &&
            "§2.4(iv): tree decomposition requires conformal submap");
 
+    // [C91 §2.3] (tex 114): tree decomposition requires ≥ 1 region.
+    assert(submap.num_nodes() >= 1 &&
+           "§2.3: submap must have at least one region");
+
     // Precondition: submap must be compacted (no dead entries).
     // build() indexes into nodes_/chords_ directly — dead entries
     // would produce a wrong decomposition.
@@ -230,9 +234,9 @@ std::size_t TreeDecomposition::decompose(
     nodes_[td_idx].left_child = left_td;
     nodes_[td_idx].right_child = right_td;
 
-    // Clean up buffer entries we wrote — O(n_local).
-    for (std::size_t i = 0; i < regions.size(); ++i)
-        region_local[regions[i]] = NONE;
+    // No explicit cleanup needed: left_regions ∪ right_regions =
+    // regions, and each child call already reset its entries to NONE.
+    // The buffer is self-cleaning through the recursive structure.
 
     return td_idx;
 }

@@ -86,6 +86,11 @@ std::size_t Submap::add_chord(Chord chord) {
     check_adj(chord.left_adj);
     check_adj(chord.right_adj);
 
+    // [C91 §2.2] (tex 102): dual graph is a tree — no self-loops.
+    assert(chord.region[0] != chord.region[1] &&
+           "§2.2: chord must connect two distinct regions "
+           "(tree, no self-loops)");
+
     chords_.push_back(chord);
 
     // [C91 §2.4(i)]: Update adjacency — each region knows its
@@ -166,6 +171,7 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
 
         // Tombstone the dead arc.
         a_dead.dead = true;
+        compacted_ = false;  // arc-sequence has dead entries now
 
         // Update adj arcs of neighboring chords to point to the
         // surviving arc.  O(degree) = O(1) for conformal submaps.
@@ -184,10 +190,20 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         }
     };
 
-    if (!left_is_vertex && c.left_adj.count == 2)
+    if (!left_is_vertex) {
+        // [C91 §2.2] (tex 94): a non-vertex chord endpoint always has
+        // exactly 2 adjacent arcs (one ending, one starting) to be glued.
+        assert(c.left_adj.count == 2 &&
+               "§2.2 (tex 94): non-vertex chord endpoint must have "
+               "exactly 2 adjacent arcs for glueing");
         do_merge(c.left_adj.arcs[0], c.left_adj.arcs[1]);
-    if (!right_is_vertex && c.right_adj.count == 2)
+    }
+    if (!right_is_vertex) {
+        assert(c.right_adj.count == 2 &&
+               "§2.2 (tex 94): non-vertex chord endpoint must have "
+               "exactly 2 adjacent arcs for glueing");
         do_merge(c.right_adj.arcs[0], c.right_adj.arcs[1]);
+    }
 
     // Reassign r1's arcs to r0.  Use chord→arc adjacency for O(1).
     // [C91 §2.4(ii)] (tex 137): traverse r1's incident chords' adj arcs.
@@ -340,6 +356,9 @@ void Submap::compact() {
         if (arc_sequence_[i].first_side == LEFT)
             left_right_boundary_ = i + 1;
     }
+
+    // [C91 §2.4] (tex 144): arc-sequence is now free of dead entries.
+    compacted_ = true;
 }
 
 // ── Live counts ─────────────────────────────────────────────────
@@ -464,9 +483,18 @@ void Submap::check_invariants() const {
         assert(start_vertex != NONE &&
                "§2.4(iii): start_vertex must be set when arcs exist");
         {
+            // [C91 §2.4(iii)]: start_arc must pass through C's
+            // start vertex.  Vertex v is on arc [first_edge, last_edge]
+            // iff edge v-1 or edge v is in the arc's range (v is the
+            // start of edge v and the end of edge v-1).
+            // For edge-index convention: vertex v ∈ arc iff
+            //   first_edge ≤ v ≤ last_edge  (v starts edge v in range)
+            //   OR v == first_edge  (v is the start of the first edge)
+            // Simplified: first_edge ≤ v ≤ last_edge + 1 for non-wrapped.
+            // For wrapped arcs, extend to C endpoint.
             const auto& sa = arc_sequence_[start_arc];
             std::size_t elo = std::min(sa.first_edge, sa.last_edge);
-            std::size_t ehi = std::max(sa.first_edge, sa.last_edge);
+            std::size_t ehi = std::max(sa.first_edge, sa.last_edge) + 1;
             if (sa.first_side != sa.last_side)
                 elo = std::min(elo, start_vertex);
             assert(start_vertex >= elo && start_vertex <= ehi &&
@@ -477,6 +505,9 @@ void Submap::check_invariants() const {
         assert(end_vertex != NONE && end_vertex > 0 &&
                "§2.4(iii): end_vertex must be set when arcs exist");
         {
+            // [C91 §2.4(iii)]: end_arc must pass through C's end
+            // vertex.  end_vertex is the last vertex of C; the last
+            // edge of C is end_vertex - 1.
             const auto& ea = arc_sequence_[end_arc];
             std::size_t c_end_edge = end_vertex - 1;
             std::size_t elo = std::min(ea.first_edge, ea.last_edge);
@@ -502,10 +533,9 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
     // The binary search assumes a contiguous sorted table; dead
     // gaps would make the expansion O(k) instead of O(1), violating
     // the paper's O(log m) bound (§2.4 tex 144).
-    // NOTE: num_live_arcs() is O(m), dominating the O(log m) search
-    // in debug builds.  If this becomes a bottleneck, replace with a
-    // bool has_dead_arcs_ flag maintained by remove_chord/compact.
-    assert(num_live_arcs() == arc_sequence_.size() &&
+    // O(1) flag check — maintained by remove_chord (sets false) and
+    // compact() (sets true).
+    assert(compacted_ &&
            "§2.4: double_identify requires compacted arc-sequence");
 
     // [C91 §2] (tex 47): SoS perturbation [10] ensures every point

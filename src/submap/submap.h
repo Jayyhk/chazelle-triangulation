@@ -206,6 +206,11 @@ private:
     /// Enables O(1) LEFT/RIGHT split for double_identify (§2.4 tex 144:
     /// "logarithmic in the number of arcs").
     std::size_t left_right_boundary_ = 0;
+
+    /// [C91 §2.4] (tex 144): double_identify requires a compacted
+    /// arc-sequence (no dead arcs).  Maintained as O(1) flag instead
+    /// of O(m) scan per call to preserve the paper's O(log m) bound.
+    bool compacted_ = true;
 };
 
 } // namespace chazelle

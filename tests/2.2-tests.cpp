@@ -324,104 +324,142 @@ static void test_remove_chord_no_merge_at_vertex() {
     std::printf("  [PASS] remove_chord_no_merge_at_vertex\n");
 }
 
+
 // ════════════════════════════════════════════════════════════════
-//  8c. remove_chord with 2 adj_arcs (1 per endpoint) — NO merge
+//  8c. remove_chord with 2 adj_arcs (chord at C's start vertex)
 // ════════════════════════════════════════════════════════════════
 
 static void test_remove_chord_2_adj_arcs() {
     // [C91 §2.4(ii)]: "two... arcs adjacent to it."
-    // 2 adj_arcs = 1 per endpoint.  No merging should happen
-    // (each endpoint has only 1 arc — nothing to merge with).
+    // Total adj_arcs = 2 happens only when both endpoints are at
+    // C's start or end vertex, where only 1 arc exists per side.
+    // Both endpoints are polygon vertices → no merging.
     Submap s;
-    s.add_node(); // r0
-    s.add_node(); // r1
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
 
     Arc a;
-    // r0: single LEFT arc spanning edges 0-1
+    // Region r0: arcs near C's start (edges 0-1)
     a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 2;
+    a.region_node = r0; a.edge_count = 2; a.key_y = 0.0; a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
-    // r1: single LEFT arc on edge 2
-    a = {}; a.first_edge = 2; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 1; a.edge_count = 1;
+
+    // Region r1: arcs away from C's start (edges 2-3)
+    a = {}; a.first_edge = 2; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r1; a.edge_count = 2; a.key_y = 2.0; a.key_y_tag = 2;
     std::size_t ai1 = s.add_arc(a);
-    // RIGHT arcs
-    a = {}; a.first_edge = 2; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 0; a.edge_count = 3;
+
+    // RIGHT arcs (descending first_edge)
+    a = {}; a.first_edge = 3; a.last_edge = 2; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r1; a.edge_count = 2; a.key_y = 3.0; a.key_y_tag = 3;
     s.add_arc(a);
 
+    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = 2; a.key_y = 1.0; a.key_y_tag = 1;
+    std::size_t ai3 = s.add_arc(a);
+
+    // Chord at vertex 0 (C's start): y=0, tag=0 matches vertex 0.
+    // LEFT endpoint on edge 0: only a0 starts here → count=1.
+    // RIGHT endpoint on edge 0: only a3 ends here → count=1.
     Chord c;
-    c.region[0] = 0; c.region[1] = 1;
-    c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
-    c.left_edge = 1; c.right_edge = 2;
-    c.left_side = LEFT; c.right_side = LEFT;
-    c.y = 1.5; c.y_tag = 99;
+    c.region[0] = r0; c.region[1] = r1;
+    c.left_adj = {{ai0}, 1}; c.right_adj = {{ai3}, 1};
+    c.left_edge = 0; c.right_edge = 0;
+    c.left_side = LEFT; c.right_side = RIGHT;
+    c.y = 0.0; c.y_tag = 0;
     s.add_chord(c);
+
+    s.start_arc = ai0;
+    s.end_arc = ai1;
+    s.start_vertex = 0;
+    s.end_vertex = 4;
 
     auto poly = test_polygon();
     s.remove_chord(0, poly);
 
-    // No arcs should be killed — 2 adj_arcs means 1 per
-    // endpoint, no pairs to merge.
-    assert(s.num_live_arcs() == 3 &&
-           "2 adj_arcs: no arc should be killed");
-    // Original edge counts preserved (arcs 0 and 1 are live).
-    assert(!s.arc(0).dead && s.arc(0).edge_count == 2);
-    assert(!s.arc(1).dead && s.arc(1).edge_count == 1);
-
+    // Both endpoints are polygon vertices → no arcs merged.
+    assert(s.num_live_arcs() == 4 &&
+           "2 adj_arcs at C's start: no arc should be killed");
+    for (std::size_t i = 0; i < s.num_arcs(); ++i) {
+        if (s.arc(i).dead) continue;
+        assert(s.arc(i).edge_count == 2);
+    }
     s.assert_tree_property();
 
     std::printf("  [PASS] remove_chord_2_adj_arcs\n");
 }
 
 // ════════════════════════════════════════════════════════════════
-//  8d. remove_chord with 3 adj_arcs — merge only the 2-arc pair
+//  8d. remove_chord with 3 adj_arcs (1 at C's start, 2 at non-vertex)
 // ════════════════════════════════════════════════════════════════
+
+// Non-monotone polygon: y=0 at v0 also intersects edge 2 on the
+// RIGHT side (interior), giving count=1 on LEFT + count=2 on RIGHT.
+static Polygon non_monotone_polygon() {
+    return Polygon({
+        {0, 0, 0}, {10, 10, 1}, {20, -5, 2}, {30, 5, 3}, {40, 15, 4}
+    });
+}
 
 static void test_remove_chord_3_adj_arcs() {
     // [C91 §2.4(ii)]: "three... arcs adjacent to it."
-    // 3 adj_arcs = 2 at one endpoint (merge), 1 at the other (no merge).
+    // LEFT endpoint at vertex 0 (C's start) → count=1, vertex, no merge.
+    // RIGHT endpoint at y=0 on edge 2 (non-vertex) → count=2, merge.
     Submap s;
-    s.add_node(); // r0
-    s.add_node(); // r1
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
 
     Arc a;
-    // Two LEFT arcs at the left endpoint (edge 1, LEFT side)
-    a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 2;
+    // Region r0: LEFT arc spanning entire LEFT side (edges 0-3)
+    a = {}; a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 4; a.key_y = 0.0; a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
-    a = {}; a.first_edge = 1; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 1; a.edge_count = 2;
+
+    // Region r0: RIGHT arc from v4 to P (edges 3-2 on RIGHT)
+    a = {}; a.first_edge = 3; a.last_edge = 2; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = 2; a.key_y = 15.0; a.key_y_tag = 4;
     std::size_t ai1 = s.add_arc(a);
-    // One RIGHT arc at the right endpoint (edge 2, RIGHT side)
+
+    // Region r1: RIGHT arc from P to v0 (edges 2-0 on RIGHT)
     a = {}; a.first_edge = 2; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 0; a.edge_count = 3;
+    a.region_node = r1; a.edge_count = 3; a.key_y = 0.0; a.key_y_tag = 100;
     std::size_t ai2 = s.add_arc(a);
 
+    // Chord at y=0, tag=0.
+    // LEFT endpoint on edge 0 → vertex 0 (match), count=1.
+    // RIGHT endpoint on edge 2 → v2(y=-5,tag=2) and v3(y=5,tag=3),
+    //   neither matches (0.0, 0), so non-vertex, count=2.
     Chord c;
-    c.region[0] = 0; c.region[1] = 1;
-    // Left endpoint: edge 1, LEFT — has 2 arcs (ai0, ai1), non-vertex
-    c.left_adj = {{ai0, ai1}, 2};
-    c.left_edge = 1; c.left_side = LEFT;
-    // Right endpoint: edge 2, RIGHT — has 1 arc (ai2)
-    c.right_adj = {{ai2}, 1};
+    c.region[0] = r0; c.region[1] = r1;
+    c.left_adj = {{ai0}, 1};
+    c.right_adj = {{ai1, ai2}, 2};
+    c.left_edge = 0; c.left_side = LEFT;
     c.right_edge = 2; c.right_side = RIGHT;
-    c.y = 1.5; c.y_tag = 99;
+    c.y = 0.0; c.y_tag = 0;
     s.add_chord(c);
 
-    auto poly = test_polygon();
+    s.start_arc = ai0;
+    s.end_arc = ai0;
+    s.start_vertex = 0;
+    s.end_vertex = 4;
+
+    auto poly = non_monotone_polygon();
     s.remove_chord(0, poly);
 
-    // The 2-arc pair at the left endpoint should merge (2+2-1=3).
-    // The 1-arc at the right endpoint should NOT merge.
-    // Dead arc tombstoned → 2 live arcs remain.
+    // LEFT: vertex endpoint → no merge. a0 survives (ec=4).
+    // RIGHT: non-vertex → merge a1+a2. shared_edge=2, nonnull=1.
+    //   merged_count = 2 + 3 - 1 = 4.
     assert(s.num_live_arcs() == 2 && "3 adj_arcs: 2 live arcs remain");
-    bool found_merged = false;
+    bool found_left = false, found_merged = false;
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
-        if (s.arc(i).edge_count == 3) found_merged = true;
+        if (s.arc(i).first_side == LEFT && s.arc(i).edge_count == 4)
+            found_left = true;
+        if (s.arc(i).first_side == RIGHT && s.arc(i).edge_count == 4)
+            found_merged = true;
     }
-    assert(found_merged && "3 adj_arcs: 2-arc pair should merge (2+2-1=3)");
+    assert(found_left && "LEFT arc should survive unmerged (ec=4)");
+    assert(found_merged && "RIGHT arcs should merge (2+3-1=4)");
 
     s.assert_tree_property();
 
