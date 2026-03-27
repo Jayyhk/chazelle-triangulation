@@ -134,7 +134,8 @@ public:
     };
 
     DoubleIdentifyResult double_identify(std::size_t edge_idx,
-                                          SymbolicY y) const;
+                                          SymbolicY y,
+                                          const class Polygon& polygon) const;
 
     // ── §2.2 / §2.3: Submap properties ─────────────────────────
 

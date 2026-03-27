@@ -1,11 +1,21 @@
 /// tests/2.4-tests.cpp — Tests for §2.4: representation, double identification.
 
 #include "submap/submap.h"
+#include "polygon/polygon.h"
 
 #include <cassert>
 #include <cstdio>
 
 using namespace chazelle;
+
+// Zigzag polygon with both ascending and descending edges.
+// Edges: 0(up), 1(down), 2(up), 3(down).  5 vertices, 4 edges.
+// Distinct y-coordinates and distinct indices for SoS.
+static Polygon test_polygon() {
+    return Polygon({
+        {0,0,0}, {1,3,1}, {2,1,2}, {3,4,3}, {4,2,4}
+    });
+}
 
 // ════════════════════════════════════════════════════════════════
 //  1. double_identify — single arc per side, no ambiguity
@@ -28,7 +38,8 @@ static void test_double_identify_simple() {
     s.start_arc = ai0; s.end_arc = ai1;
     s.start_vertex = 0; s.end_vertex = 1;
 
-    auto result = s.double_identify(0, {0.0, 0});
+    auto poly = test_polygon();
+    auto result = s.double_identify(0, {0.0, 0}, poly);
     assert(result.count == 2);
 
     std::printf("  [PASS] double_identify_simple\n");
@@ -54,13 +65,14 @@ static void test_double_identify_multi_edge() {
     s.start_arc = ai0; s.end_arc = ai1;
     s.start_vertex = 0; s.end_vertex = 4;
 
-    auto r = s.double_identify(2, {1.5, 0});
+    auto poly = test_polygon();
+    auto r = s.double_identify(2, {1.5, 0}, poly);
     assert(r.count == 2);
 
-    r = s.double_identify(0, {0.0, 0});
+    r = s.double_identify(0, {0.0, 0}, poly);
     assert(r.count == 2);
 
-    r = s.double_identify(5, {0.0, 0});
+    r = s.double_identify(5, {0.0, 0}, poly);
     assert(r.count == 0);
 
     std::printf("  [PASS] double_identify_multi_edge\n");
@@ -99,7 +111,8 @@ static void test_double_identify_same_edge() {
     s.start_arc = ai0; s.end_arc = ai_last;
     s.start_vertex = 0; s.end_vertex = 2;
 
-    auto r = s.double_identify(1, {1.5, 0});
+    auto poly = test_polygon();
+    auto r = s.double_identify(1, {1.5, 0}, poly);
     assert(r.count >= 2);
 
     std::printf("  [PASS] double_identify_same_edge\n");
@@ -202,7 +215,8 @@ static void test_double_identify_worst_case() {
     s.start_arc = ai0; s.end_arc = ai_last;
     s.start_vertex = 0; s.end_vertex = 2;
 
-    auto r = s.double_identify(1, {1.0, 1});
+    auto poly = test_polygon();
+    auto r = s.double_identify(1, {1.0, 1}, poly);
     assert(r.count >= 4 && r.count <= 6);
     assert(r.count <= Submap::DoubleIdentifyResult::MAX);
 
@@ -228,7 +242,8 @@ static void test_double_identify_miss() {
     s.start_arc = ai0; s.end_arc = ai1;
     s.start_vertex = 0; s.end_vertex = 1;
 
-    auto r = s.double_identify(5, {0.0, 0});
+    auto poly = test_polygon();
+    auto r = s.double_identify(5, {0.0, 0}, poly);
     assert(r.count == 0);
 
     std::printf("  [PASS] double_identify_miss\n");

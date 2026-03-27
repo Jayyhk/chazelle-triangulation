@@ -493,7 +493,8 @@ void Submap::check_invariants() const {
 // ── Double identification ───────────────────────────────────────
 
 Submap::DoubleIdentifyResult
-Submap::double_identify(std::size_t edge_idx, SymbolicY y) const {
+Submap::double_identify(std::size_t edge_idx, SymbolicY y,
+                         const Polygon& polygon) const {
     DoubleIdentifyResult result;
     if (arc_sequence_.empty()) return result;
 
@@ -529,12 +530,22 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y) const {
     std::size_t right_begin = left_end;
     std::size_t right_end   = arc_sequence_.size();
 
-    // Binary search helper: find an arc whose edge range contains
-    // edge_idx, then expand to collect all such arcs.
+    // [C91 §2.4] (tex 144): Two-phase binary search.
+    //
+    // Phase 1: binary search by first_edge → find the contiguous
+    //   interval of arcs starting at edge_idx.  O(log m).
+    // Phase 2: binary search by key_y within that interval → find
+    //   the arc(s) containing query y.  O(log k) ≤ O(log m).
+    // Plus O(1) check for a boundary arc (first_edge < edge_idx
+    //   but last_edge ≥ edge_idx) at the interval's left neighbor.
+    //
+    // Total: O(log m).
     auto search_half = [&](std::size_t lo, std::size_t hi, bool ascending) {
         if (lo >= hi) return;
 
-        // Binary search for an arc whose first_edge is close to edge_idx.
+        // ── Phase 1: binary search by first_edge ─────────────────
+        // Find blo = first arc with first_edge >= edge_idx (ascending)
+        //   or first arc with first_edge <= edge_idx (descending).
         std::size_t blo = lo, bhi = hi;
         while (blo < bhi) {
             std::size_t mid = blo + (bhi - blo) / 2;
@@ -551,21 +562,34 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y) const {
             }
         }
 
-        // Expand around blo to collect all arcs containing edge_idx.
+        // Find the end of the same-first_edge interval: bend = first
+        // arc with first_edge != edge_idx after blo.  O(log m).
+        std::size_t bend = blo;
+        if (bend < hi && arc_sequence_[bend].first_edge == edge_idx) {
+            std::size_t slo = blo, shi = hi;
+            while (slo < shi) {
+                std::size_t mid = slo + (shi - slo) / 2;
+                if (arc_sequence_[mid].first_edge == edge_idx)
+                    slo = mid + 1;
+                else
+                    shi = mid;
+            }
+            bend = slo;
+        }
+
         // [C91 §2.4] (tex 142): "caution must be used since an arc
         // might wrap around both sides of C, something we call
-        // double-backing."  Wrapped arcs (first_side ≠ last_side)
-        // sit at start_arc/end_arc — the boundary of each half —
-        // so the binary search expansion naturally reaches them.
+        // double-backing."  Check for at most one boundary arc at
+        // blo-1 whose edge range contains edge_idx despite having
+        // a different first_edge.  O(1).
         auto arc_contains_edge = [&](std::size_t ai) -> bool {
             const auto& a = arc_sequence_[ai];
             if (a.dead) return false;
             std::size_t elo = std::min(a.first_edge, a.last_edge);
             std::size_t ehi = std::max(a.first_edge, a.last_edge);
             if (a.first_side != a.last_side) {
-                if (ai == start_arc) {
+                if (ai == start_arc)
                     elo = std::min(elo, start_vertex);
-                }
                 if (ai == end_arc) {
                     std::size_t c_end_edge =
                         (end_vertex > 0) ? end_vertex - 1 : 0;
@@ -575,96 +599,175 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y) const {
             return edge_idx >= elo && edge_idx <= ehi;
         };
 
-        // Collect candidate arcs (same edge) into a local buffer,
-        // then disambiguate by y if needed.
-        std::size_t candidates[DoubleIdentifyResult::MAX];
-        std::size_t num_cand = 0;
+        std::size_t boundary_arc = NONE;
+        if (blo > lo && arc_contains_edge(blo - 1))
+            boundary_arc = blo - 1;
 
-        if (blo > lo) {
-            for (std::size_t i = blo; i-- > lo; ) {
-                if (arc_contains_edge(i)) {
-                    if (num_cand < DoubleIdentifyResult::MAX)
-                        candidates[num_cand++] = i;
-                } else if (!arc_sequence_[i].dead) break;
-                // Skip dead arcs but don't break — the next live
-                // arc might still contain the edge.
+        std::size_t interval_len = bend - blo;
+
+        // No arcs on this edge in this half.
+        if (interval_len == 0 && boundary_arc == NONE)
+            return;
+
+        // Single arc (either the interval or boundary): no y-disambiguation.
+        if (interval_len == 0) {
+            result.push(boundary_arc);
+            return;
+        }
+        if (interval_len == 1 && boundary_arc == NONE) {
+            result.push(blo);
+            return;
+        }
+        // Two arcs: one interval + one boundary.  Can't detect key_y
+        // direction from a single interval arc, so use the edge's
+        // geometric y-direction from the Polygon.
+        // The junction is at the interval arc's key_y.  Together the
+        // two arcs cover the entire edge.
+        if (interval_len == 1 && boundary_arc != NONE) {
+            SymbolicY junction_y = arc_sequence_[blo].key_symbolic_y();
+            if (symbolic_y_equal(junction_y, y)) {
+                // At the junction: both arcs pass through.
+                result.push(blo);
+                result.push(boundary_arc);
+            } else {
+                // y is strictly on one side of the junction.
+                // The boundary arc comes BEFORE the interval arc in
+                // ∂C traversal (it's at blo-1).  On the LEFT half,
+                // ∂C traversal follows the edge from start→end vertex.
+                // The boundary arc covers [edge_start_y, junction_y]
+                // and the interval arc covers [junction_y, edge_end_y]
+                // (in traversal direction).
+                //
+                // Determine the edge's y-direction from the Polygon.
+                assert(edge_idx < polygon.num_edges());
+                const auto& e = polygon.edge(edge_idx);
+                SymbolicY start_y = symbolic_y_of(polygon.vertex(e.start_idx));
+                bool edge_ascending = symbolic_y_less(start_y,
+                    symbolic_y_of(polygon.vertex(e.end_idx)));
+                // On the LEFT half, ∂C goes start→end (same as edge).
+                // On the RIGHT half, ∂C goes end→start (reversed).
+                bool traversal_ascending = ascending ? edge_ascending
+                                                     : !edge_ascending;
+                // Boundary arc is on the "start" side of junction_y.
+                bool y_in_boundary = traversal_ascending
+                    ? symbolic_y_less(y, junction_y)
+                    : symbolic_y_greater(y, junction_y);
+                if (y_in_boundary)
+                    result.push(boundary_arc);
+                else
+                    result.push(blo);
             }
-        }
-        for (std::size_t i = blo; i < hi; ++i) {
-            if (arc_contains_edge(i)) {
-                if (num_cand < DoubleIdentifyResult::MAX)
-                    candidates[num_cand++] = i;
-            } else if (!arc_sequence_[i].dead) break;
+            return;
         }
 
+        // ── Phase 2: binary search by key_y ──────────────────────
         // [C91 §2.4] (tex 144): "We can disambiguate by pursuing the
         // binary search, now using, say, the y-coordinate of q as a
         // query."
         //
-        // Each arc's y-range spans from its key_y to the next arc's
-        // key_y.  The first candidate's range extends to the edge
-        // boundary below; the last extends to the edge boundary above
-        // (ascending LEFT; reversed for RIGHT).  At a key_y boundary,
-        // both adjacent arcs pass through the point.
-        if (num_cand == 1) {
-            // Single candidate: no disambiguation needed.
-            if (result.count < DoubleIdentifyResult::MAX)
-                result.push(candidates[0]);
-        } else {
-            // ≥ 2 candidates on the same edge: disambiguate by y.
-            for (std::size_t ci = 0; ci < num_cand; ++ci) {
-                std::size_t ai = candidates[ci];
-                const auto& a = arc_sequence_[ai];
-                SymbolicY this_y = a.key_symbolic_y();
+        // The key_y direction within a single edge follows the ∂C
+        // traversal, which depends on the edge's geometric y-direction
+        // (tex 138), NOT on the LEFT/RIGHT half.  Determine it from
+        // the interval endpoints.
+        bool keys_ascending = (interval_len >= 2) &&
+            symbolic_y_leq(arc_sequence_[blo].key_symbolic_y(),
+                           arc_sequence_[bend - 1].key_symbolic_y());
 
-                // Exact match: point is at this arc's boundary —
-                // the arc passes through q.
-                if (symbolic_y_equal(this_y, y)) {
-                    if (result.count < DoubleIdentifyResult::MAX)
-                        result.push(ai);
-                    continue;
+        // Binary search within [blo, bend) for the arc whose key_y
+        // range contains y.  O(log k).
+        //
+        // For ascending key_y: find the last arc with key_y <= y.
+        // For descending key_y: find the last arc with key_y >= y.
+        // The arc at that position (and possibly its neighbor at a
+        // key_y boundary) contains the query point.
+        std::size_t ylo = blo, yhi = bend;
+        while (ylo < yhi) {
+            std::size_t mid = ylo + (yhi - ylo) / 2;
+            SymbolicY mid_y = arc_sequence_[mid].key_symbolic_y();
+            if (keys_ascending) {
+                // Find last arc with key_y <= y: go right if mid <= y.
+                if (symbolic_y_leq(mid_y, y))
+                    ylo = mid + 1;
+                else
+                    yhi = mid;
+            } else {
+                // Find last arc with key_y >= y: go right if mid >= y.
+                if (symbolic_y_geq(mid_y, y))
+                    ylo = mid + 1;
+                else
+                    yhi = mid;
+            }
+        }
+        // ylo = first arc PAST the query position.
+        // The arc containing y is at p = ylo-1 (if it exists).
+        // If y exactly matches key_y[p], arc p-1 also passes through
+        // (its range ends at that boundary).  Scan backward for
+        // consecutive equal key_y (NLC case).  O(1) bounded by the
+        // paper's max 6 arcs at any point (§2.4 tex 144).
+
+        if (ylo > blo) {
+            std::size_t p = ylo - 1;
+            result.push(p);
+            // At a chord boundary (y == key_y[p]), the predecessor
+            // arc's range ends at this y, so it also passes through.
+            // Continue backward through any consecutive equal key_y
+            // (NLC duplicates at the same y).
+            if (symbolic_y_equal(arc_sequence_[p].key_symbolic_y(), y)
+                && p > blo) {
+                result.push(p - 1);
+                // Scan further only if the predecessor also has the
+                // same key_y (NLC case, §2.4 tex 144: at most 6).
+                for (std::size_t i = p - 1; i > blo; --i) {
+                    if (!symbolic_y_equal(
+                            arc_sequence_[i].key_symbolic_y(), y))
+                        break;
+                    result.push(i - 1);
                 }
+            }
+        } else if (boundary_arc == NONE) {
+            // y is before the first arc's key_y and no boundary arc
+            // exists → first interval arc's range extends to the edge
+            // boundary, so it covers y.
+            result.push(blo);
+            // (If boundary_arc exists, it covers this region instead
+            // and is handled below.)
+        }
 
-                // Determine the arc's y-range by looking at its
-                // neighbors in the candidate list.
-                bool has_prev = (ci > 0);
-                bool has_next = (ci + 1 < num_cand);
-                SymbolicY next_y = has_next
-                    ? arc_sequence_[candidates[ci + 1]].key_symbolic_y()
-                    : SymbolicY{};
-
-                bool in_range;
-                if (ascending) {
-                    // LEFT: range is [this_y, next_y).
-                    // First arc: (-∞, next_y).  Last arc: [this_y, +∞).
-                    bool above_lo = !has_prev ||
-                        symbolic_y_geq(y, this_y);
-                    bool below_hi = !has_next ||
-                        symbolic_y_leq(y, next_y);
-                    in_range = above_lo && below_hi;
-                } else {
-                    // RIGHT: range is [next_y, this_y).
-                    // First arc: (this_y, +∞).  Last arc: (-∞, this_y].
-                    bool below_hi = !has_prev ||
-                        symbolic_y_leq(y, this_y);
-                    bool above_lo = !has_next ||
-                        symbolic_y_geq(y, next_y);
-                    in_range = above_lo && below_hi;
-                }
-
-                if (in_range) {
-                    if (result.count < DoubleIdentifyResult::MAX)
-                        result.push(ai);
-                }
+        // Boundary arc: if it exists, it always contains edge_idx.
+        // Its y-range spans from its key_y to the first interval arc's
+        // key_y.  Check whether y falls in that range.  O(1).
+        if (boundary_arc != NONE) {
+            SymbolicY b_y = arc_sequence_[boundary_arc].key_symbolic_y();
+            if (symbolic_y_equal(b_y, y)) {
+                result.push(boundary_arc);
+            } else {
+                // The boundary arc's range is from the edge start to
+                // the first interval arc's key_y (inclusive — at the
+                // boundary, both the boundary arc and the first
+                // interval arc pass through the point).
+                SymbolicY first_y = arc_sequence_[blo].key_symbolic_y();
+                bool in_boundary = keys_ascending
+                    ? symbolic_y_leq(y, first_y)
+                    : symbolic_y_geq(y, first_y);
+                if (in_boundary)
+                    result.push(boundary_arc);
             }
         }
     };
 
     // [C91 §2.4]: LEFT half — ascending first_edge.
     search_half(left_begin, left_end, /*ascending=*/true);
+    assert(result.count <= 3 &&
+           "§2.4: at most 3 arcs per ∂C half at any point "
+           "(tex 144: worst case = arc + NLC + arc at y-extremum)");
 
     // [C91 §2.4]: RIGHT half — descending first_edge.
+    std::size_t left_count = result.count;
     search_half(right_begin, right_end, /*ascending=*/false);
+    assert(result.count - left_count <= 3 &&
+           "§2.4: at most 3 arcs per ∂C half at any point");
+    assert(result.count <= DoubleIdentifyResult::MAX &&
+           "§2.4: at most 6 arcs at any point (tex 144)");
 
     return result;
 }
