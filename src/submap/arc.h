@@ -45,6 +45,11 @@ struct Arc {
     SymbolicY key_symbolic_y() const noexcept {
         return {key_y, key_y_tag};
     }
+
+    /// Tombstone flag for O(1) removal (§3.3).  Dead arcs remain in
+    /// the arc-sequence table to keep indices stable; they are stripped
+    /// by compact().
+    bool dead = false;
 };
 
 } // namespace chazelle

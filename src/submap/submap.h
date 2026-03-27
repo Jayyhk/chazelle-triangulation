@@ -25,9 +25,11 @@ struct SubmapNode {
     /// [C91 §2.3]: conformal ⟹ degree ≤ 4.
     std::vector<std::size_t> incident_chords;
 
-    std::size_t degree() const noexcept {
-        return incident_chords.size();
-    }
+    /// Degree = number of live (non-dead) incident chords.
+    std::size_t degree() const noexcept;
+
+    /// Tombstone flag for O(1) removal (§3.3).
+    bool dead = false;
 };
 
 class Submap {
@@ -153,13 +155,30 @@ public:
     /// degree less than 3 produces a new node whose weight exceeds γ."
     /// "By default, if (i) holds but the submap has no exit chord,
     /// it is still said to be γ-granular."
-    bool is_granular(std::size_t gamma) const noexcept;
+    bool is_granular(std::size_t gamma,
+                      const class Polygon& polygon) const noexcept;
 
     /// [C91 §2.3]: Simulate contracting a chord — compute what the
     /// merged region's weight would be.  The weight may be less than
     /// the sum because "one or both endpoints of the chord might not
     /// be vertices of ∂C and might thus disappear."
-    std::size_t simulated_contraction_weight(std::size_t chord_idx) const noexcept;
+    /// Requires Polygon to determine which endpoints are vertices
+    /// (§2.2 tex 94: only non-vertex endpoints merge).
+    std::size_t simulated_contraction_weight(
+        std::size_t chord_idx,
+        const class Polygon& polygon) const noexcept;
+
+    // ── Tombstone compaction ────────────────────────────────────
+
+    /// Strip all dead arcs, chords, and nodes.  Rebuilds index
+    /// mappings in O(m).  Called once before putting S in normal
+    /// form (§3.3: "We can now put S in normal form").
+    void compact();
+
+    /// Count of live (non-dead) nodes, chords, arcs.
+    std::size_t num_live_nodes()  const noexcept;
+    std::size_t num_live_chords() const noexcept;
+    std::size_t num_live_arcs()   const noexcept;
 
     // ── §2.4(iv): Tree decomposition ────────────────────────────
 

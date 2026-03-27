@@ -19,14 +19,16 @@ static void test_double_identify_simple() {
     Arc a;
     a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.0; a.key_y_tag = 0;
-    s.add_arc(a);
+    std::size_t ai0 = s.add_arc(a);
 
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = 0.0; a.key_y_tag = 0;
-    s.add_arc(a);
+    std::size_t ai1 = s.add_arc(a);
+
+    s.start_arc = ai0; s.end_arc = ai1;
+    s.start_vertex = 0; s.end_vertex = 1;
 
     auto result = s.double_identify(0, {0.0, 0});
-    // Should find both arcs (one per ∂C side).
     assert(result.count == 2);
 
     std::printf("  [PASS] double_identify_simple\n");
@@ -40,26 +42,24 @@ static void test_double_identify_multi_edge() {
     Submap s;
     s.add_node();
 
-    // LEFT arc spanning edges 0-3.
     Arc a;
     a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 4; a.key_y = 0.0; a.key_y_tag = 0;
-    s.add_arc(a);
+    std::size_t ai0 = s.add_arc(a);
 
-    // RIGHT arc spanning edges 3-0.
     a.first_edge = 3; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = 3.0; a.key_y_tag = 3;
-    s.add_arc(a);
+    std::size_t ai1 = s.add_arc(a);
 
-    // Query edge 2 — should find both arcs.
+    s.start_arc = ai0; s.end_arc = ai1;
+    s.start_vertex = 0; s.end_vertex = 4;
+
     auto r = s.double_identify(2, {1.5, 0});
     assert(r.count == 2);
 
-    // Query edge 0 — should find both arcs.
     r = s.double_identify(0, {0.0, 0});
     assert(r.count == 2);
 
-    // Query edge 5 (out of range) — should find nothing.
     r = s.double_identify(5, {0.0, 0});
     assert(r.count == 0);
 
@@ -71,35 +71,36 @@ static void test_double_identify_multi_edge() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_double_identify_same_edge() {
-    // Two LEFT arcs on edge 1, at different y-levels (chord splits them).
     Submap s;
     s.add_node(); // r0
     s.add_node(); // r1
 
     Arc a;
-    // LEFT arc on edge 0 (r0)
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.0; a.key_y_tag = 0;
-    s.add_arc(a);
-    // LEFT arc on edge 1 (r0), lower y
+    std::size_t ai0 = s.add_arc(a);
+
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 1.0; a.key_y_tag = 1;
     s.add_arc(a);
-    // LEFT arc on edge 1 (r1), higher y
+
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 1; a.edge_count = 1; a.key_y = 2.0; a.key_y_tag = 2;
     s.add_arc(a);
-    // RIGHT arcs
+
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 2.0; a.key_y_tag = 2;
     s.add_arc(a);
+
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.0; a.key_y_tag = 0;
-    s.add_arc(a);
+    std::size_t ai_last = s.add_arc(a);
 
-    // Query edge 1 — should find multiple arcs.
+    s.start_arc = ai0; s.end_arc = ai_last;
+    s.start_vertex = 0; s.end_vertex = 2;
+
     auto r = s.double_identify(1, {1.5, 0});
-    assert(r.count >= 2); // at least the 2 LEFT arcs + 1 RIGHT arc
+    assert(r.count >= 2);
 
     std::printf("  [PASS] double_identify_same_edge\n");
 }
@@ -130,7 +131,6 @@ static void test_endpoint_pointers() {
     assert(s.start_vertex == 0);
     assert(s.end_vertex == 2);
 
-    // check_invariants verifies these are in range.
     s.check_invariants();
 
     std::printf("  [PASS] endpoint_pointers\n");
@@ -145,14 +145,12 @@ static void test_arc_sequence_ordering() {
     s.add_node();
 
     Arc a;
-    // LEFT arcs first.
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
-    s.add_arc(a);
+    std::size_t ai0 = s.add_arc(a);
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
-    s.add_arc(a);
-    // Then RIGHT arcs.
+    std::size_t ai_end = s.add_arc(a);  // contains c_end_edge=1
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1;
     s.add_arc(a);
@@ -160,7 +158,9 @@ static void test_arc_sequence_ordering() {
     a.region_node = 0; a.edge_count = 1;
     s.add_arc(a);
 
-    // check_invariants verifies LEFT-before-RIGHT.
+    s.start_arc = ai0; s.end_arc = ai_end;
+    s.start_vertex = 0; s.end_vertex = 2;
+
     s.check_invariants();
 
     std::printf("  [PASS] arc_sequence_ordering\n");
@@ -171,15 +171,6 @@ static void test_arc_sequence_ordering() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_double_identify_worst_case() {
-    // [C91 §2.4]: "there are at most six of them, two of which are
-    // of zero length: this worst case occurs when q coincides with
-    // a vertex of C that is a local extremum in the y-direction."
-    //
-    // At a y-extremum with chords on both sides:
-    //   LEFT: arc_before, zero-length NLC arc, arc_after  (3 LEFT)
-    //   RIGHT: arc_before, zero-length NLC arc, arc_after (3 RIGHT)
-    //   Total: 6 arcs, all on the same edge.
-
     Submap s;
     s.add_node(); // r0
     s.add_node(); // r1 (LEFT NLC empty)
@@ -189,30 +180,30 @@ static void test_double_identify_worst_case() {
     // 3 LEFT arcs on edge 1.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.5; a.key_y_tag = 0;
-    s.add_arc(a); // before NLC
+    std::size_t ai0 = s.add_arc(a);
 
     a.region_node = 1; a.edge_count = 0; a.key_y = 1.0; a.key_y_tag = 1;
-    s.add_arc(a); // NLC zero-length
+    s.add_arc(a);
 
     a.region_node = 0; a.edge_count = 1; a.key_y = 1.5; a.key_y_tag = 2;
-    s.add_arc(a); // after NLC
+    s.add_arc(a);
 
     // 3 RIGHT arcs on edge 1.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 1.5; a.key_y_tag = 2;
-    s.add_arc(a); // before NLC
+    s.add_arc(a);
 
     a.region_node = 2; a.edge_count = 0; a.key_y = 1.0; a.key_y_tag = 1;
-    s.add_arc(a); // NLC zero-length
+    s.add_arc(a);
 
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.5; a.key_y_tag = 0;
-    s.add_arc(a); // after NLC
+    std::size_t ai_last = s.add_arc(a);
+
+    s.start_arc = ai0; s.end_arc = ai_last;
+    s.start_vertex = 0; s.end_vertex = 2;
 
     auto r = s.double_identify(1, {1.0, 1});
-    // Should find up to 6 arcs (all on edge 1).
     assert(r.count >= 4 && r.count <= 6);
-
-    // Verify MAX capacity isn't exceeded.
     assert(r.count <= Submap::DoubleIdentifyResult::MAX);
 
     std::printf("  [PASS] double_identify_worst_case\n");
@@ -229,9 +220,14 @@ static void test_double_identify_miss() {
     Arc a;
     a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
-    s.add_arc(a);
+    std::size_t ai0 = s.add_arc(a);
 
-    // Query for edge 5 — not in any arc.
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    std::size_t ai1 = s.add_arc(a);
+
+    s.start_arc = ai0; s.end_arc = ai1;
+    s.start_vertex = 0; s.end_vertex = 1;
+
     auto r = s.double_identify(5, {0.0, 0});
     assert(r.count == 0);
 

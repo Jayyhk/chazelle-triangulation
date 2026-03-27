@@ -17,7 +17,14 @@ void TreeDecomposition::build(const Submap& submap) {
     assert(submap.is_conformal() &&
            "§2.4(iv): tree decomposition requires conformal submap");
 
-    // Collect all chords and regions (no dead entries).
+    // Precondition: submap must be compacted (no dead entries).
+    // build() indexes into nodes_/chords_ directly — dead entries
+    // would produce a wrong decomposition.
+    assert(submap.num_live_nodes() == submap.num_nodes() &&
+           submap.num_live_chords() == submap.num_chords() &&
+           "§2.4(iv): tree decomposition requires compacted submap");
+
+    // Collect all chords and regions.
     std::vector<std::size_t> all_chords;
     for (std::size_t i = 0; i < submap.num_chords(); ++i) {
         all_chords.push_back(i);
@@ -161,6 +168,11 @@ std::size_t TreeDecomposition::decompose(
             best_chord_local = ci;
         }
     }
+
+    // [C91 §2.3] (tex 114): "each with a number of edges at most
+    // three-quarters the original number."
+    assert(best_split <= 3 * n / 4 + 1 &&
+           "§2.3: centroid split must give ≤ 3/4 on each side");
 
     // The chosen chord becomes an internal node of the decomposition.
     std::size_t chosen_chord = chords[best_chord_local];
