@@ -40,12 +40,14 @@ void TreeDecomposition::build(const Submap& submap) {
 
     if (all_chords.empty()) {
         // No chords → single leaf (one region).
-        if (!all_regions.empty()) {
-            TDNode leaf;
-            leaf.region_idx = all_regions[0];
-            root_ = nodes_.size();
-            nodes_.push_back(leaf);
-        }
+        // The assert above guarantees num_nodes() >= 1, so
+        // all_regions is never empty here.
+        assert(!all_regions.empty() &&
+               "§2.3: no-chord submap must have exactly one region");
+        TDNode leaf;
+        leaf.region_idx = all_regions[0];
+        root_ = nodes_.size();
+        nodes_.push_back(leaf);
         return;
     }
 
@@ -174,9 +176,10 @@ std::size_t TreeDecomposition::decompose(
     }
 
     // [C91 §2.3] (tex 114): "each with a number of edges at most
-    // three-quarters the original number."
-    assert(best_split <= 3 * n / 4 + 1 &&
-           "§2.3: centroid split must give ≤ 3/4 on each side");
+    // three-quarters the original number."  Paper bound is on edges
+    // (n−1 total), so ≤ 3(n−1)/4 edges ⟹ ≤ ⌈3(n−1)/4⌉ + 1 regions.
+    assert(best_split <= (3 * (n - 1) + 3) / 4 &&
+           "§2.3: centroid split must give ≤ 3/4 edges on each side");
 
     // The chosen chord becomes an internal node of the decomposition.
     std::size_t chosen_chord = chords[best_chord_local];
@@ -234,9 +237,9 @@ std::size_t TreeDecomposition::decompose(
     nodes_[td_idx].left_child = left_td;
     nodes_[td_idx].right_child = right_td;
 
-    // No explicit cleanup needed: left_regions ∪ right_regions =
-    // regions, and each child call already reset its entries to NONE.
-    // The buffer is self-cleaning through the recursive structure.
+    // No explicit cleanup needed: each recursive call overwrites
+    // region_local entries for its own regions before reading them,
+    // so stale values from sibling/parent calls are never observed.
 
     return td_idx;
 }

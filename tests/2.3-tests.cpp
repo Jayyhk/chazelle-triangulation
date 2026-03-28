@@ -20,47 +20,58 @@ static Polygon test_polygon() {
 // ════════════════════════════════════════════════════════════════
 
 static Submap build_conformal_submap() {
+    // Polygon: {0,0,0},{1,1,1},{2,2,2},{3,3,3},{4,4,4}
+    // Edges 0-3, all nonnull.
+    //
+    // Submap: r0 — c0 — r1 — c1 — r2
+    // c0 at y=0.5 on edge 0 (non-vertex), c1 at y=1.5 on edge 1 (non-vertex).
+    // Adjacent arcs at each chord endpoint share the junction edge
+    // (§2.2 tex 94: "glueing back ∂C at those points").
     Submap s;
     s.add_node(); // r0
     s.add_node(); // r1
     s.add_node(); // r2
 
-    // Arcs: 2 per region, LEFT then RIGHT.
     Arc a;
 
-    // r0 LEFT
+    // LEFT half (ascending first_edge in ∂C order):
+    // a0: r0, edge 0 only
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    s.add_arc(a);
-    // r1 LEFT
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 1; a.edge_count = 3;
-    s.add_arc(a);
-    // r2 LEFT
-    a = {}; a.first_edge = 2; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
+    s.add_arc(a); // idx 0
+    // a1: r1, starts at c0 on edge 0, ends at c1 on edge 1
+    a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 1; a.edge_count = 3; a.key_y = 0.5;
+    s.add_arc(a); // idx 1
+    // a2: r2, starts at c1 on edge 1
+    a = {}; a.first_edge = 1; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 2; a.edge_count = 1; a.key_y = 1.5;
+    s.add_arc(a); // idx 2
+
+    // RIGHT half (descending first_edge in ∂C order):
+    // a3: r2
+    a = {}; a.first_edge = 2; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 2; a.edge_count = 1;
-    s.add_arc(a);
-    // r2 RIGHT
-    a = {}; a.first_edge = 2; a.last_edge = 2; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 2; a.edge_count = 1;
-    s.add_arc(a);
-    // r1 RIGHT
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+    s.add_arc(a); // idx 3
+    // a4: r1, starts at c1 on edge 1, ends at c0 on edge 0
+    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 1; a.edge_count = 3;
-    s.add_arc(a);
-    // r0 RIGHT
+    s.add_arc(a); // idx 4
+    // a5: r0, starts at c0 on edge 0
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
-    s.add_arc(a);
+    s.add_arc(a); // idx 5
 
     Chord c;
-    // c0: r0 — r1
+    // c0: r0 — r1, on edge 0 at y=0.5 (non-vertex)
     c = {}; c.region[0] = 0; c.region[1] = 1;
-    c.left_adj = {{0, 1}, 2}; c.right_adj = {{5, 4}, 2};
+    c.left_edge = 0; c.right_edge = 0; c.y = 0.5;
+    c.left_adj = {{0, 1}, 2}; c.right_adj = {{4, 5}, 2};
     s.add_chord(c);
-    // c1: r1 — r2
+    // c1: r1 — r2, on edge 1 at y=1.5 (non-vertex)
     c = {}; c.region[0] = 1; c.region[1] = 2;
-    c.left_adj = {{1, 2}, 2}; c.right_adj = {{4, 3}, 2};
+    c.left_edge = 1; c.right_edge = 1; c.y = 1.5;
+    c.left_adj = {{1, 2}, 2}; c.right_adj = {{3, 4}, 2};
     s.add_chord(c);
 
     return s;
@@ -173,39 +184,39 @@ static void test_is_granular() {
 
 static void test_is_granular_true() {
     // r0 — c0 — r1.  γ = 3.
-    // r0 has a 2-edge arc adjacent to c0.
-    // r1 has a 2-edge arc adjacent to c0.
+    // c0 at y=1.5 on edge 1 (non-vertex).
+    // Adjacent arcs share junction edge 1 at both chord endpoints.
     // Individual weights: r0=2, r1=2.  Both ≤ 3 → semigranular.
-    // Contraction of c0: adj arcs merge → 2+2 = 4.  4 > 3 → condition (ii) holds.
-    // → granular!
+    // Contraction of c0: adj arcs merge → 2+2-1 = 3.  3 > 2 → granular for γ=2.
     Submap s;
     s.add_node(); // r0
     s.add_node(); // r1
 
     Arc a;
-    // r0 LEFT arc (2 edges, adjacent to c0)
+    // r0 LEFT arc: edges [0,1]
     a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
     std::size_t ai0 = s.add_arc(a);
 
-    // r1 LEFT arc (2 edges, adjacent to c0)
-    a = {}; a.first_edge = 2; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 1; a.edge_count = 2;
+    // r1 LEFT arc: starts at c0 on edge 1, edges [1,2]
+    a = {}; a.first_edge = 1; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 1; a.edge_count = 2; a.key_y = 1.5;
     std::size_t ai1 = s.add_arc(a);
 
-    // r1 RIGHT arc
-    a = {}; a.first_edge = 3; a.last_edge = 2; a.first_side = RIGHT; a.last_side = RIGHT;
+    // r1 RIGHT arc: edges [2,1]
+    a = {}; a.first_edge = 2; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 1; a.edge_count = 2;
     std::size_t ai2 = s.add_arc(a);
 
-    // r0 RIGHT arc
+    // r0 RIGHT arc: starts at c0 on edge 1, edges [1,0]
     a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
     std::size_t ai3 = s.add_arc(a);
 
     Chord c;
     c.region[0] = 0; c.region[1] = 1;
-    c.left_adj = {{ai0, ai1}, 2}; c.right_adj = {{ai3, ai2}, 2};
+    c.left_edge = 1; c.right_edge = 1; c.y = 1.5;
+    c.left_adj = {{ai0, ai1}, 2}; c.right_adj = {{ai2, ai3}, 2};
     s.add_chord(c);
 
     // Verify contraction weight accounts for merging with
