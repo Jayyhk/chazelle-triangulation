@@ -177,8 +177,8 @@ std::size_t TreeDecomposition::decompose(
 
     // [C91 §2.3] (tex 114): "each with a number of edges at most
     // three-quarters the original number."  Paper bound is on edges
-    // (n−1 total), so ≤ 3(n−1)/4 edges ⟹ ≤ ⌈3(n−1)/4⌉ + 1 regions.
-    assert(best_split <= (3 * (n - 1) + 3) / 4 &&
+    // (n−1 total), so ≤ ⌊3(n−1)/4⌋ edges ⟹ ≤ ⌊3(n−1)/4⌋ + 1 regions.
+    assert(best_split <= 3 * (n - 1) / 4 + 1 &&
            "§2.3: centroid split must give ≤ 3/4 edges on each side");
 
     // The chosen chord becomes an internal node of the decomposition.
