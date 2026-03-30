@@ -9,17 +9,34 @@ step. Intended as a reference implementation for studying the algorithm.
 > [!CAUTION]
 > This is a work in progress! With high probability there are bugs present. Use at your own risk.
 
-## Algorithm
+## Implementation Progress
 
-The pipeline has five stages:
+**[C91]** Chazelle's Visibility Algorithm
+- [ ] §2 — Visibility Maps and Submaps
+  - [x] §2.0 — Spherical Plane and Orientation
+  - [x] §2.1 — The Visibility Map
+  - [x] §2.2 — Visibility Submaps
+  - [x] §2.3 — Conformality and Granularity
+  - [x] §2.4 — Representation Issues
+  - [ ] §2.5 — A Topological Lemma
+- [ ] §3 — Merging Two Submaps
+  - [ ] §3.0 — Merge Setup and Oracle Primitives
+  - [ ] §3.1 — Fusion of Two Submaps
+  - [ ] §3.2 — Restoring Conformality
+  - [ ] §3.3 — Maintaining Granularity
+  - [ ] §3.4 — Implementing the Oracles
+- [ ] §4 — The Visibility Algorithm
+  - [ ] §4.0 — Chains, Grades, and Algorithm Overview
+  - [ ] §4.1 — The Up-Phase
+  - [ ] §4.2 — The Down-Phase
 
-1. **Pad** the polygon to 2^p + 1 vertices.
-2. **Up-phase:** build canonical submaps bottom-up across grades [C91 &sect;4.1].
-3. **Down-phase:** refine to the full visibility map V(P) top-down [C91 &sect;4.2].
-4. **Convert** V(P) to a trapezoidization.
-5. **Triangulate** monotone pieces [FM84].
+**[LT79]** Lipton-Tarjan Planar Separator
+- [ ] §3 — An Algorithm for Finding a Good Partition
 
-Total: O(n) time.
+**[FM84]** Fournier-Montuno Triangulation
+- [ ] Extract trapezoids from V(P)
+- [ ] Algorithm 2 — Triangulating the Trapezoidized Polygon
+- [ ] Algorithm 3 — Triangulating Unimonotone Polygons
 
 ## Build
 
@@ -50,15 +67,11 @@ line per triangle giving three vertex indices.
 
 ```
 src/
-├── polygon/         Polygon, edges, SoS perturbation              [C91 §2]
-├── submap/          Submaps, arcs, chords, tree decomposition     [C91 §2.1–2.5]
-├── merge/           Core merge operation + oracles                [C91 §3]
-│   └── separator/   Lipton-Tarjan planar separator                [LT79]
-├── phases/          Algorithm driver: up/down phases              [C91 §4]
-├── triangulate/     Fournier-Montuno triangulation                [FM84]
+├── polygon/         Polygon, edges, SoS perturbation              [C91 §2.0–2.1]
+├── submap/          Submaps, arcs, chords, tree decomposition     [C91 §2.2–2.4]
 ├── common.h
 └── main.cpp         Entry point
-tests/               Unit and integration tests
+tests/               Unit tests (§2.0–2.4)
 papers/              Transcribed reference papers
 visualizer/          Python visualization tools
 ```
