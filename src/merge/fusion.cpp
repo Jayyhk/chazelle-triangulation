@@ -104,6 +104,34 @@ RayHit local_shoot(Point p, Side direction,
     return best;
 }
 
+// ── fuse_s1_into_s2 ─────────────────────────────────────────────
+
+void fuse_s1_into_s2(FusionState& state,
+                      const Submap& S1, const Polygon& C1,
+                      [[maybe_unused]] const Submap& S2,
+                      [[maybe_unused]] const Polygon& C2,
+                      [[maybe_unused]] const RayShootingOracle& oracle) {
+    // [C91 §3.1]: Build the fusion vertex sequence.
+    state.sequence = build_fusion_sequence(S1, C1);
+    state.current_stop = 0;
+
+    // [C91 §3.1]: "We use a start-up phase to initialize p and
+    // launch the fusion."
+    // TODO: (§3.1) implement start-up phase — determine the initial
+    // region of S₂ that a₀ lies in.
+
+    // [C91 §3.1]: "We let a variable p run through ∂C₁ in clockwise
+    // order, stopping at a₀, ..., a_{m+1}."
+    for (std::size_t i = 0; i < state.sequence.size(); ++i) {
+        state.current_stop = i;
+
+        // TODO: (§3.1) At each stop:
+        //   1. Determine what p sees (local_shoot into S₂).
+        //   2. Record discovered chord.
+        //   3. Update s2_region for the next stop.
+    }
+}
+
 // ── build_fusion_sequence ───────────────────────────────────────
 
 std::vector<FusionVertex> build_fusion_sequence(const Submap& S,

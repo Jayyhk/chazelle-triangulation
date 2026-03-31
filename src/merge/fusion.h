@@ -75,6 +75,46 @@ RayHit local_shoot(Point p, Side direction,
                     const Submap& S, const Polygon& C,
                     const RayShootingOracle& oracle);
 
+/// [C91 §3.1]: State maintained during the fusion traversal.
+///
+/// "To fuse S₁ into S₂ we let a variable p run through ∂C₁ in
+/// clockwise order, stopping at a₀, ..., a_{m+1} as well as at some
+/// other places to be specified.  We determine what p sees along the
+/// way, while keeping track of the current region of S₂ in which p
+/// lies."
+struct FusionState {
+    /// The fusion vertex sequence a₀, ..., a_{m+1}.
+    std::vector<FusionVertex> sequence;
+
+    /// Index into `sequence` of the current stop.
+    std::size_t current_stop = 0;
+
+    /// Current region of S₂ that p lies in.
+    std::size_t s2_region = NONE;
+
+    /// Discovered chords (points of ∂C seen by fusion vertices).
+    /// Populated during the traversal; used to build the fused submap.
+    struct DiscoveredChord {
+        SymbolicY y;           ///< y-coordinate of the chord.
+        std::size_t left_edge; ///< Edge on LEFT side of ∂C.
+        Side left_side;
+        std::size_t right_edge; ///< Edge on RIGHT side of ∂C.
+        Side right_side;
+    };
+    std::vector<DiscoveredChord> chords;
+};
+
+/// [C91 §3.1]: Fuse S₁ into S₂ — traverse ∂C₁ clockwise, shooting
+/// into S₂ at each fusion vertex to discover new chords.
+///
+/// "We use a start-up phase to initialize p and launch the fusion."
+///
+/// TODO: (§3.1) implement start-up phase and main loop body.
+void fuse_s1_into_s2(FusionState& state,
+                      const Submap& S1, const Polygon& C1,
+                      const Submap& S2, const Polygon& C2,
+                      const RayShootingOracle& oracle);
+
 /// [C91 §3.1]: Build the fusion vertex sequence for fusing S₁ into S₂.
 ///
 /// "Let a_{m+1} and a₀ be the companion vertices, as they appear next
