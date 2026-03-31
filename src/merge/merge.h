@@ -13,6 +13,7 @@
 
 #include "../polygon/polygon.h"
 #include "../submap/submap.h"
+#include "oracle.h"
 
 #include <cassert>
 #include <cstddef>
@@ -36,6 +37,10 @@ struct MergeInput {
 
     /// Target granularity.  γ ≥ γ₂.
     std::size_t gamma = 0;
+
+    /// [C91 §3]: Oracle primitives (provided by §3.4 / §4).
+    const RayShootingOracle* ray_shooter = nullptr;
+    const ArcCuttingOracle* arc_cutter = nullptr;
 };
 
 /// [C91 §3]: Result of the merge operation.
@@ -91,6 +96,12 @@ inline void assert_merge_preconditions(const MergeInput& in) {
            "§3: S₁ must be γ₁-granular");
     assert(in.S2->is_granular(in.gamma2, *in.C2) &&
            "§3: S₂ must be γ₂-granular");
+
+    // [C91 §3]: "we assume that we have at our disposal two primitives."
+    assert(in.ray_shooter != nullptr &&
+           "§3: merge requires a ray-shooting oracle");
+    assert(in.arc_cutter != nullptr &&
+           "§3: merge requires an arc-cutting oracle");
 
     // [C91 §3]: "with γ₁ ≤ γ₂."
     assert(in.gamma1 <= in.gamma2 &&

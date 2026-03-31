@@ -8,6 +8,39 @@
 using namespace chazelle;
 
 // ════════════════════════════════════════════════════════════════
+//  Stub oracles for testing (§3.4 provides real implementations)
+// ════════════════════════════════════════════════════════════════
+
+struct StubRayShooter : RayShootingOracle {
+    RayHit shoot(Point, Side, const Subarc&) const override {
+        return {}; // no hit
+    }
+};
+
+struct StubArcCutter : ArcCuttingOracle {
+    std::vector<ArcPiece> cut(const Subarc&) const override {
+        return {};
+    }
+};
+
+static const StubRayShooter STUB_RAY;
+static const StubArcCutter STUB_ARC;
+
+/// Build a MergeInput with stub oracles.
+static MergeInput make_input(const Polygon& C1, const Polygon& C2,
+                              Submap& S1, Submap& S2,
+                              std::size_t g1, std::size_t g2,
+                              std::size_t g) {
+    MergeInput in;
+    in.C1 = &C1; in.C2 = &C2;
+    in.S1 = &S1; in.S2 = &S2;
+    in.gamma1 = g1; in.gamma2 = g2; in.gamma = g;
+    in.ray_shooter = &STUB_RAY;
+    in.arc_cutter = &STUB_ARC;
+    return in;
+}
+
+// ════════════════════════════════════════════════════════════════
 //  Helpers
 // ════════════════════════════════════════════════════════════════
 
@@ -59,12 +92,7 @@ static void test_valid_preconditions() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
-    MergeInput in;
-    in.C1 = &C1; in.C2 = &C2;
-    in.S1 = &S1; in.S2 = &S2;
-    in.gamma1 = 2; in.gamma2 = 2; in.gamma = 2;
-
-    // Should not fire any assertions.
+    auto in = make_input(C1, C2, S1, S2, 2, 2, 2);
     assert_merge_preconditions(in);
 
     std::printf("  [PASS] valid_preconditions\n");
@@ -80,11 +108,7 @@ static void test_merged_curve() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
-    MergeInput in;
-    in.C1 = &C1; in.C2 = &C2;
-    in.S1 = &S1; in.S2 = &S2;
-    in.gamma1 = 2; in.gamma2 = 2; in.gamma = 2;
-
+    auto in = make_input(C1, C2, S1, S2, 2, 2, 2);
     auto result = merge(in);
 
     // C = C₁ ∪ C₂: 3 + 3 - 1 (shared vertex) = 5 vertices.
@@ -117,32 +141,13 @@ static void test_gamma_ordering() {
     auto S2 = make_single_region_submap(C2);
 
     // γ₁ = γ₂ (equality allowed).
-    {
-        MergeInput in;
-        in.C1 = &C1; in.C2 = &C2;
-        in.S1 = &S1; in.S2 = &S2;
-        in.gamma1 = 5; in.gamma2 = 5; in.gamma = 5;
-        assert_merge_preconditions(in); // should pass
-    }
+    assert_merge_preconditions(make_input(C1, C2, S1, S2, 5, 5, 5));
 
-    // γ₁ < γ₂ < γ.  γ₁ must still be ≥ region weight.
-    // C₁ weight = 2, C₂ weight = 2.
-    {
-        MergeInput in;
-        in.C1 = &C1; in.C2 = &C2;
-        in.S1 = &S1; in.S2 = &S2;
-        in.gamma1 = 2; in.gamma2 = 3; in.gamma = 10;
-        assert_merge_preconditions(in); // should pass
-    }
+    // γ₁ < γ₂ < γ.  γ₁ must still be ≥ region weight (= 2).
+    assert_merge_preconditions(make_input(C1, C2, S1, S2, 2, 3, 10));
 
     // γ = γ₂ (equality allowed).
-    {
-        MergeInput in;
-        in.C1 = &C1; in.C2 = &C2;
-        in.S1 = &S1; in.S2 = &S2;
-        in.gamma1 = 2; in.gamma2 = 4; in.gamma = 4;
-        assert_merge_preconditions(in); // should pass
-    }
+    assert_merge_preconditions(make_input(C1, C2, S1, S2, 2, 4, 4));
 
     std::printf("  [PASS] gamma_ordering\n");
 }
@@ -158,11 +163,7 @@ static void test_shared_vertex() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
-    MergeInput in;
-    in.C1 = &C1; in.C2 = &C2;
-    in.S1 = &S1; in.S2 = &S2;
-    in.gamma1 = 1; in.gamma2 = 1; in.gamma = 1;
-
+    auto in = make_input(C1, C2, S1, S2, 1, 1, 1);
     auto result = merge(in);
 
     // 2 + 2 - 1 = 3 vertices.
@@ -189,11 +190,7 @@ static void test_merged_edges() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
-    MergeInput in;
-    in.C1 = &C1; in.C2 = &C2;
-    in.S1 = &S1; in.S2 = &S2;
-    in.gamma1 = 3; in.gamma2 = 3; in.gamma = 3;
-
+    auto in = make_input(C1, C2, S1, S2, 3, 3, 3);
     auto result = merge(in);
 
     // 4 + 3 - 1 = 6 vertices, 5 edges.
@@ -221,12 +218,7 @@ static void test_conformality_required() {
     assert(S1.is_conformal());
     assert(S2.is_conformal());
 
-    // γ must be ≥ region weight.  C₁ weight = 2, C₂ weight = 2.
-    MergeInput in;
-    in.C1 = &C1; in.C2 = &C2;
-    in.S1 = &S1; in.S2 = &S2;
-    in.gamma1 = 2; in.gamma2 = 2; in.gamma = 2;
-    assert_merge_preconditions(in);
+    assert_merge_preconditions(make_input(C1, C2, S1, S2, 2, 2, 2));
 
     std::printf("  [PASS] conformality_required\n");
 }
