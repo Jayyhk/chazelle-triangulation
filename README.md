@@ -12,13 +12,13 @@ step. Intended as a reference implementation for studying the algorithm.
 ## Implementation Progress
 
 **[C91]** Chazelle's Visibility Algorithm
-- [ ] §2 — Visibility Maps and Submaps
+- [x] §2 — Visibility Maps and Submaps
   - [x] §2.0 — Spherical Plane and Orientation
   - [x] §2.1 — The Visibility Map
   - [x] §2.2 — Visibility Submaps
   - [x] §2.3 — Conformality and Granularity
   - [x] §2.4 — Representation Issues
-  - [ ] §2.5 — A Topological Lemma
+  - [x] §2.5 — A Topological Lemma
 - [ ] §3 — Merging Two Submaps
   - [ ] §3.0 — Merge Setup and Oracle Primitives
   - [ ] §3.1 — Fusion of Two Submaps
