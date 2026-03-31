@@ -33,6 +33,48 @@ struct FusionVertex {
     bool is_companion;         ///< True for a₀ or a_{m+1}.
 };
 
+/// [C91 §3.1]: Collect all arc indices belonging to a region.
+///
+/// Uses chord→arc adjacency + start_arc/end_arc.  O(1) for conformal
+/// submaps (degree ≤ 4 → at most ~8 arc candidates).
+///
+/// @param S         The submap.
+/// @param region    The region index.
+/// @param[out] out  Arc indices are appended here.
+void collect_region_arcs(const Submap& S, std::size_t region,
+                          std::vector<std::size_t>& out);
+
+/// [C91 §3.1]: Local shooting.
+///
+/// "Given any point p of ∂Cᵢ and the arc to which it belongs, we can
+/// determine which point of ∂Cᵢ it sees (with respect to Cᵢ) in
+/// O(f(γᵢ)) time."
+///
+/// "If p is an endpoint of an exit chord we can easily do that (even
+/// in constant time).  If not, then p belongs to a unique region of
+/// Sᵢ [...] and the point of ∂Cᵢ that it sees lies on one of the
+/// region's arcs.  This is because regions are closed under visibility,
+/// which is a corollary of Lemma 2.1.  Using the appropriate
+/// ray-shooters, we can find that point by checking each arc in turn
+/// and finding the nearest hit."
+///
+/// "Note that local shooting is still possible even if p does not lie
+/// on ∂Cᵢ; it can lie anywhere in the spherical plane as long as a
+/// horizontal direction (left or right) has been specified and we know
+/// in which region of Sᵢ the point lies."
+///
+/// @param p          The point to shoot from.
+/// @param direction  LEFT (shoot left) or RIGHT (shoot right).
+/// @param region     The region of Sᵢ containing p.
+/// @param S          The submap Sᵢ.
+/// @param C          The curve Cᵢ.
+/// @param oracle     The ray-shooting oracle for Sᵢ.
+/// @return The hit point on ∂Cᵢ (always hits — regions are bounded).
+RayHit local_shoot(Point p, Side direction,
+                    std::size_t region,
+                    const Submap& S, const Polygon& C,
+                    const RayShootingOracle& oracle);
+
 /// [C91 §3.1]: Build the fusion vertex sequence for fusing S₁ into S₂.
 ///
 /// "Let a_{m+1} and a₀ be the companion vertices, as they appear next

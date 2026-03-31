@@ -6,6 +6,106 @@
 
 namespace chazelle {
 
+// ── collect_region_arcs ─────────────────────────────────────────
+
+void collect_region_arcs(const Submap& S, std::size_t region,
+                          std::vector<std::size_t>& out) {
+    assert(region < S.num_nodes() && !S.node(region).dead);
+
+    // Collect via chord→arc adjacency (same traversal as region_weight).
+    auto check_adj = [&](const Chord::AdjArcs& adj) {
+        for (std::size_t k = 0; k < adj.count; ++k) {
+            std::size_t ai = adj.arcs[k];
+            assert(ai < S.num_arcs() && !S.arc(ai).dead);
+            if (S.arc(ai).region_node == region) {
+                // Avoid duplicates: check if already added.
+                bool dup = false;
+                for (std::size_t x : out)
+                    if (x == ai) { dup = true; break; }
+                if (!dup) out.push_back(ai);
+            }
+        }
+    };
+
+    for (std::size_t ci : S.node(region).incident_chords) {
+        assert(ci < S.num_chords());
+        if (S.chord(ci).dead) continue;
+        check_adj(S.chord(ci).left_adj);
+        check_adj(S.chord(ci).right_adj);
+    }
+
+    // Also check start_arc / end_arc.
+    if (S.start_arc != NONE && S.start_arc < S.num_arcs() &&
+        !S.arc(S.start_arc).dead &&
+        S.arc(S.start_arc).region_node == region) {
+        bool dup = false;
+        for (std::size_t x : out)
+            if (x == S.start_arc) { dup = true; break; }
+        if (!dup) out.push_back(S.start_arc);
+    }
+    if (S.end_arc != NONE && S.end_arc < S.num_arcs() &&
+        !S.arc(S.end_arc).dead &&
+        S.arc(S.end_arc).region_node == region) {
+        bool dup = false;
+        for (std::size_t x : out)
+            if (x == S.end_arc) { dup = true; break; }
+        if (!dup) out.push_back(S.end_arc);
+    }
+}
+
+// ── local_shoot ─────────────────────────────────────────────────
+
+RayHit local_shoot(Point p, Side direction,
+                    std::size_t region,
+                    const Submap& S, const Polygon& /*C*/,
+                    const RayShootingOracle& oracle) {
+    assert(S.is_conformal() &&
+           "§3.1: local shooting requires conformal submap "
+           "(at most 4 arcs per region)");
+
+    // [C91 §3.1]: "Using the appropriate ray-shooters, we can find
+    // that point by checking each arc in turn and finding the nearest
+    // hit.  The claim on the time follows from the conformality of Sᵢ,
+    // which ensures that at most four arcs need to be checked."
+    std::vector<std::size_t> arcs;
+    collect_region_arcs(S, region, arcs);
+
+    RayHit best;
+    best.hit = false;
+
+    for (std::size_t ai : arcs) {
+        const auto& a = S.arc(ai);
+
+        // Build a Subarc covering the full arc.
+        Subarc sub;
+        sub.first_edge = a.first_edge;
+        sub.first_side = a.first_side;
+        sub.last_edge = a.last_edge;
+        sub.last_side = a.last_side;
+
+        RayHit hit = oracle.shoot(p, direction, sub);
+        if (!hit.hit) continue;
+
+        if (!best.hit) {
+            best = hit;
+        } else {
+            // Nearest in the shooting direction.
+            // LEFT: largest x < p.x → closest to p.
+            // RIGHT: smallest x > p.x → closest to p.
+            double best_dist = (direction == LEFT)
+                ? (p.x - best.x) : (best.x - p.x);
+            double hit_dist = (direction == LEFT)
+                ? (p.x - hit.x) : (hit.x - p.x);
+            if (hit_dist < best_dist)
+                best = hit;
+        }
+    }
+
+    return best;
+}
+
+// ── build_fusion_sequence ───────────────────────────────────────
+
 std::vector<FusionVertex> build_fusion_sequence(const Submap& S,
                                                  const Polygon& C) {
     std::size_t n = C.num_vertices();

@@ -180,6 +180,106 @@ static void test_companion_identity() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  5. collect_region_arcs
+// ════════════════════════════════════════════════════════════════
+
+static void test_collect_region_arcs() {
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+
+    // Region 0 has 2 arcs (LEFT ai0 and RIGHT ai3).
+    std::vector<std::size_t> arcs;
+    collect_region_arcs(S1, 0, arcs);
+    assert(arcs.size() == 2);
+
+    // Region 1 has 2 arcs (LEFT ai1 and RIGHT ai2).
+    arcs.clear();
+    collect_region_arcs(S1, 1, arcs);
+    assert(arcs.size() == 2);
+
+    std::printf("  [PASS] collect_region_arcs\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  6. local_shoot with stub oracle
+// ════════════════════════════════════════════════════════════════
+
+/// Oracle that returns a fixed hit for any subarc on the RIGHT side.
+struct FixedRayShooter : RayShootingOracle {
+    RayHit shoot(Point p, Side /*direction*/,
+                 const Subarc& target) const override {
+        // Hit at the target's first edge, same y as p.
+        RayHit h;
+        h.hit = true;
+        h.x = 5.0; // fixed x
+        h.y = p.y;
+        h.edge = target.first_edge;
+        h.side = target.first_side;
+        return h;
+    }
+};
+
+static void test_local_shoot() {
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+
+    FixedRayShooter oracle;
+    Point p{0.0, 2.0, 99};
+
+    // Shoot from region 0 — should check region 0's arcs.
+    auto hit = local_shoot(p, RIGHT, 0, S1, C1, oracle);
+    assert(hit.hit);
+
+    // Shoot from region 1.
+    hit = local_shoot(p, RIGHT, 1, S1, C1, oracle);
+    assert(hit.hit);
+
+    std::printf("  [PASS] local_shoot\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  7. local_shoot — nearest hit selection
+// ════════════════════════════════════════════════════════════════
+
+/// Oracle that returns different x values per subarc side.
+struct DistanceRayShooter : RayShootingOracle {
+    RayHit shoot(Point p, Side /*direction*/,
+                 const Subarc& target) const override {
+        RayHit h;
+        h.hit = true;
+        h.y = p.y;
+        h.edge = target.first_edge;
+        h.side = target.first_side;
+        // LEFT-side arcs hit at x=10, RIGHT-side at x=3.
+        h.x = (target.first_side == LEFT) ? 10.0 : 3.0;
+        return h;
+    }
+};
+
+static void test_local_shoot_nearest() {
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+
+    DistanceRayShooter oracle;
+    Point p{1.0, 2.0, 99};
+
+    // Shooting RIGHT from x=1: hits at x=3 (RIGHT arc) and x=10 (LEFT arc).
+    // Nearest in RIGHT direction = x=3 (closer to p.x=1).
+    auto hit = local_shoot(p, RIGHT, 0, S1, C1, oracle);
+    assert(hit.hit);
+    assert(hit.x == 3.0);
+
+    // Shooting LEFT from x=15: hits at x=3 and x=10.
+    // Nearest in LEFT direction = x=10 (closer to p.x=15).
+    Point p2{15.0, 2.0, 99};
+    hit = local_shoot(p2, LEFT, 0, S1, C1, oracle);
+    assert(hit.hit);
+    assert(hit.x == 10.0);
+
+    std::printf("  [PASS] local_shoot_nearest\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -188,6 +288,9 @@ int main() {
     test_fusion_sequence_no_chords();
     test_fusion_sequence_ordering();
     test_companion_identity();
+    test_collect_region_arcs();
+    test_local_shoot();
+    test_local_shoot_nearest();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }
