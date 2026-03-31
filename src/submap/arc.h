@@ -12,7 +12,9 @@
 #include "../polygon/perturbation.h"
 #include "../common.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <utility>
 
 namespace chazelle {
 
@@ -44,6 +46,47 @@ struct Arc {
 
     SymbolicY key_symbolic_y() const noexcept {
         return {key_y, key_y_tag};
+    }
+
+    /// [C91 §3]: The underlying range of C edges for this arc (ᾱ).
+    ///
+    /// "We introduce the notation ᾱ to refer to the portion of C to
+    /// which an arc α of ∂C corresponds.  Recall that an arc may
+    /// double-back around an endpoint of C, so ᾱ may not always be
+    /// as 'long' as α."
+    ///
+    /// Non-wrapped (first_side == last_side):
+    ///   ᾱ = [min(first_edge, last_edge), max(first_edge, last_edge)]
+    ///
+    /// Wrapped (first_side != last_side, double-backing):
+    ///   The arc wraps around a C endpoint.  ᾱ is the union of both
+    ///   legs, which meet at the turnaround edge.  The range on C
+    ///   covers both legs and is strictly shorter than the ∂C span.
+    ///
+    /// @param c_start  Index of C's start vertex (for LEFT→RIGHT wrap)
+    /// @param c_end    Index of C's end vertex (for RIGHT→LEFT wrap)
+    /// @return (lo_edge, hi_edge) inclusive range on C.
+    std::pair<std::size_t, std::size_t> underlying_edge_range(
+            std::size_t c_start, std::size_t c_end) const noexcept {
+        if (first_side == last_side) {
+            // Non-wrapped: straightforward min/max.
+            return {std::min(first_edge, last_edge),
+                    std::max(first_edge, last_edge)};
+        }
+        // Wrapped (double-backing): both legs map to the same C edges.
+        // LEFT→RIGHT wraps at c_end vertex: turnaround = c_end - 1.
+        // RIGHT→LEFT wraps at c_start vertex: turnaround = c_start.
+        if (first_side == LEFT) {
+            // LEFT→RIGHT: first_edge ascending, last_edge descending,
+            // meet at c_end - 1.
+            std::size_t turnaround = c_end - 1;
+            return {std::min(first_edge, last_edge), turnaround};
+        } else {
+            // RIGHT→LEFT: first_edge descending, last_edge ascending,
+            // meet at c_start.
+            std::size_t turnaround = c_start;
+            return {turnaround, std::max(first_edge, last_edge)};
+        }
     }
 
     /// Tombstone flag for O(1) removal (§3.3).  Dead arcs remain in
