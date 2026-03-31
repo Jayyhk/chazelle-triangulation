@@ -174,6 +174,12 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         a_dead.dead = true;
         compacted_ = false;  // arc-sequence has dead entries now
 
+        // [C91 §2.4(iii)]: If the dead arc was start_arc or end_arc,
+        // redirect to the surviving arc (which now covers the merged
+        // range including the endpoint).
+        if (start_arc == aj) start_arc = ai;
+        if (end_arc == aj)   end_arc = ai;
+
         // Update adj arcs of neighboring chords to point to the
         // surviving arc.  O(degree) = O(1) for conformal submaps.
         auto replace_arc = [&](Chord::AdjArcs& adj) {
@@ -281,6 +287,46 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
 // dead entries and rebuilds index mappings in O(m).
 
 void Submap::compact() {
+    // [C91 §2.2] (tex 94): After cascaded chord removals, some live
+    // arcs may still point to dead regions.  This happens when region
+    // R2 is absorbed into R1 (chord A removed), then R1 is later
+    // absorbed into R0 (chord B removed) — arcs that were adjacent to
+    // chord A and belonged to R2 were reassigned to R1 by A's removal,
+    // but B's removal only reassigns arcs reachable via chord adjacency,
+    // missing the orphaned arcs.
+    //
+    // Fix: build a forwarding table from dead chords (each dead chord
+    // records region[1] → region[0]), resolve chains, then fixup arcs.
+    // O(m) total — does not change the paper's complexity.
+    {
+        std::vector<std::size_t> forward(nodes_.size(), NONE);
+        for (const auto& ch : chords_) {
+            if (!ch.dead) continue;
+            // remove_chord always kills region[1] and keeps region[0].
+            std::size_t dead_r = ch.region[1];
+            std::size_t live_r = ch.region[0];
+            if (dead_r < nodes_.size() && nodes_[dead_r].dead &&
+                forward[dead_r] == NONE) {
+                forward[dead_r] = live_r;
+            }
+        }
+        // Resolve chains with path compression.
+        auto resolve = [&](std::size_t r) -> std::size_t {
+            while (r < nodes_.size() && nodes_[r].dead &&
+                   forward[r] != NONE) {
+                r = forward[r];
+            }
+            return r;
+        };
+        for (auto& a : arc_sequence_) {
+            if (a.dead) continue;
+            if (a.region_node < nodes_.size() &&
+                nodes_[a.region_node].dead) {
+                a.region_node = resolve(a.region_node);
+            }
+        }
+    }
+
     // Build old→new index maps for each table.
 
     // Nodes.

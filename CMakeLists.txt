@@ -33,42 +33,10 @@ function(add_chazelle_test NAME)
     add_test(NAME ${NAME} COMMAND ${NAME})
 endfunction()
 
-add_executable(2.0-tests tests/2.0-tests.cpp ${LIB_SOURCES})
-target_include_directories(2.0-tests PRIVATE src)
-target_compile_options(2.0-tests PRIVATE
-    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
-    -UNDEBUG
-)
-add_test(NAME 2.0-tests COMMAND 2.0-tests)
-
-add_executable(2.1-tests tests/2.1-tests.cpp ${LIB_SOURCES})
-target_include_directories(2.1-tests PRIVATE src)
-target_compile_options(2.1-tests PRIVATE
-    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
-    -UNDEBUG
-)
-add_test(NAME 2.1-tests COMMAND 2.1-tests)
-
-add_executable(2.2-tests tests/2.2-tests.cpp ${LIB_SOURCES})
-target_include_directories(2.2-tests PRIVATE src)
-target_compile_options(2.2-tests PRIVATE
-    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
-    -UNDEBUG
-)
-add_test(NAME 2.2-tests COMMAND 2.2-tests)
-
-add_executable(2.3-tests tests/2.3-tests.cpp ${LIB_SOURCES})
-target_include_directories(2.3-tests PRIVATE src)
-target_compile_options(2.3-tests PRIVATE
-    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
-    -UNDEBUG
-)
-add_test(NAME 2.3-tests COMMAND 2.3-tests)
-
-add_executable(2.4-tests tests/2.4-tests.cpp ${LIB_SOURCES})
-target_include_directories(2.4-tests PRIVATE src)
-target_compile_options(2.4-tests PRIVATE
-    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
-    -UNDEBUG
-)
-add_test(NAME 2.4-tests COMMAND 2.4-tests)
+add_chazelle_test(s2.0-tests)
+add_chazelle_test(s2.1-tests)
+add_chazelle_test(s2.2-tests)
+add_chazelle_test(s2.3-tests)
+add_chazelle_test(s2.4-tests)
+add_chazelle_test(s2-e2e-tests)
+target_compile_options(s2-e2e-tests PRIVATE -O2)
