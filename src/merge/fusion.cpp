@@ -104,25 +104,153 @@ RayHit local_shoot(Point p, Side direction,
     return best;
 }
 
+// ── shooting_direction ──────────────────────────────────────────
+
+Side shooting_direction(std::size_t edge, Side side,
+                         const Polygon& C) {
+    // [C91 §3.1]: "because of the double boundary the shooting
+    // direction is always uniquely defined."
+    //
+    // A point on the LEFT side of edge e sees across C to the RIGHT.
+    // The horizontal direction depends on the edge's slope:
+    //   Edge going up (start.y < end.y): LEFT side is to the left
+    //     of the upward direction → shoot RIGHT.
+    //   Edge going down: LEFT side is to the right → shoot LEFT.
+    // For RIGHT side, the direction is reversed.
+    assert(edge < C.num_edges());
+    const auto& e = C.edge(edge);
+    SymbolicY start_y = symbolic_y_of(C.vertex(e.start_idx));
+    SymbolicY end_y = symbolic_y_of(C.vertex(e.end_idx));
+    bool edge_ascending = symbolic_y_less(start_y, end_y);
+
+    if (side == LEFT)
+        return edge_ascending ? RIGHT : LEFT;
+    else
+        return edge_ascending ? LEFT : RIGHT;
+}
+
+// ── fusion_startup ──────────────────────────────────────────────
+
+std::size_t fusion_startup(FusionState& state,
+                            const Submap& S1, const Polygon& C1,
+                            const Submap& S2, const Polygon& C2,
+                            const RayShootingOracle& oracle1,
+                            const RayShootingOracle& oracle2) {
+    assert(!state.sequence.empty());
+    const auto& a0 = state.sequence[0];
+    assert(a0.is_companion && a0.side == RIGHT);
+
+    // [C91 §3.1]: "Using local shooting, we find the point of ∂C₁
+    // that a₀ sees with respect to C₁."
+    //
+    // a₀ is at c_end of C₁, RIGHT side.  The region in S₁ is the
+    // one containing the end_arc (or its RIGHT-side neighbor).
+    std::size_t a0_region_s1 = S1.arc(S1.end_arc).region_node;
+    Side a0_dir = shooting_direction(a0.edge, a0.side, C1);
+    Point a0_point{0.0, a0.y.y, a0.y.tag}; // x doesn't matter for horizontal
+    // Compute x from the edge geometry at the junction.
+    {
+        const auto& e = C1.edge(a0.edge);
+        double y0 = C1.vertex(e.start_idx).y;
+        double y1 = C1.vertex(e.end_idx).y;
+        double x0 = C1.vertex(e.start_idx).x;
+        double x1 = C1.vertex(e.end_idx).x;
+        if (y0 != y1) {
+            double t = (a0.y.y - y0) / (y1 - y0);
+            a0_point.x = x0 + t * (x1 - x0);
+        } else {
+            a0_point.x = (x0 + x1) / 2.0;
+        }
+    }
+
+    RayHit hit_c1 = local_shoot(a0_point, a0_dir, a0_region_s1,
+                                 S1, C1, oracle1);
+
+    // [C91 §3.1]: "using the information about the endpoints of C₂
+    // encoded in the normal-form representation of S₂ (namely,
+    // pointers to incident arcs), we can find, in constant time, in
+    // which region of S₂ the point a₀ lies."
+    //
+    // a₀ corresponds to C₂'s start vertex → S₂.start_arc's region.
+    assert(S2.start_arc != NONE);
+    std::size_t a0_region_s2 = S2.arc(S2.start_arc).region_node;
+
+    // [C91 §3.1]: "This allows us to do local shooting and find the
+    // point of ∂C₂ that a₀ sees with respect to C₂."
+    RayHit hit_c2 = local_shoot(a0_point, a0_dir, a0_region_s2,
+                                 S2, C2, oracle2);
+
+    // [C91 §3.1]: "These two pieces of information combine to give us
+    // the unique point c₀ of ∂C that a₀ sees with respect to C."
+    //
+    // c₀ is the nearer of hit_c1 and hit_c2 in the shooting direction.
+    bool c0_on_c2;
+    RayHit c0;
+    if (!hit_c1.hit && !hit_c2.hit) {
+        // No hit — shouldn't happen in a valid visibility map.
+        assert(false && "§3.1: a₀ must see some point on ∂C");
+    } else if (!hit_c1.hit) {
+        c0 = hit_c2; c0_on_c2 = true;
+    } else if (!hit_c2.hit) {
+        c0 = hit_c1; c0_on_c2 = false;
+    } else {
+        double d1 = (a0_dir == LEFT)
+            ? (a0_point.x - hit_c1.x) : (hit_c1.x - a0_point.x);
+        double d2 = (a0_dir == LEFT)
+            ? (a0_point.x - hit_c2.x) : (hit_c2.x - a0_point.x);
+        if (d2 <= d1) {
+            c0 = hit_c2; c0_on_c2 = true;
+        } else {
+            c0 = hit_c1; c0_on_c2 = false;
+        }
+    }
+
+    if (c0_on_c2) {
+        // [C91 §3.1 Case 1]: "If c₀ belongs to ∂C₂, then we set
+        // p = a₀ and we call the region of S₂ crossed by a₀c₀
+        // current: the start-up phase is over."
+        state.s2_region = a0_region_s2;
+        state.chords.push_back({a0.y, a0.edge, a0.side,
+                                c0.edge, c0.side});
+        return 0;
+    } else {
+        // [C91 §3.1 Case 2]: "If c₀ belongs to ∂C₁... We can
+        // therefore skip all the way to c₀.  Now, however, c₀ sees
+        // a point of ∂C₂, namely a₀, so we set p = c₀ and call the
+        // region of S₂ containing a₀ current."
+        state.s2_region = a0_region_s2;
+        state.chords.push_back({a0.y, c0.edge, c0.side,
+                                a0.edge, a0.side});
+
+        // Find the fusion sequence index closest to c₀ to skip to.
+        // All vertices between a₀ and c₀ (clockwise) can be skipped
+        // because "the points of ∂C that its exit chord endpoints see
+        // all belong to ∂C₁ and thus are available directly from S₁."
+        //
+        // TODO: (§3.1) precise skip index computation.
+        // For now, return 0 (conservative — don't skip).
+        return 0;
+    }
+}
+
 // ── fuse_s1_into_s2 ─────────────────────────────────────────────
 
 void fuse_s1_into_s2(FusionState& state,
                       const Submap& S1, const Polygon& C1,
-                      [[maybe_unused]] const Submap& S2,
-                      [[maybe_unused]] const Polygon& C2,
-                      [[maybe_unused]] const RayShootingOracle& oracle) {
+                      const Submap& S2, const Polygon& C2,
+                      const RayShootingOracle& oracle1,
+                      const RayShootingOracle& oracle2) {
     // [C91 §3.1]: Build the fusion vertex sequence.
     state.sequence = build_fusion_sequence(S1, C1);
     state.current_stop = 0;
 
-    // [C91 §3.1]: "We use a start-up phase to initialize p and
-    // launch the fusion."
-    // TODO: (§3.1) implement start-up phase — determine the initial
-    // region of S₂ that a₀ lies in.
+    // [C91 §3.1 Start-Up]: Initialize p and current S₂ region.
+    std::size_t start_idx = fusion_startup(state, S1, C1, S2, C2,
+                                            oracle1, oracle2);
 
     // [C91 §3.1]: "We let a variable p run through ∂C₁ in clockwise
     // order, stopping at a₀, ..., a_{m+1}."
-    for (std::size_t i = 0; i < state.sequence.size(); ++i) {
+    for (std::size_t i = start_idx; i < state.sequence.size(); ++i) {
         state.current_stop = i;
 
         // TODO: (§3.1) At each stop:

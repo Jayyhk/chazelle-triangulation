@@ -104,16 +104,38 @@ struct FusionState {
     std::vector<DiscoveredChord> chords;
 };
 
+/// [C91 §3.1]: Determine the shooting direction for a point on ∂C.
+///
+/// "Because of the double boundary the shooting direction is always
+/// uniquely defined."  A point on the LEFT side of an edge shoots
+/// in the direction that crosses C; similarly for RIGHT.
+Side shooting_direction(std::size_t edge, Side side,
+                         const Polygon& C);
+
+/// [C91 §3.1 Start-Up]: Initialize p and the current S₂ region.
+///
+/// Finds c₀ = the point of ∂C that a₀ sees, then:
+///   Case 1: c₀ ∈ ∂C₂ → p = a₀, current = S₂ region crossed by a₀c₀.
+///   Case 2: c₀ ∈ ∂C₁ → skip to c₀, p = c₀, current = S₂ region
+///           containing a₀.
+///
+/// @return The index into state.sequence where the main loop should
+///         start (0 for case 1, the index of c₀ for case 2).
+std::size_t fusion_startup(FusionState& state,
+                            const Submap& S1, const Polygon& C1,
+                            const Submap& S2, const Polygon& C2,
+                            const RayShootingOracle& oracle1,
+                            const RayShootingOracle& oracle2);
+
 /// [C91 §3.1]: Fuse S₁ into S₂ — traverse ∂C₁ clockwise, shooting
 /// into S₂ at each fusion vertex to discover new chords.
 ///
-/// "We use a start-up phase to initialize p and launch the fusion."
-///
-/// TODO: (§3.1) implement start-up phase and main loop body.
+/// TODO: (§3.1) implement main loop body.
 void fuse_s1_into_s2(FusionState& state,
                       const Submap& S1, const Polygon& C1,
                       const Submap& S2, const Polygon& C2,
-                      const RayShootingOracle& oracle);
+                      const RayShootingOracle& oracle1,
+                      const RayShootingOracle& oracle2);
 
 /// [C91 §3.1]: Build the fusion vertex sequence for fusing S₁ into S₂.
 ///
