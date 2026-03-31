@@ -166,6 +166,13 @@ std::size_t fusion_startup(FusionState& state,
     RayHit hit_c1 = local_shoot(a0_point, a0_dir, a0_region_s1,
                                  S1, C1, oracle1);
 
+    // [C91 §3.1]: "it is not quite true that a₀ is always a point
+    // of ∂C₂.  It coincides with one most often, but when it sits at
+    // a local extremum (in the y-direction) it is not one because of
+    // duplication."  SoS perturbation (§2.0) handles this: distinct
+    // symbolic y-coordinates prevent exact coincidence at extrema,
+    // so the visibility relation is always well-defined.
+
     // [C91 §3.1]: "using the information about the endpoints of C₂
     // encoded in the normal-form representation of S₂ (namely,
     // pointers to incident arcs), we can find, in constant time, in
@@ -205,31 +212,124 @@ std::size_t fusion_startup(FusionState& state,
         }
     }
 
+    // [C91 §3.1]: "Another minor problem is that a₀c₀ might lie on
+    // an exit chord of S₂ and thus there might be more than one
+    // candidate for the status of current region.  We break ties by
+    // electing the region that we locally enter as we leave p in a
+    // clockwise traversal of ∂C₁."
+    auto resolve_s2_region = [&](std::size_t initial_region) -> std::size_t {
+        SymbolicY a0y = a0.y;
+        for (std::size_t ci = 0; ci < S2.num_chords(); ++ci) {
+            if (S2.chord(ci).dead) continue;
+            if (!symbolic_y_equal(S2.chord(ci).symbolic_y(), a0y))
+                continue;
+
+            // a₀c₀ lies on this S₂ chord.  Determine which of its
+            // two regions we "locally enter as we leave p in a
+            // clockwise traversal of ∂C₁."
+            //
+            // From a₀ (RIGHT companion at c_end), clockwise ∂C₁
+            // goes from vertex junction_v toward vertex junction_v-1.
+            // The y-direction of that step tells us whether we go
+            // above or below the chord.
+            std::size_t junction_v = C1.num_vertices() - 1;
+            assert(junction_v >= 1);
+            SymbolicY y_here = symbolic_y_of(C1.vertex(junction_v));
+            SymbolicY y_next = symbolic_y_of(C1.vertex(junction_v - 1));
+            bool leaving_downward = symbolic_y_less(y_next, y_here);
+
+            // Determine which region is above/below the chord by
+            // comparing the chord's LEFT adj arcs' key_y to chord.y.
+            const auto& ch = S2.chord(ci);
+            if (ch.left_adj.count == 2) {
+                SymbolicY ky0 = S2.arc(ch.left_adj.arcs[0]).key_symbolic_y();
+                std::size_t r0 = S2.arc(ch.left_adj.arcs[0]).region_node;
+                std::size_t r1 = S2.arc(ch.left_adj.arcs[1]).region_node;
+                bool arc0_below = symbolic_y_less(ky0, ch.symbolic_y());
+                std::size_t below_r = arc0_below ? r0 : r1;
+                std::size_t above_r = arc0_below ? r1 : r0;
+                return leaving_downward ? below_r : above_r;
+            }
+            // Single adj arc (chord at C₂ endpoint): no ambiguity.
+            break;
+        }
+        return initial_region;
+    };
+
     if (c0_on_c2) {
         // [C91 §3.1 Case 1]: "If c₀ belongs to ∂C₂, then we set
         // p = a₀ and we call the region of S₂ crossed by a₀c₀
         // current: the start-up phase is over."
-        state.s2_region = a0_region_s2;
+        //
+        // Main loop starts at k where A_k contains p = a₀ and
+        // p ≠ a_k.  A_k = arc from a₀ to a₁, so k=1.
+        state.s2_region = resolve_s2_region(a0_region_s2);
         state.chords.push_back({a0.y, a0.edge, a0.side,
                                 c0.edge, c0.side});
-        return 0;
+        return 1;
     } else {
         // [C91 §3.1 Case 2]: "If c₀ belongs to ∂C₁... We can
         // therefore skip all the way to c₀.  Now, however, c₀ sees
         // a point of ∂C₂, namely a₀, so we set p = c₀ and call the
         // region of S₂ containing a₀ current."
-        state.s2_region = a0_region_s2;
+        state.s2_region = resolve_s2_region(a0_region_s2);
         state.chords.push_back({a0.y, c0.edge, c0.side,
                                 a0.edge, a0.side});
 
-        // Find the fusion sequence index closest to c₀ to skip to.
-        // All vertices between a₀ and c₀ (clockwise) can be skipped
-        // because "the points of ∂C that its exit chord endpoints see
-        // all belong to ∂C₁ and thus are available directly from S₁."
+        // [C91 §3.1 Case 2]: "We can therefore skip all the way to c₀."
+        // Find the first fusion vertex at or past c₀'s position on ∂C₁.
+        // All vertices between a₀ and c₀ (clockwise) see points on ∂C₁
+        // (by Lemma 2.1) and are already known from S₁.
         //
-        // TODO: (§3.1) precise skip index computation.
-        // For now, return 0 (conservative — don't skip).
-        return 0;
+        // Compare by traversal position; within the same edge, compare
+        // by y along the ∂C₁ traversal direction to match the paper's
+        // "skip all the way to c₀" exactly.
+        std::size_t junction_edge = C1.num_edges() - 1;
+        std::size_t right_half_len = junction_edge + 1;
+        auto trav_pos = [&](std::size_t edge, Side side) -> std::size_t {
+            if (side == RIGHT)
+                return junction_edge - edge;
+            else
+                return right_half_len + edge;
+        };
+
+        SymbolicY c0_y{c0.y, c0.edge}; // use edge as tag for SoS
+        std::size_t c0_pos = trav_pos(c0.edge, c0.side);
+
+        // Determine y-ordering within an edge on ∂C₁ traversal.
+        // RIGHT half traverses edges in descending order; within an
+        // edge, ∂C₁ goes from end_vertex to start_vertex (reversed).
+        // LEFT half follows edge direction (start to end).
+        auto vertex_past_c0 = [&](const FusionVertex& v) -> bool {
+            std::size_t v_pos = trav_pos(v.edge, v.side);
+            if (v_pos != c0_pos) return v_pos > c0_pos;
+            // Same edge and side: compare y along traversal direction.
+            // On RIGHT side, ∂C₁ traverses the edge in reverse, so
+            // "past c₀" means lower y (if edge ascends) or higher y
+            // (if edge descends).  On LEFT side, it follows the edge.
+            assert(v.edge < C1.num_edges());
+            const auto& e = C1.edge(v.edge);
+            bool edge_ascending = symbolic_y_less(
+                symbolic_y_of(C1.vertex(e.start_idx)),
+                symbolic_y_of(C1.vertex(e.end_idx)));
+            // LEFT: traversal follows edge direction.
+            //   ascending edge → later in traversal = higher y.
+            //   v is past c₀ if v.y ≥ c₀.y (ascending) or v.y ≤ c₀.y (descending).
+            // RIGHT: traversal is reversed.
+            bool traversal_ascending =
+                (v.side == LEFT) ? edge_ascending : !edge_ascending;
+            if (traversal_ascending)
+                return symbolic_y_geq(v.y, c0_y);
+            else
+                return symbolic_y_leq(v.y, c0_y);
+        };
+
+        for (std::size_t i = 1; i < state.sequence.size(); ++i) {
+            if (vertex_past_c0(state.sequence[i]))
+                return i;
+        }
+        // c₀ is past all fusion vertices → start at last (a_{m+1}).
+        return state.sequence.size() - 1;
     }
 }
 

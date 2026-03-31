@@ -280,6 +280,118 @@ static void test_local_shoot_nearest() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  8. fusion_startup — Case 1 (c₀ on ∂C₂)
+// ════════════════════════════════════════════════════════════════
+
+/// Oracle that always hits at a fixed x on the target's side.
+struct StartupOracle : RayShootingOracle {
+    double hit_x;
+    explicit StartupOracle(double x) : hit_x(x) {}
+    RayHit shoot(Point p, Side /*dir*/,
+                 const Subarc& target) const override {
+        RayHit h;
+        h.hit = true;
+        h.x = hit_x;
+        h.y = p.y;
+        h.edge = target.first_edge;
+        h.side = target.first_side;
+        return h;
+    }
+};
+
+static void test_startup_case1() {
+    // C₁ and C₂ share vertex (4,3,4).
+    // C₁ = {(0,0,0), (1,2,1), (2,4,2), (3,1,3), (4,3,4)}
+    // C₂ = {(4,3,4), (5,5,5), (6,1,6)}
+    auto C1 = make_C1();
+    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
+    auto S1 = make_S1(C1);
+
+    // Single-region S₂.
+    Submap S2;
+    S2.add_node();
+    Arc a{};
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0; a.edge_count = 2;
+    a.key_y = C2.vertex(0).y; a.key_y_tag = 0;
+    std::size_t ai0 = S2.add_arc(a);
+    a.first_edge = 1; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
+    std::size_t ai1 = S2.add_arc(a);
+    S2.start_arc = ai0; S2.end_arc = ai1;
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // a₀ at vertex 4 = (4,3). Edge 3 ascending → shoot LEFT → p.x ≈ 4.
+    // Hits must be to the LEFT (x < 4).
+    // Oracle for S₁: hits at x=-10 (far left).
+    // Oracle for S₂: hits at x=3 (close left).
+    // c₀ on ∂C₂ (closer) → Case 1.
+    StartupOracle oracle1(-10.0);
+    StartupOracle oracle2(3.0);
+
+    FusionState state;
+    state.sequence = build_fusion_sequence(S1, C1);
+
+    std::size_t start = fusion_startup(state, S1, C1, S2, C2,
+                                        oracle1, oracle2);
+
+    // Case 1: p = a₀, main loop starts at k=1 (arc A₁ from a₀ to a₁).
+    assert(start == 1);
+    assert(state.s2_region != NONE);
+    assert(state.s2_region == 0); // single-region S₂
+    assert(!state.chords.empty());
+
+    std::printf("  [PASS] startup_case1\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  9. fusion_startup — Case 2 (c₀ on ∂C₁)
+// ════════════════════════════════════════════════════════════════
+
+static void test_startup_case2() {
+    auto C1 = make_C1();
+    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
+    auto S1 = make_S1(C1);
+
+    Submap S2;
+    S2.add_node();
+    Arc a{};
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0; a.edge_count = 2;
+    a.key_y = C2.vertex(0).y; a.key_y_tag = 0;
+    std::size_t ai0 = S2.add_arc(a);
+    a.first_edge = 1; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
+    std::size_t ai1 = S2.add_arc(a);
+    S2.start_arc = ai0; S2.end_arc = ai1;
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // a₀ at vertex 4 = (4,3). Edge 3 ascending → shoot LEFT → p.x ≈ 4.
+    // Oracle for S₁: hits at x=3 (close left, on ∂C₁).
+    // Oracle for S₂: hits at x=-10 (far left, on ∂C₂).
+    // c₀ on ∂C₁ (closer) → Case 2.
+    StartupOracle oracle1(3.0);
+    StartupOracle oracle2(-10.0);
+
+    FusionState state;
+    state.sequence = build_fusion_sequence(S1, C1);
+
+    std::size_t start = fusion_startup(state, S1, C1, S2, C2,
+                                        oracle1, oracle2);
+
+    // Case 2: s2_region set, chord recorded.
+    assert(state.s2_region != NONE);
+    assert(state.s2_region == 0);
+    assert(!state.chords.empty());
+
+    std::printf("  [PASS] startup_case2\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -291,6 +403,8 @@ int main() {
     test_collect_region_arcs();
     test_local_shoot();
     test_local_shoot_nearest();
+    test_startup_case1();
+    test_startup_case2();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }
