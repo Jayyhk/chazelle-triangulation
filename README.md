@@ -20,8 +20,8 @@ step. Intended as a reference implementation for studying the algorithm.
   - [x] §2.4 — Representation Issues
   - [x] §2.5 — A Topological Lemma
 - [ ] §3 — Merging Two Submaps
-  - [ ] §3.0 — Merge Setup and Oracle Primitives
-  - [ ] §3.1 — Fusion of Two Submaps
+  - [x] §3.0 — Merge Setup and Oracle Primitives
+  - [ ] §3.1 — Fusion of Two Submaps (startup done, main loop TODO)
   - [ ] §3.2 — Restoring Conformality
   - [ ] §3.3 — Maintaining Granularity
   - [ ] §3.4 — Implementing the Oracles
@@ -68,10 +68,12 @@ line per triangle giving three vertex indices.
 ```
 src/
 ├── polygon/         Polygon, edges, SoS perturbation              [C91 §2.0–2.1]
-├── submap/          Submaps, arcs, chords, tree decomposition     [C91 §2.2–2.4]
+├── submap/          Submaps, arcs, chords, tree decomposition,    [C91 §2.2–2.5]
+│                    shielding
+├── merge/           Merge orchestrator, oracles, fusion            [C91 §3.0–3.1]
 ├── common.h
 └── main.cpp         Entry point
-tests/               Unit tests (§2.0–2.4)
+tests/               Unit + e2e tests (§2.0–2.5, §3.0–3.1)
 papers/              Transcribed reference papers
 visualizer/          Python visualization tools
 ```

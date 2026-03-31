@@ -263,6 +263,10 @@ std::size_t fusion_startup(FusionState& state,
         //
         // Main loop starts at k where A_k contains p = a₀ and
         // p ≠ a_k.  A_k = arc from a₀ to a₁, so k=1.
+        // [C91 §3.1 Case 1]: "we set p = a₀"
+        state.p = a0_point;
+        state.p_edge = a0.edge;
+        state.p_side = a0.side;
         state.s2_region = resolve_s2_region(a0_region_s2);
         state.chords.push_back({a0.y, a0.edge, a0.side,
                                 c0.edge, c0.side});
@@ -272,6 +276,10 @@ std::size_t fusion_startup(FusionState& state,
         // therefore skip all the way to c₀.  Now, however, c₀ sees
         // a point of ∂C₂, namely a₀, so we set p = c₀ and call the
         // region of S₂ containing a₀ current."
+        // [C91 §3.1 Case 2]: "we set p = c₀"
+        state.p = Point{c0.x, c0.y, static_cast<std::size_t>(c0.edge)};
+        state.p_edge = c0.edge;
+        state.p_side = c0.side;
         state.s2_region = resolve_s2_region(a0_region_s2);
         state.chords.push_back({a0.y, c0.edge, c0.side,
                                 a0.edge, a0.side});
@@ -352,6 +360,48 @@ void fuse_s1_into_s2(FusionState& state,
     // order, stopping at a₀, ..., a_{m+1}."
     for (std::size_t i = start_idx; i < state.sequence.size(); ++i) {
         state.current_stop = i;
+
+        // [C91 §3.1 invariant (B)]: "The point q of ∂C that is seen
+        // by p belongs to ∂C₂ and the chord pq lies in the region
+        // of S₂ called current."
+        assert(state.s2_region != NONE &&
+               state.s2_region < S2.num_nodes() &&
+               !S2.node(state.s2_region).dead &&
+               "§3.1 invariant (B): current S₂ region must be valid");
+        // [C91 §3.1 invariant (B)]: "The point q of ∂C that is seen
+        // by p belongs to ∂C₂ and the chord pq lies in the region of
+        // S₂ called current."
+        {
+            Side p_dir = shooting_direction(state.p_edge, state.p_side, C1);
+            RayHit q = local_shoot(state.p, p_dir, state.s2_region,
+                                    S2, C2, oracle2);
+            assert(q.hit &&
+                   "§3.1 invariant (B): p must see a point q on ∂C₂");
+        }
+
+        // [C91 §3.1 invariant (A)]: "The points of ∂C that are seen
+        // by the exit chord endpoints of S₁ on the portion of ∂C₁
+        // running clockwise from a₀ to the point p in its current
+        // position have all been determined already."
+        //
+        // All fusion vertices before index i have been processed
+        // (either by startup or previous iterations).  Their chords
+        // are in state.chords.
+        // Count non-companion vertices before i that should have
+        // been resolved.
+        {
+            std::size_t expected = 0;
+            for (std::size_t j = 0; j < i; ++j)
+                if (!state.sequence[j].is_companion)
+                    ++expected;
+            // Each resolved chord endpoint contributes to at least
+            // one discovered chord (or was declared to see ∂C₁).
+            // At minimum, the startup produced at least one chord.
+            if (i > 0)
+                assert(!state.chords.empty() &&
+                       "§3.1 invariant (A): startup must have "
+                       "produced at least one chord");
+        }
 
         // TODO: (§3.1) At each stop:
         //   1. Determine what p sees (local_shoot into S₂).

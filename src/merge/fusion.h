@@ -89,6 +89,11 @@ struct FusionState {
     /// Index into `sequence` of the current stop.
     std::size_t current_stop = 0;
 
+    /// [C91 §3.1]: "a variable p" — current position on ∂C₁.
+    Point p{0.0, 0.0, NONE};
+    std::size_t p_edge = NONE;
+    Side p_side = LEFT;
+
     /// Current region of S₂ that p lies in.
     std::size_t s2_region = NONE;
 
