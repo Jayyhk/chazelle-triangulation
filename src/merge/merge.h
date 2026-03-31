@@ -120,7 +120,7 @@ inline void assert_merge_preconditions(const MergeInput& in) {
 ///   2. Conformality: add chords to ensure degree ≤ 4.
 ///   3. Granularity: remove chords to enforce γ-granularity.
 ///
-/// TODO(§3.1–§3.3): implement the three stages.
+/// TODO: (§3.1–§3.3) implement the three stages.
 MergeResult merge(const MergeInput& in);
 
 } // namespace chazelle
