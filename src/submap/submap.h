@@ -114,6 +114,13 @@ public:
     std::size_t start_arc    = NONE; ///< Arc-sequence: arc at C's start.
     std::size_t end_arc      = NONE; ///< Arc-sequence: arc at C's end.
 
+    /// [C91 §2.4]: Index of first RIGHT arc in the arc-sequence table.
+    /// LEFT arcs are at [0, left_right_boundary()), RIGHT arcs at
+    /// [left_right_boundary(), num_arcs()).
+    std::size_t left_right_boundary() const noexcept {
+        return left_right_boundary_;
+    }
+
     // ── §2.4: Double identification ───────────────────────────────
 
     /// [C91 §2.4]: "we call it the double identification of a point

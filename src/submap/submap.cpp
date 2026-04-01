@@ -312,11 +312,19 @@ void Submap::compact() {
         }
         // Resolve chains with path compression.
         auto resolve = [&](std::size_t r) -> std::size_t {
-            while (r < nodes_.size() && nodes_[r].dead &&
-                   forward[r] != NONE) {
-                r = forward[r];
+            // Phase 1: find root
+            std::size_t root = r;
+            while (root < nodes_.size() && nodes_[root].dead &&
+                   forward[root] != NONE) {
+                root = forward[root];
             }
-            return r;
+            // Phase 2: compress path
+            while (r != root && r < nodes_.size() && nodes_[r].dead) {
+                std::size_t next = forward[r];
+                forward[r] = root;
+                r = next;
+            }
+            return root;
         };
         for (auto& a : arc_sequence_) {
             if (a.dead) continue;

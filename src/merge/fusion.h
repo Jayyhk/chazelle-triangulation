@@ -12,6 +12,7 @@
 #include "../submap/submap.h"
 #include "oracle.h"
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <vector>
@@ -33,6 +34,23 @@ struct FusionVertex {
     bool is_companion;         ///< True for a₀ or a_{m+1}.
 };
 
+/// [C91 §3.1]: Fixed-capacity result for collect_region_arcs.
+///
+/// §2.3 (tex 114): conformal ⟹ degree ≤ 4 ⟹ at most 4 arcs per
+/// region boundary.  With start_arc/end_arc the practical max is ~8
+/// candidates before deduplication.
+struct RegionArcs {
+    static constexpr std::size_t MAX = 8;
+    std::array<std::size_t, MAX> arcs = {};
+    std::size_t count = 0;
+    void push(std::size_t arc_idx) {
+        assert(count < MAX);
+        arcs[count++] = arc_idx;
+    }
+    const std::size_t* begin() const { return arcs.data(); }
+    const std::size_t* end()   const { return arcs.data() + count; }
+};
+
 /// [C91 §3.1]: Collect all arc indices belonging to a region.
 ///
 /// Uses chord→arc adjacency + start_arc/end_arc.  O(1) for conformal
@@ -40,9 +58,7 @@ struct FusionVertex {
 ///
 /// @param S         The submap.
 /// @param region    The region index.
-/// @param[out] out  Arc indices are appended here.
-void collect_region_arcs(const Submap& S, std::size_t region,
-                          std::vector<std::size_t>& out);
+RegionArcs collect_region_arcs(const Submap& S, std::size_t region);
 
 /// [C91 §3.1]: Local shooting.
 ///

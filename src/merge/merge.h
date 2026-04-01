@@ -87,6 +87,13 @@ inline void assert_merge_preconditions(const MergeInput& in) {
                "(last vertex of C₁ = first vertex of C₂)");
     }
 
+    // [C91 §3] (tex 166): "We assume that each Sᵢ is given in
+    // normal form."  check_invariants() verifies §2.4(i)–(iii):
+    // tree property, chord/arc adjacency, arc-sequence ordering,
+    // and start_arc/end_arc validity.
+    in.S1->check_invariants();
+    in.S2->check_invariants();
+
     // [C91 §3]: "Sᵢ be a γᵢ-granular conformal submap of V(Cᵢ)."
     assert(in.S1->is_conformal() &&
            "§3: S₁ must be conformal");

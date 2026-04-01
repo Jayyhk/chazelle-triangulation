@@ -12,13 +12,13 @@ using namespace chazelle;
 // ════════════════════════════════════════════════════════════════
 
 struct StubRayShooter : RayShootingOracle {
-    RayHit shoot(Point, Side, const Subarc&) const override {
+    RayHit shoot(Point, Side, std::size_t, const Subarc&) const override {
         return {}; // no hit
     }
 };
 
 struct StubArcCutter : ArcCuttingOracle {
-    std::vector<ArcPiece> cut(const Subarc&) const override {
+    std::vector<ArcPiece> cut(std::size_t, const Subarc&) const override {
         return {};
     }
 };

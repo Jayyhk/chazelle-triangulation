@@ -188,14 +188,12 @@ static void test_collect_region_arcs() {
     auto S1 = make_S1(C1);
 
     // Region 0 has 2 arcs (LEFT ai0 and RIGHT ai3).
-    std::vector<std::size_t> arcs;
-    collect_region_arcs(S1, 0, arcs);
-    assert(arcs.size() == 2);
+    auto arcs0 = collect_region_arcs(S1, 0);
+    assert(arcs0.count == 2);
 
     // Region 1 has 2 arcs (LEFT ai1 and RIGHT ai2).
-    arcs.clear();
-    collect_region_arcs(S1, 1, arcs);
-    assert(arcs.size() == 2);
+    auto arcs1 = collect_region_arcs(S1, 1);
+    assert(arcs1.count == 2);
 
     std::printf("  [PASS] collect_region_arcs\n");
 }
@@ -207,6 +205,7 @@ static void test_collect_region_arcs() {
 /// Oracle that returns a fixed hit for any subarc on the RIGHT side.
 struct FixedRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side /*direction*/,
+                 std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
         // Hit at the target's first edge, same y as p.
         RayHit h;
@@ -244,6 +243,7 @@ static void test_local_shoot() {
 /// Oracle that returns different x values per subarc side.
 struct DistanceRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side /*direction*/,
+                 std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
         RayHit h;
         h.hit = true;
@@ -288,6 +288,7 @@ struct StartupOracle : RayShootingOracle {
     double hit_x;
     explicit StartupOracle(double x) : hit_x(x) {}
     RayHit shoot(Point p, Side /*dir*/,
+                 std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
         RayHit h;
         h.hit = true;

@@ -83,11 +83,12 @@ struct ArcPiece {
 
 /// [C91 §3.0(i)]: Ray-shooting oracle.
 ///
-/// "There exists a ray-shooter which, given any point p along with a
-/// horizontal direction (left or right) and any subarc α' of α
-/// [...], reports the single point of α' (if any) that a ray of
-/// light shot from p in the given direction would hit in the absence
-/// of any obstacle except α'."
+/// "For each region arc α of Sᵢ (i=1,2) specified by a pointer to
+/// its arc-structure: (i) There exists a ray-shooter which, given
+/// any point p along with a horizontal direction (left or right) and
+/// any subarc α' of α [...], reports the single point of α' (if any)
+/// that a ray of light shot from p in the given direction would hit
+/// in the absence of any obstacle except α'."
 ///
 /// "The report should take O(f(γᵢ)) time, where f is a nondecreasing
 /// function."
@@ -97,20 +98,26 @@ struct RayShootingOracle {
     virtual ~RayShootingOracle() = default;
 
     /// Shoot a horizontal ray from p in the given direction toward
-    /// subarc α'.  Returns the single hit point (if any) plus the
-    /// edge of P containing it.
+    /// subarc α' of arc α.  Returns the single hit point (if any)
+    /// plus the edge of P containing it.
     ///
     /// @param p          The ray origin.
     /// @param direction  LEFT (shoot left) or RIGHT (shoot right).
+    /// @param arc_idx    Index of region arc α in Sᵢ's arc-sequence
+    ///                   table — "specified by a pointer to its
+    ///                   arc-structure" (§3.0, tex 166).
     /// @param target     The subarc α' to shoot toward.
     virtual RayHit shoot(Point p, Side direction,
+                         std::size_t arc_idx,
                          const Subarc& target) const = 0;
 };
 
 /// [C91 §3.0(ii)]: Arc-cutting oracle.
 ///
-/// "There exists an arc-cutter which, in O(g(γᵢ)) time, subdivides
-/// the subarc α' into at most g(γᵢ) subarcs α₁, α₂, ..., such that
+/// "For each region arc α of Sᵢ specified by a pointer to its
+/// arc-structure: (ii) There exists an arc-cutter which, in
+/// O(g(γᵢ)) time, subdivides the subarc α' into at most g(γᵢ)
+/// subarcs α₁, α₂, ..., such that
 /// (1) [each specified by endpoints + edges + sides, clockwise order],
 /// (2) [no double-backing — each piece on one side of C], and
 /// (3) [except boundary pieces, all are vertex-to-vertex subchains
@@ -120,12 +127,16 @@ struct RayShootingOracle {
 struct ArcCuttingOracle {
     virtual ~ArcCuttingOracle() = default;
 
-    /// Subdivide subarc α' into at most g(γᵢ) pieces satisfying
-    /// conditions (1)–(3).
+    /// Subdivide subarc α' of arc α into at most g(γᵢ) pieces
+    /// satisfying conditions (1)–(3).
     ///
+    /// @param arc_idx Index of region arc α in Sᵢ's arc-sequence
+    ///                table — "specified by a pointer to its
+    ///                arc-structure" (§3.0, tex 166).
     /// @param target  The subarc α' to cut.
     /// @return Pieces α₁, α₂, ..., ordered along ∂C.
-    virtual std::vector<ArcPiece> cut(const Subarc& target) const = 0;
+    virtual std::vector<ArcPiece> cut(std::size_t arc_idx,
+                                       const Subarc& target) const = 0;
 };
 
 } // namespace chazelle
