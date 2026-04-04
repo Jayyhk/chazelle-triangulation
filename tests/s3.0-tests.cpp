@@ -79,6 +79,7 @@ static Submap make_single_region_submap(const Polygon& poly) {
     s.end_arc = ai1;
     s.start_vertex = 0;
     s.end_vertex = poly.num_vertices() - 1;
+    s.build_tree_decomposition();
     return s;
 }
 

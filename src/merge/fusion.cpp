@@ -388,8 +388,23 @@ std::size_t fusion_startup(FusionState& state,
             else
                 hi = mid;
         }
-        if (lo >= state.sequence.size())
+        if (lo >= state.sequence.size()) {
+            if (state.sequence.size() > 1 && !state.sequence[1].is_companion) {
+                assert(state.sequence[1].chord_idx != NONE &&
+                       "§3.1 Case 2 (Lemma 2.1): skipped vertex must be a "
+                       "chord endpoint of S₁ (sees ∂C₁ by construction)");
+            }
             return state.sequence.size() - 1;
+        }
+
+        // §3.1 Case 2 (Lemma 2.1): All skipped vertices see ∂C₁.
+        // Debug-verify the first skipped vertex (O(f(γ₁)) — acceptable).
+        if (lo > 1 && !state.sequence[1].is_companion) {
+            assert(state.sequence[1].chord_idx != NONE &&
+                   "§3.1 Case 2 (Lemma 2.1): skipped vertex must be a "
+                   "chord endpoint of S₁ (sees ∂C₁ by construction)");
+        }
+
         return lo;
     }
 }
@@ -408,6 +423,18 @@ void fuse_s1_into_s2(FusionState& state,
     // [C91 §3.1 Start-Up]: Initialize p and current S₂ region.
     std::size_t start_idx = fusion_startup(state, S1, C1, S2, C2,
                                             oracle1, oracle2);
+
+    // [C91 §3.1 invariant (A)]: "The points of ∂C that are seen by the exit
+    // chord endpoints of S₁ ... have all been determined already."
+    assert(!state.chords.empty() &&
+           "§3.1 invariant (A): startup must have produced at least one chord");
+
+    // [C91 §3.1 invariant (B)]: "The point q of ∂C that is seen by p belongs
+    // to ∂C₂ and the chord pq lies in the region of S₂ called current."
+    assert(local_shoot(state.p,
+               shooting_direction(state.p_edge, state.p_side, C1),
+               state.s2_region, S2, C2, oracle2).hit &&
+           "§3.1 invariant (B): p must see ∂C₂ after startup");
 
     // [C91 §3.1]: "We let a variable p run through ∂C₁ in clockwise
     // order, stopping at a₀, ..., a_{m+1}."
@@ -590,6 +617,26 @@ std::vector<FusionVertex> build_fusion_sequence(const Submap& S,
     // Within each bucket (same arc), O(1) elements for conformal
     // submaps (degree ≤ 4).  Sort by y along the arc's traversal
     // direction.  Use insertion sort — O(1) per bucket, O(m) total.
+    std::size_t right_half_len = junction_edge + 1;
+    auto trav_pos = [&](std::size_t edge, Side side) -> std::size_t {
+        if (side == RIGHT)
+            return junction_edge - edge;
+        else
+            return right_half_len + edge;
+    };
+    auto vertex_before = [&](const FusionVertex& u, const FusionVertex& v) -> bool {
+        std::size_t u_pos = trav_pos(u.edge, u.side);
+        std::size_t v_pos = trav_pos(v.edge, v.side);
+        if (u_pos != v_pos) return u_pos < v_pos;
+        assert(u.edge < C.num_edges());
+        const auto& e = C.edge(u.edge);
+        bool edge_ascending = symbolic_y_less(
+            symbolic_y_of(C.vertex(e.start_idx)),
+            symbolic_y_of(C.vertex(e.end_idx)));
+        bool trav_asc = (u.side == LEFT) ? edge_ascending : !edge_ascending;
+        return trav_asc ? symbolic_y_less(u.y, v.y) : symbolic_y_greater(u.y, v.y);
+    };
+
     {
         std::size_t i = 0;
         while (i < sorted.size()) {
@@ -598,27 +645,12 @@ std::vector<FusionVertex> build_fusion_sequence(const Submap& S,
                 ++j;
             // sorted[i..j) share the same arc key.
             if (j - i > 1) {
-                // Recover the arc-table index from the clockwise key.
-                std::size_t arc_idx = (sorted[i].key < num_right)
-                    ? (sorted[i].key + lrb)       // RIGHT arc
-                    : (sorted[i].key - num_right); // LEFT arc
-                assert(arc_idx < num_arcs);
-                const auto& e = C.edge(S.arc(arc_idx).first_edge);
-                bool edge_ascending = symbolic_y_less(
-                    symbolic_y_of(C.vertex(e.start_idx)),
-                    symbolic_y_of(C.vertex(e.end_idx)));
-                Side arc_side = S.arc(arc_idx).first_side;
-                bool trav_asc = (arc_side == LEFT)
-                    ? edge_ascending : !edge_ascending;
                 // Insertion sort — O(1) elements per bucket.
                 for (std::size_t a = i + 1; a < j; ++a) {
                     KeyedVertex tmp = sorted[a];
                     std::size_t b = a;
                     while (b > i) {
-                        bool before = trav_asc
-                            ? symbolic_y_less(tmp.v.y, sorted[b-1].v.y)
-                            : symbolic_y_greater(tmp.v.y, sorted[b-1].v.y);
-                        if (!before) break;
+                        if (!vertex_before(tmp.v, sorted[b-1].v)) break;
                         sorted[b] = sorted[b-1];
                         --b;
                     }
