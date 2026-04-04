@@ -145,7 +145,7 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     bool right_is_vertex = endpoint_is_polygon_vertex(c.right_edge, c.y, c.y_tag);
 
     // [C91 §2.2]: "glueing back ∂C at those points."
-    // Merge arc pairs at non-vertex endpoints.  O(1): at most 2 pairs.
+    // Merge arc pairs at endpoints.  O(1): at most 2 pairs.
     auto do_merge = [&](std::size_t ai, std::size_t aj) {
         assert(ai != NONE && ai < arc_sequence_.size() &&
                "§2.4(ii): adj_arc must be valid");
@@ -197,19 +197,36 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         }
     };
 
-    if (!left_is_vertex) {
-        // [C91 §2.2] (tex 94): a non-vertex chord endpoint always has
-        // exactly 2 adjacent arcs (one ending, one starting) to be glued.
-        assert(c.left_adj.count == 2 &&
-               "§2.2 (tex 94): non-vertex chord endpoint must have "
-               "exactly 2 adjacent arcs for glueing");
-        do_merge(c.left_adj.arcs[0], c.left_adj.arcs[1]);
-    }
-    if (!right_is_vertex) {
-        assert(c.right_adj.count == 2 &&
-               "§2.2 (tex 94): non-vertex chord endpoint must have "
-               "exactly 2 adjacent arcs for glueing");
-        do_merge(c.right_adj.arcs[0], c.right_adj.arcs[1]);
+    // [C91 §2.2] (tex 108): "once removed, a chord of zero length 
+    // ceases to separate any arcs."
+    //
+    // A null-length chord connects two duplicate locations on ∂C 
+    // (same edge, opposite sides).  Removing it must "heal" the 
+    // boundary into a continuous arc.
+    bool is_null_length = (c.left_edge == c.right_edge && 
+                           c.left_side != c.right_side);
+
+    if (is_null_length) {
+        assert(c.left_adj.count == 1 && c.right_adj.count == 1 &&
+               "§2.2: null-length chord at vertex must have exactly "
+               "1 adjacent arc per side");
+        do_merge(c.left_adj.arcs[0], c.right_adj.arcs[0]);
+    } else {
+        // Standard logic for chords with nonzero length: merge if NOT a vertex.
+        if (!left_is_vertex) {
+            // [C91 §2.2] (tex 94): a non-vertex chord endpoint always has
+            // exactly 2 adjacent arcs (one ending, one starting) to be glued.
+            assert(c.left_adj.count == 2 &&
+                   "§2.2 (tex 94): non-vertex chord endpoint must have "
+                   "exactly 2 adjacent arcs for glueing");
+            do_merge(c.left_adj.arcs[0], c.left_adj.arcs[1]);
+        }
+        if (!right_is_vertex) {
+            assert(c.right_adj.count == 2 &&
+                   "§2.2 (tex 94): non-vertex chord endpoint must have "
+                   "exactly 2 adjacent arcs for glueing");
+            do_merge(c.right_adj.arcs[0], c.right_adj.arcs[1]);
+        }
     }
 
     // Reassign r1's arcs to r0.  Use chord→arc adjacency for O(1).
