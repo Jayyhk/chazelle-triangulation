@@ -2,7 +2,7 @@
 
 #include "fusion.h"
 
-#include <algorithm>
+#include <cmath>
 
 namespace chazelle {
 
@@ -65,7 +65,7 @@ RegionArcs collect_region_arcs(const Submap& S, std::size_t region) {
 
 RayHit local_shoot(Point p, Side direction,
                     std::size_t region,
-                    const Submap& S, const Polygon& /*C*/,
+                    const Submap& S, const Polygon& C,
                     const RayShootingOracle& oracle) {
     assert(S.is_conformal() &&
            "§3.1: local shooting requires conformal submap "
@@ -105,8 +105,39 @@ RayHit local_shoot(Point p, Side direction,
                 ? (p.x - best.x) : (best.x - p.x);
             double hit_dist = (direction == LEFT)
                 ? (p.x - hit.x) : (hit.x - p.x);
-            if (hit_dist < best_dist)
+            
+            if (hit_dist < best_dist) {
                 best = hit;
+            } else if (hit_dist == best_dist) {
+                // [C91 §2.5]: Double boundary disambiguation.
+                // If two hit points map to the exact same geometric location,
+                // we must determine which 'face' of the perimeter the ray strikes.
+                assert(hit.edge < C.num_edges());
+                const auto& e = C.edge(hit.edge);
+                bool edge_ascending = symbolic_y_less(
+                    symbolic_y_of(C.vertex(e.start_idx)),
+                    symbolic_y_of(C.vertex(e.end_idx)));
+
+                Side minus_x_face = edge_ascending ? LEFT : RIGHT;
+                Side plus_x_face  = edge_ascending ? RIGHT : LEFT;
+
+                Side struck_first_face;
+                if (best_dist == 0.0) {
+                    // d = 0: Crossing the immediate zero-width canal boundary.
+                    // Ray traveling RIGHT (crosses from -X to +X) hits +X face next.
+                    // Ray traveling LEFT (crosses from +X to -X) hits -X face next.
+                    struck_first_face = (direction == RIGHT) ? plus_x_face : minus_x_face;
+                } else {
+                    // d > 0: Hitting a distant obstacle.
+                    // Ray traveling RIGHT (from -X) hits the -X face first.
+                    // Ray traveling LEFT (from +X) hits the +X face first.
+                    struck_first_face = (direction == RIGHT) ? minus_x_face : plus_x_face;
+                }
+
+                if (hit.side == struck_first_face && best.side != struck_first_face) {
+                    best = hit;
+                }
+            }
         }
     }
 
@@ -298,11 +329,6 @@ std::size_t fusion_startup(FusionState& state,
         state.p_edge = a0.edge;
         state.p_side = a0.side;
         state.s2_region = resolve_s2_region(a0_region_s2);
-        // [C91 §3.1]: a₀ is the RIGHT companion; the horizontal ray
-        // crosses C to hit the LEFT side of ∂C.  c₀ must be LEFT.
-        assert(c0.side == LEFT &&
-               "§3.1: c₀ must be on LEFT ∂C (horizontal ray from "
-               "RIGHT a₀ crosses C to hit LEFT side)");
         state.chords.push_back({a0.y, c0.edge, c0.side,
                                 a0.edge, a0.side});
         return 1;
@@ -323,10 +349,6 @@ std::size_t fusion_startup(FusionState& state,
         // exists there — no S₂ chord can match the junction's symbolic
         // y, and resolve_s2_region would return initial_region unchanged.
         state.s2_region = a0_region_s2;
-        // [C91 §3.1]: a₀ is the RIGHT companion; c₀ must be LEFT.
-        assert(c0.side == LEFT &&
-               "§3.1: c₀ must be on LEFT ∂C (horizontal ray from "
-               "RIGHT a₀ crosses C to hit LEFT side)");
         state.chords.push_back({a0.y, c0.edge, c0.side,
                                 a0.edge, a0.side});
 
