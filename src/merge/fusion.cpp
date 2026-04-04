@@ -522,9 +522,11 @@ void fuse_s1_into_s2(FusionState& state,
                    "produced at least one chord");
 
         // TODO: (§3.1) At each stop:
-        //   1. Determine what p sees (local_shoot into S₂).
-        //   2. Record discovered chord.
-        //   3. Update s2_region for the next stop.
+        //   1. Determine what p sees on ∂C₂ (local_shoot into S₂ taking O(f(γ₂))).
+        //   2. Determine what p sees on ∂C₁ (CRITICAL: if p has a chord_idx, do NOT use
+        //      local_shoot into S₁! Just return the opposite chord endpoint in O(1) time
+        //      per §3.1 deviation rules. Only fallback to local_shoot for companion vertices).
+        //   3. Record discovered chord and update s2_region for the next stop.
     }
 }
 

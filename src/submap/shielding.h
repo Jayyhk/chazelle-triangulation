@@ -7,7 +7,7 @@
 /// H₂ = cw arc b→a.  Curve A runs from c to d inside D.
 /// T = cw arc d→c.  B₁ = closure(T ∩ H₁), B₂ = closure(T ∩ H₂).
 ///
-/// Lemma 2.4: intersection points a' (first of ab∩A from a) and b'
+/// [C91 §2.5 Lemma 2.4]: intersection points a' (first of ab∩A from a) and b'
 /// (last of ab∩A from a) subdivide A into 1–3 pieces, each shielded
 /// from some B_j.  The classification depends only on which of a', b'
 /// exist and whether they coincide.
@@ -22,7 +22,7 @@ namespace chazelle {
 /// B2 = closure of (cw d→c arc) ∩ H₂.  The other side.
 enum class BoundarySide : int { B1 = 1, B2 = 2 };
 
-/// Result of Lemma 2.4: A is divided into 1–3 pieces,
+/// Result of [C91 §2.5 Lemma 2.4]: A is divided into 1–3 pieces,
 /// each shielded from some B_j.
 ///
 /// Pieces are in order along A from c to d:
@@ -114,6 +114,11 @@ inline ShieldingResult classify_shielding(bool a_prime,
         r.shielded_from[2] = BoundarySide::B2;
     }
 
+    // [C91 §2.5 Lemma 2.4] (tex 153): "The points a' and b' (which might not exist) 
+    // subdivide A into a total of one, two, or three connected curves..."
+    assert(r.num_pieces >= 1 && r.num_pieces <= 3 &&
+           "§2.5 Lemma 2.4: Curve A MUST be subdivided into strictly 1, 2, or 3 pieces.");
+    
     return r;
 }
 

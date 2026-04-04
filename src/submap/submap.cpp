@@ -1048,6 +1048,18 @@ std::size_t Submap::simulated_contraction_weight(
 
 bool Submap::is_granular(std::size_t gamma,
                           const Polygon& polygon) const noexcept {
+    // [C91 §2.3 Lemma 2.3] (tex 126): "If C is a polygonal curve with n vertices, any γ-granular conformal submap 
+    // of the visibility map of C has O(n/γ + 1) regions and each region is bounded by O(γ) edges."
+    // 
+    // Mathematically bounded constant derivation:
+    // 1. Edges E spanning nodes of deg < 3 is > N/2 of total tree edges (N is regions).
+    // 2. Converged capacity: sum(W_u + W_v) > |E|*gamma. Max vertex duplicated overlap <= 4. Maximum graph boundary <= 4n.
+    // 3. Solving: 16n >= 4*sum(W_v) >= sum(W_u+W_v) > |E|*gamma >= (N/2)*gamma => N < 32*(n/gamma).
+    // Note: Mathematically this is strictly N < 32(n/gamma), but because C++ performs integer 
+    // division truncation on (n/gamma), we use <= 32*(n/gamma) + 32 to safely preserve the ceiling bounds.
+    assert(num_live_nodes() <= 32 * (polygon.num_vertices() / (gamma > 0 ? gamma : 1)) + 32 && 
+           "§2.3 Lemma 2.3: Violates strict mathematically proven N < 32(n/gamma) bound");
+
     // [C91 §2.3] condition (i): all weights ≤ γ.
     if (!is_semigranular(gamma)) return false;
 
