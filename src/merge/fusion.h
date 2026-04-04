@@ -113,6 +113,10 @@ struct FusionState {
     /// Current region of S₂ that p lies in.
     std::size_t s2_region = NONE;
 
+    /// [C91 §3.1]: O(1) array mapping to support context propagation.
+    /// Maps a `cw_pos(arc_index)` to its start block in `sequence`.
+    std::vector<std::size_t> arc_starts;
+
     /// Discovered chords (points of ∂C seen by fusion vertices).
     /// Populated during the traversal; used to build the fused submap.
     struct DiscoveredChord {
@@ -171,10 +175,10 @@ void fuse_s1_into_s2(FusionState& state,
 ///   RIGHT side (c_end → c_start, descending edges), then
 ///   LEFT side (c_start → c_end, ascending edges).
 ///
+/// @param state   The FusionState to populate with sequence and arc mappings.
 /// @param S       The submap S₁.
 /// @param C       The curve C₁.
-/// @return The fusion vertex sequence a₀, a₁, ..., aₘ, a_{m+1}.
-std::vector<FusionVertex> build_fusion_sequence(const Submap& S,
-                                                 const Polygon& C);
+void build_fusion_sequence(FusionState& state, const Submap& S,
+                           const Polygon& C);
 
 } // namespace chazelle

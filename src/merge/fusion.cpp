@@ -91,6 +91,9 @@ RayHit local_shoot(Point p, Side direction,
         RayHit hit = oracle.shoot(p, direction, ai, sub);
         if (!hit.hit) continue;
 
+        // [C91 §3.1]: Track the explicit arc index to propagate O(1) context
+        hit.hit_arc_idx = ai;
+
         if (!best.hit) {
             best = hit;
         } else {
@@ -408,16 +411,26 @@ std::size_t fusion_startup(FusionState& state,
                 return symbolic_y_leq(v.y, c0_y);
         };
 
-        // Binary search: find first i in [1, size) where
-        // vertex_past_c0 is true.  O(log m).
-        std::size_t lo = 1, hi = state.sequence.size();
-        while (lo < hi) {
-            std::size_t mid = lo + (hi - lo) / 2;
-            if (!vertex_past_c0(state.sequence[mid]))
-                lo = mid + 1;
-            else
-                hi = mid;
+        // [C91 §3.1 Case 2]: "We can therefore skip all the way to c₀."
+        // We evaluate this natively in O(1) time. c0 was struck on an explicitly
+        // tracked arc in S1 via local_shoot. We know precisely which block it occupies.
+        assert(hit_c1.hit_arc_idx != NONE && "§3.1: c0 must carry hit context");
+        std::size_t c0_arc_idx = hit_c1.hit_arc_idx;
+        
+        std::size_t cw_key = 0;
+        {
+            std::size_t lrb = S1.left_right_boundary();
+            std::size_t num_right = S1.num_arcs() - lrb;
+            cw_key = (c0_arc_idx >= lrb) ? (c0_arc_idx - lrb) : (num_right + c0_arc_idx);
         }
+        
+        std::size_t lo = state.arc_starts[cw_key];
+
+        // The exact match within the arc's block (degree <= 4 → O(1) iteration).
+        while (lo < state.sequence.size() && !vertex_past_c0(state.sequence[lo])) {
+            lo++;
+        }
+
         if (lo >= state.sequence.size()) {
             if (state.sequence.size() > 1 && !state.sequence[1].is_companion) {
                 assert(state.sequence[1].chord_idx != NONE &&
@@ -428,11 +441,13 @@ std::size_t fusion_startup(FusionState& state,
         }
 
         // §3.1 Case 2 (Lemma 2.1): All skipped vertices see ∂C₁.
-        // Debug-verify the first skipped vertex (O(f(γ₁)) — acceptable).
-        if (lo > 1 && !state.sequence[1].is_companion) {
-            assert(state.sequence[1].chord_idx != NONE &&
-                   "§3.1 Case 2 (Lemma 2.1): skipped vertex must be a "
-                   "chord endpoint of S₁ (sees ∂C₁ by construction)");
+        // Debug-verify all skipped vertices sequentially to strictly prove the paper's invariant.
+        for (std::size_t skipped_i = 1; skipped_i < lo; ++skipped_i) {
+            if (!state.sequence[skipped_i].is_companion) {
+                assert(state.sequence[skipped_i].chord_idx != NONE &&
+                       "§3.1 Case 2 (Lemma 2.1): skipped vertex must be a "
+                       "chord endpoint of S₁ (sees ∂C₁ by construction)");
+            }
         }
 
         return lo;
@@ -447,7 +462,7 @@ void fuse_s1_into_s2(FusionState& state,
                       const RayShootingOracle& oracle1,
                       const RayShootingOracle& oracle2) {
     // [C91 §3.1]: Build the fusion vertex sequence.
-    state.sequence = build_fusion_sequence(S1, C1);
+    build_fusion_sequence(state, S1, C1);
     state.current_stop = 0;
 
     // [C91 §3.1 Start-Up]: Initialize p and current S₂ region.
@@ -515,8 +530,8 @@ void fuse_s1_into_s2(FusionState& state,
 
 // ── build_fusion_sequence ───────────────────────────────────────
 
-std::vector<FusionVertex> build_fusion_sequence(const Submap& S,
-                                                 const Polygon& C) {
+void build_fusion_sequence(FusionState& state, const Submap& S,
+                           const Polygon& C) {
     std::size_t n = C.num_vertices();
     assert(n >= 2);
 
@@ -634,14 +649,20 @@ std::vector<FusionVertex> build_fusion_sequence(const Submap& S,
     // [C91 §2.4] (tex 142): "canonical vertex enumerations in optimal
     // time" — O(m) where m = number of chord endpoints.
     std::vector<KeyedVertex> sorted(endpoints.size());
+    std::vector<std::size_t> bucket_starts;
     if (!endpoints.empty()) {
         std::vector<std::size_t> counts(num_arcs + 1, 0);
         for (const auto& ep : endpoints)
             ++counts[ep.key + 1];
         for (std::size_t i = 1; i <= num_arcs; ++i)
             counts[i] += counts[i - 1];
+            
+        bucket_starts.assign(counts.begin(), counts.begin() + static_cast<std::ptrdiff_t>(num_arcs));
+        
         for (const auto& ep : endpoints)
             sorted[counts[ep.key]++] = ep;
+    } else {
+        bucket_starts.assign(num_arcs, 0);
     }
 
     // Within each bucket (same arc), O(1) elements for conformal
@@ -701,7 +722,13 @@ std::vector<FusionVertex> build_fusion_sequence(const Submap& S,
         result.push_back(kv.v);
     result.push_back(a_m1);
 
-    return result;
+    state.sequence = std::move(result);
+
+    // [C91 §3.1]: Map arc keys directly to their contiguous bounds in sequence.
+    state.arc_starts.assign(num_arcs, NONE);
+    for (std::size_t i = 0; i < bucket_starts.size(); ++i) {
+        state.arc_starts[i] = bucket_starts[i] + 1; // +1 because a_0 is prepended
+    }
 }
 
 } // namespace chazelle

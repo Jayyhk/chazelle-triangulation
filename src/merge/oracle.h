@@ -40,11 +40,12 @@ struct Subarc {
 /// obstacle except α'.  In addition to the point hit, the report
 /// should also include the name of the edge of P that contains it."
 struct RayHit {
-    bool hit = false;          ///< True if the ray hit the subarc.
-    double x = 0.0;            ///< x-coordinate of the hit point.
-    double y = 0.0;            ///< y-coordinate of the hit point (= p.y).
-    std::size_t edge = 0;      ///< "the name of the edge of P that contains it."
-    Side side = LEFT;          ///< Which side of ∂P the hit is on.
+    bool hit = false;               ///< True if the ray hit the subarc.
+    double x = 0.0;                 ///< x-coordinate of the hit point.
+    double y = 0.0;                 ///< y-coordinate of the hit point (= p.y).
+    std::size_t edge = 0;           ///< "the name of the edge of P that contains it."
+    Side side = LEFT;               ///< Which side of ∂P the hit is on.
+    std::size_t hit_arc_idx = NONE; ///< Index of the struck region arc.
 };
 
 /// [C91 §3.0(ii)]: Result of an arc-cutting query — one piece αⱼ.
