@@ -12,11 +12,11 @@ RegionArcs collect_region_arcs(const Submap& S, std::size_t region) {
     assert(region < S.num_nodes() && !S.node(region).dead);
 
     RegionArcs out;
-
     // [C91 §3.1] (tex 181): "The claim on the time follows from the
-    // conformality of Sᵢ, which ensures that at most four arcs need
-    // to be checked."  Collect via chord→arc adjacency (same traversal
-    // as region_weight).  O(1) for conformal submaps (degree ≤ 4).
+    // conformality of Sᵢ."  Assert local conformality before iteration
+    // to strictly enforce O(1) evaluation bound.
+    assert(S.node(region).degree() <= 4 &&
+           "§2.3: conformal regions MUST have degree ≤ 4");
     auto check_adj = [&](const Chord::AdjArcs& adj) {
         for (std::size_t k = 0; k < adj.count; ++k) {
             std::size_t ai = adj.arcs[k];
@@ -67,10 +67,6 @@ RayHit local_shoot(Point p, Side direction,
                     std::size_t region,
                     const Submap& S, const Polygon& C,
                     const RayShootingOracle& oracle) {
-    assert(S.is_conformal() &&
-           "§3.1: local shooting requires conformal submap "
-           "(at most 4 arcs per region)");
-
     // [C91 §3.1]: "Using the appropriate ray-shooters, we can find
     // that point by checking each arc in turn and finding the nearest
     // hit.  The claim on the time follows from the conformality of Sᵢ,
