@@ -634,9 +634,25 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
     // The arc-sequence table is in ∂C order: LEFT arcs first
     // (ascending first_edge), then RIGHT arcs (descending first_edge).
 
-    // [C91 §2.4] (tex 144): Use cached LEFT/RIGHT boundary — O(1).
-    std::size_t left_begin = 0;
-    std::size_t left_end   = left_right_boundary_;
+    // [C91 §2.4] (tex 144): "Since we know the location of the two 
+    // endpoints of C in the arc-sequence table (i.e., which arcs pass 
+    // through them) we can conceptually break up the circular arc 
+    // sequence into two linear sequences..."
+    //
+    // The paper dictates anchoring the split at these two endpoints.
+    // In our normal-form storage:
+    //   - Sequence 1 (Forward/LEFT): [start_arc, ..., end_arc]
+    //   - Sequence 2 (Return/RIGHT): (end_arc, ..., circular wrap to start_arc)
+    //
+    // For a simple chain C, this corresponds to:
+    assert(start_arc == 0 && 
+           "§2.4: start_arc MUST be index 0 in a normal-form canonical traversal");
+    assert(end_arc == left_right_boundary_ - 1 && 
+           "§2.4: end_arc MUST be the turnaround point identifying the end of the forward pass");
+
+    // Frame the two linear search sequences as prescribed by the paper:
+    std::size_t left_begin = start_arc;
+    std::size_t left_end   = end_arc + 1;
     std::size_t right_begin = left_end;
     std::size_t right_end   = arc_sequence_.size();
 
