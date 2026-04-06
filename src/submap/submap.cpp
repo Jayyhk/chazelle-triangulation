@@ -197,20 +197,25 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         }
     };
 
-    // [C91 §2.2] (tex 108): "once removed, a chord of zero length 
+    // [C91 §2.2] (tex 108): "once removed, a chord of zero length
     // ceases to separate any arcs."
     //
-    // A null-length chord connects two duplicate locations on ∂C 
-    // (same edge, opposite sides).  Removing it must "heal" the 
-    // boundary into a continuous arc.
-    bool is_null_length = (c.left_edge == c.right_edge && 
-                           c.left_side != c.right_side);
+    // Use the stored flag — do NOT recompute from edge/side fields.
+    // The default Chord has left_side=LEFT, right_side=RIGHT, so
+    // any exit chord with left_edge==right_edge would be misclassified
+    // as an NLC if we recomputed here.
+    bool is_null_length = c.is_null_length;
 
     if (is_null_length) {
         assert(c.left_adj.count == 1 && c.right_adj.count == 1 &&
                "§2.2: null-length chord at vertex must have exactly "
                "1 adjacent arc per side");
-        do_merge(c.left_adj.arcs[0], c.right_adj.arcs[0]);
+        // [C91 §2.2] (tex 108): NLC endpoints are polygon vertices.
+        // Vertex endpoints do NOT trigger arc merging (§2.2 tex 94).
+        // The null-length arc (right_adj) is kept alive and absorbed
+        // into the main region by the reassignment step below —
+        // it correctly represents the y-extremum vertex on r0's boundary.
+        // do_merge is NOT called here.
     } else {
         // Standard logic for chords with nonzero length: merge if NOT a vertex.
         if (!left_is_vertex) {
@@ -662,14 +667,25 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
     //   - Sequence 2 (Return/RIGHT): (end_arc, ..., circular wrap to start_arc)
     //
     // For a simple chain C, this corresponds to:
-    assert(start_arc == 0 && 
+    assert(start_arc == 0 &&
            "§2.4: start_arc MUST be index 0 in a normal-form canonical traversal");
-    assert(end_arc == left_right_boundary_ - 1 && 
-           "§2.4: end_arc MUST be the turnaround point identifying the end of the forward pass");
+
+    // [C91 §2.4] (tex 144): "Since we know the location of the two
+    // endpoints of C in the arc-sequence table (i.e., which arcs pass
+    // through them) we can conceptually break up the circular arc
+    // sequence into two linear sequences."
+    //
+    // The split is at C's end endpoint: end_arc is the LAST LEFT arc
+    // (index = left_right_boundary_ - 1).  end_arc + 1 equals
+    // left_right_boundary_, giving [LEFT arcs | RIGHT arcs].
+    assert(end_arc == left_right_boundary_ - 1 &&
+           "§2.4 (tex 144): end_arc must be the last LEFT arc "
+           "(left_right_boundary_ - 1) so the arc-sequence split "
+           "produces [LEFT arcs | RIGHT arcs]");
 
     // Frame the two linear search sequences as prescribed by the paper:
-    std::size_t left_begin = start_arc;
-    std::size_t left_end   = end_arc + 1;
+    std::size_t left_begin  = start_arc;
+    std::size_t left_end    = end_arc + 1;
     std::size_t right_begin = left_end;
     std::size_t right_end   = arc_sequence_.size();
 

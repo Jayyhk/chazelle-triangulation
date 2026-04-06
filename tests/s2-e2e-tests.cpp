@@ -369,7 +369,8 @@ static Submap build_nonvertex_chord_submap(const Polygon& poly,
         s.add_arc(a);
         a.first_side = RIGHT; a.last_side = RIGHT;
         s.add_arc(a);
-        s.start_arc = 0; s.end_arc = 1;
+        // §2.4 (tex 144): end_arc = last LEFT arc (arc 0).
+        s.start_arc = 0; s.end_arc = 0;
         s.start_vertex = 0; s.end_vertex = 1;
         return s;
     }
@@ -1098,8 +1099,9 @@ static void test_edge_cases() {
         std::size_t ai0 = s.add_arc(a);
         a.first_side = RIGHT; a.last_side = RIGHT;
         a.key_y = 1.0; a.key_y_tag = 1;
-        std::size_t ai1 = s.add_arc(a);
-        s.start_arc = ai0; s.end_arc = ai1;
+        s.add_arc(a);
+        // §2.4 (tex 144): end_arc = last LEFT arc (ai0).
+        s.start_arc = ai0; s.end_arc = ai0;
         s.start_vertex = 0; s.end_vertex = 1;
 
         s.check_invariants();
@@ -1133,8 +1135,9 @@ static void test_edge_cases() {
         a.first_edge = 1; a.last_edge = 0;
         a.first_side = RIGHT; a.last_side = RIGHT;
         a.key_y = 2.0; a.key_y_tag = 2;
-        std::size_t ai1 = s.add_arc(a);
-        s.start_arc = ai0; s.end_arc = ai1;
+        s.add_arc(a);
+        // §2.4 (tex 144): end_arc = last LEFT arc (ai0).
+        s.start_arc = ai0; s.end_arc = ai0;
         s.start_vertex = 0; s.end_vertex = 2;
 
         s.check_invariants();

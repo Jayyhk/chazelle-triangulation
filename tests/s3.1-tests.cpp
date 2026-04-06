@@ -73,7 +73,9 @@ static void test_fusion_sequence_basic() {
     auto C1 = make_C1();
     auto S1 = make_S1(C1);
 
-    auto seq = build_fusion_sequence(S1, C1);
+    FusionState state;
+    build_fusion_sequence(state, S1, C1);
+    const auto& seq = state.sequence;
 
     // 1 chord × 2 endpoints + 2 companions = 4 vertices.
     assert(seq.size() == 4);
@@ -120,7 +122,9 @@ static void test_fusion_sequence_no_chords() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     s.add_arc(a);
 
-    auto seq = build_fusion_sequence(s, C);
+    FusionState state;
+    build_fusion_sequence(state, s, C);
+    const auto& seq = state.sequence;
 
     // No chords → only the two companions.
     assert(seq.size() == 2);
@@ -138,7 +142,9 @@ static void test_fusion_sequence_ordering() {
     auto C1 = make_C1();
     auto S1 = make_S1(C1);
 
-    auto seq = build_fusion_sequence(S1, C1);
+    FusionState state;
+    build_fusion_sequence(state, S1, C1);
+    const auto& seq = state.sequence;
 
     // The chord at vertex 2 has LEFT endpoint on edge 1 (LEFT side)
     // and RIGHT endpoint on edge 1 (RIGHT side).
@@ -165,7 +171,9 @@ static void test_companion_identity() {
     auto C1 = make_C1();
     auto S1 = make_S1(C1);
 
-    auto seq = build_fusion_sequence(S1, C1);
+    FusionState state;
+    build_fusion_sequence(state, S1, C1);
+    const auto& seq = state.sequence;
 
     // Both companions correspond to the junction vertex (index 4).
     SymbolicY junction_y = symbolic_y_of(C1.vertex(4));
@@ -287,7 +295,7 @@ static void test_local_shoot_nearest() {
 struct StartupOracle : RayShootingOracle {
     double hit_x;
     explicit StartupOracle(double x) : hit_x(x) {}
-    RayHit shoot(Point p, Side /*dir*/,
+    RayHit shoot(Point p, Side dir,
                  std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
         RayHit h;
@@ -295,7 +303,11 @@ struct StartupOracle : RayShootingOracle {
         h.x = hit_x;
         h.y = p.y;
         h.edge = target.first_edge;
-        h.side = target.first_side;
+        // A horizontal ray always hits the face it approaches first.
+        // Shooting LEFT → hits a LEFT-side point; RIGHT → RIGHT.
+        // This ensures the discovered chord connects opposite sides
+        // (§2.2 tex 96: exit chords cross the double boundary).
+        h.side = dir;
         return h;
     }
 };
@@ -321,7 +333,8 @@ static void test_startup_case1() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
     std::size_t ai1 = S2.add_arc(a);
-    S2.start_arc = ai0; S2.end_arc = ai1;
+    // §2.4 (tex 144): end_arc = last LEFT arc (ai0).
+    S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
     // a₀ at vertex 4 = (4,3). Edge 3 ascending → shoot LEFT → p.x ≈ 4.
@@ -333,7 +346,7 @@ static void test_startup_case1() {
     StartupOracle oracle2(3.0);
 
     FusionState state;
-    state.sequence = build_fusion_sequence(S1, C1);
+    build_fusion_sequence(state, S1, C1);
 
     std::size_t start = fusion_startup(state, S1, C1, S2, C2,
                                         oracle1, oracle2);
@@ -368,7 +381,8 @@ static void test_startup_case2() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
     std::size_t ai1 = S2.add_arc(a);
-    S2.start_arc = ai0; S2.end_arc = ai1;
+    // §2.4 (tex 144): end_arc = last LEFT arc (ai0).
+    S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
     // a₀ at vertex 4 = (4,3). Edge 3 ascending → shoot LEFT → p.x ≈ 4.
@@ -379,7 +393,7 @@ static void test_startup_case2() {
     StartupOracle oracle2(-10.0);
 
     FusionState state;
-    state.sequence = build_fusion_sequence(S1, C1);
+    build_fusion_sequence(state, S1, C1);
 
     std::size_t start = fusion_startup(state, S1, C1, S2, C2,
                                         oracle1, oracle2);

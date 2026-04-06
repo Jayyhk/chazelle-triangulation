@@ -36,11 +36,11 @@ struct FusionVertex {
 
 /// [C91 §3.1]: Fixed-capacity result for collect_region_arcs.
 ///
-/// §2.3 (tex 114): conformal ⟹ degree ≤ 4 ⟹ at most 4 arcs per
-/// region boundary.  With start_arc/end_arc the practical max is ~8
-/// candidates before deduplication.
+/// §3.1 (tex 181): "the conformality of Sᵢ, which ensures that at most
+/// four arcs need to be checked."  A degree-d region has exactly one arc
+/// per chord-gap around its boundary, so degree ≤ 4 ⟹ at most 4 arcs.
 struct RegionArcs {
-    static constexpr std::size_t MAX = 8;
+    static constexpr std::size_t MAX = 4;
     std::array<std::size_t, MAX> arcs = {};
     std::size_t count = 0;
     void push(std::size_t arc_idx) {

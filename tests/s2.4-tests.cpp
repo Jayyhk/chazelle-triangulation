@@ -35,7 +35,8 @@ static void test_double_identify_simple() {
     a.key_y = 0.0; a.key_y_tag = 0;
     std::size_t ai1 = s.add_arc(a);
 
-    s.start_arc = ai0; s.end_arc = ai1;
+    // §2.4 (tex 144): end_arc = last LEFT arc (the turnaround point).
+    s.start_arc = ai0; s.end_arc = ai0;
     s.start_vertex = 0; s.end_vertex = 1;
 
     auto poly = test_polygon();
@@ -62,7 +63,8 @@ static void test_double_identify_multi_edge() {
     a.key_y = 3.0; a.key_y_tag = 3;
     std::size_t ai1 = s.add_arc(a);
 
-    s.start_arc = ai0; s.end_arc = ai1;
+    // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
+    s.start_arc = ai0; s.end_arc = ai0;
     s.start_vertex = 0; s.end_vertex = 4;
 
     auto poly = test_polygon();
@@ -98,7 +100,7 @@ static void test_double_identify_same_edge() {
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 1; a.edge_count = 1; a.key_y = 2.0; a.key_y_tag = 2;
-    s.add_arc(a);
+    std::size_t ai_end_left = s.add_arc(a); // last LEFT arc — §2.4 (tex 144)
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 2.0; a.key_y_tag = 2;
@@ -106,9 +108,10 @@ static void test_double_identify_same_edge() {
 
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.0; a.key_y_tag = 0;
-    std::size_t ai_last = s.add_arc(a);
+    s.add_arc(a);
 
-    s.start_arc = ai0; s.end_arc = ai_last;
+    // §2.4 (tex 144): end_arc = last LEFT arc (ai_end_left).
+    s.start_arc = ai0; s.end_arc = ai_end_left;
     s.start_vertex = 0; s.end_vertex = 2;
 
     auto poly = test_polygon();
@@ -135,12 +138,13 @@ static void test_endpoint_pointers() {
     std::size_t ai1 = s.add_arc(a);
 
     s.start_arc = ai0;
-    s.end_arc = ai1;
+    // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
+    s.end_arc = ai0;
     s.start_vertex = 0;
     s.end_vertex = 2;
 
     assert(s.start_arc == 0);
-    assert(s.end_arc == 1);
+    assert(s.end_arc == 0);
     assert(s.start_vertex == 0);
     assert(s.end_vertex == 2);
 
@@ -199,7 +203,7 @@ static void test_double_identify_worst_case() {
     s.add_arc(a);
 
     a.region_node = 0; a.edge_count = 1; a.key_y = 1.5; a.key_y_tag = 2;
-    s.add_arc(a);
+    std::size_t ai_end_left = s.add_arc(a); // last LEFT arc — §2.4 (tex 144)
 
     // 3 RIGHT arcs on edge 1.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
@@ -210,9 +214,10 @@ static void test_double_identify_worst_case() {
     s.add_arc(a);
 
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.5; a.key_y_tag = 0;
-    std::size_t ai_last = s.add_arc(a);
+    s.add_arc(a);
 
-    s.start_arc = ai0; s.end_arc = ai_last;
+    // §2.4 (tex 144): end_arc = last LEFT arc (ai_end_left = arc 2).
+    s.start_arc = ai0; s.end_arc = ai_end_left;
     s.start_vertex = 0; s.end_vertex = 2;
 
     auto poly = test_polygon();
@@ -239,7 +244,8 @@ static void test_double_identify_miss() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     std::size_t ai1 = s.add_arc(a);
 
-    s.start_arc = ai0; s.end_arc = ai1;
+    // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
+    s.start_arc = ai0; s.end_arc = ai0;
     s.start_vertex = 0; s.end_vertex = 1;
 
     auto poly = test_polygon();
