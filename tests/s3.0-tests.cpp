@@ -35,8 +35,10 @@ static MergeInput make_input(const Polygon& C1, const Polygon& C2,
     in.C1 = &C1; in.C2 = &C2;
     in.S1 = &S1; in.S2 = &S2;
     in.gamma1 = g1; in.gamma2 = g2; in.gamma = g;
-    in.ray_shooter = &STUB_RAY;
-    in.arc_cutter = &STUB_ARC;
+    in.ray_shooter_1 = &STUB_RAY;
+    in.ray_shooter_2 = &STUB_RAY;
+    in.arc_cutter_1  = &STUB_ARC;
+    in.arc_cutter_2  = &STUB_ARC;
     return in;
 }
 

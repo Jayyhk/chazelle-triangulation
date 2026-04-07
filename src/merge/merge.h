@@ -38,9 +38,16 @@ struct MergeInput {
     /// Target granularity.  γ ≥ γ₂.
     std::size_t gamma = 0;
 
-    /// [C91 §3]: Oracle primitives (provided by §3.4 / §4).
-    const RayShootingOracle* ray_shooter = nullptr;
-    const ArcCuttingOracle* arc_cutter = nullptr;
+    /// [C91 §3.0 tex 166–170]: Oracle primitives (provided by §3.4 / §4).
+    ///
+    /// Two kinds of oracle, each instantiated per submap:
+    ///   - tex 181: "the appropriate ray-shooters" (plural)
+    ///   - tex 220: f(γ₁) for S₁ arcs, f(γ₂) for S₂ arcs (separate costs)
+    ///   - §3.4 Lemma 3.6: builds ray-shooting for one submap S
+    const RayShootingOracle* ray_shooter_1 = nullptr;  ///< For S₁ arcs.
+    const RayShootingOracle* ray_shooter_2 = nullptr;  ///< For S₂ arcs.
+    const ArcCuttingOracle*  arc_cutter_1  = nullptr;  ///< For S₁ arcs.
+    const ArcCuttingOracle*  arc_cutter_2  = nullptr;  ///< For S₂ arcs.
 };
 
 /// [C91 §3]: Result of the merge operation.
@@ -108,11 +115,15 @@ inline void assert_merge_preconditions(const MergeInput& in) {
     assert(in.S2->is_granular(in.gamma2, *in.C2) &&
            "§3: S₂ must be γ₂-granular");
 
-    // [C91 §3]: "we assume that we have at our disposal two primitives."
-    assert(in.ray_shooter != nullptr &&
-           "§3: merge requires a ray-shooting oracle");
-    assert(in.arc_cutter != nullptr &&
-           "§3: merge requires an arc-cutting oracle");
+    // [C91 §3.0 tex 166–170]: per-submap oracles (§3.4 Lemma 3.6).
+    assert(in.ray_shooter_1 != nullptr &&
+           "§3.0: merge requires a ray-shooting oracle for S₁");
+    assert(in.ray_shooter_2 != nullptr &&
+           "§3.0: merge requires a ray-shooting oracle for S₂");
+    assert(in.arc_cutter_1 != nullptr &&
+           "§3.0: merge requires an arc-cutting oracle for S₁");
+    assert(in.arc_cutter_2 != nullptr &&
+           "§3.0: merge requires an arc-cutting oracle for S₂");
 
     // [C91 §3]: "with γ₁ ≤ γ₂."
     assert(in.gamma1 <= in.gamma2 &&

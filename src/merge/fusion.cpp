@@ -417,7 +417,19 @@ std::size_t fusion_startup(FusionState& state,
                 return right_half_len + edge;
         };
 
-        SymbolicY c0_y = a0.y; // c₀ is at a₀'s y (horizontal chord) — same SoS identity
+        // c₀ lies on ∂C₁ at the same horizontal level as a₀ (they share a
+        // horizontal visibility chord).  c₀ is a point on an edge interior,
+        // not a named vertex, so it has no vertex index of its own.
+        // We assign it the SoS tag of the junction vertex (the vertex that
+        // defines this y-level: a₀ is the companion vertex at the junction,
+        // so a₀.y.tag IS the junction vertex's index).  This is correct
+        // because every comparison downstream (vertex_past_c0, symbolic_y_geq/
+        // symbolic_y_leq) pairs c₀'s symbolic-y against fusion vertices whose
+        // tags are all distinct from the junction vertex's tag — they are
+        // non-companion chord endpoints.  The junction tag is therefore
+        // never involved in a tie-break within the comparison, and the
+        // raw-y equality of the horizontal chord is never ambiguous under SoS.
+        SymbolicY c0_y = a0.y;
         std::size_t c0_pos = trav_pos(c0.edge, c0.side);
 
         // Determine y-ordering within an edge on ∂C₁ traversal.

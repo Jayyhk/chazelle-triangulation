@@ -45,7 +45,11 @@ struct RayHit {
     double y = 0.0;                 ///< y-coordinate of the hit point (= p.y).
     std::size_t edge = 0;           ///< "the name of the edge of P that contains it."
     Side side = LEFT;               ///< Which side of ∂P the hit is on.
-    std::size_t hit_arc_idx = NONE; ///< Index of the struck region arc.
+    /// Index of the struck region arc.
+    /// NOT part of the paper's oracle specification (tex 169 specifies only
+    /// hit point + edge name).  Set by local_shoot() after the oracle call;
+    /// oracle implementations MUST NOT set this field.
+    std::size_t hit_arc_idx = NONE;
 };
 
 /// [C91 §3.0(ii)]: Result of an arc-cutting query — one piece αⱼ.
@@ -136,8 +140,9 @@ struct ArcCuttingOracle {
     ///                arc-structure" (§3.0, tex 166).
     /// @param target  The subarc α' to cut.
     /// @return Pieces α₁, α₂, ..., ordered along ∂C.
+    ///         result.size() must be ≤ g(γᵢ) (tex 175).
     virtual std::vector<ArcPiece> cut(std::size_t arc_idx,
-                                       const Subarc& target) const = 0;
+                                      const Subarc& target) const = 0;
 };
 
 } // namespace chazelle
