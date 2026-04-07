@@ -295,12 +295,34 @@ std::size_t fusion_startup(FusionState& state,
                 adj = &ch.right_adj;
 
             if (adj) {
+                // [C91 §2.4] (tex 137): At a non-vertex endpoint exactly one
+                // arc STARTS here (key_y == chord.y) and one ENDS here
+                // (key_y != chord.y).  Always use the ending arc for
+                // above/below determination — its key_y is unambiguously
+                // above or below the chord on both LEFT and RIGHT sides of ∂C.
+                //
+                // Using the starting arc is WRONG for RIGHT-side endpoints:
+                // its key_y == chord.y yields symbolic_y_less = false ("not
+                // below" → classified above), but a RIGHT-side starting arc
+                // descends downward, so its region is actually BELOW.
                 SymbolicY ky0 = S2.arc(adj->arcs[0]).key_symbolic_y();
+                SymbolicY ky1 = S2.arc(adj->arcs[1]).key_symbolic_y();
                 std::size_t r0 = S2.arc(adj->arcs[0]).region_node;
                 std::size_t r1 = S2.arc(adj->arcs[1]).region_node;
-                bool arc0_below = symbolic_y_less(ky0, ch.symbolic_y());
-                std::size_t below_r = arc0_below ? r0 : r1;
-                std::size_t above_r = arc0_below ? r1 : r0;
+                // Exactly one arc starts here (key_y == chord.y).
+                bool arc0_is_starting = symbolic_y_equal(ky0, ch.symbolic_y());
+                bool arc1_is_starting = symbolic_y_equal(ky1, ch.symbolic_y());
+                assert(arc0_is_starting != arc1_is_starting &&
+                       "§2.4: exactly one adj arc must start at the chord "
+                       "endpoint (key_y == chord.y); one starts, one ends");
+                // Use the ending arc (key_y != chord.y) for direction.
+                bool use_arc1 = arc0_is_starting;
+                SymbolicY ky_ref = use_arc1 ? ky1 : ky0;
+                std::size_t r_ref   = use_arc1 ? r1  : r0;
+                std::size_t r_other = use_arc1 ? r0  : r1;
+                bool ref_below = symbolic_y_less(ky_ref, ch.symbolic_y());
+                std::size_t below_r = ref_below ? r_ref   : r_other;
+                std::size_t above_r = ref_below ? r_other : r_ref;
                 return leaving_downward ? below_r : above_r;
             }
             // Both endpoints are C₂ vertices (count==1 on both sides).
@@ -382,9 +404,10 @@ std::size_t fusion_startup(FusionState& state,
         // All vertices between a₀ and c₀ (clockwise) see points on ∂C₁
         // (by Lemma 2.1) and are already known from S₁.
         //
-        // The fusion sequence is sorted in clockwise ∂C₁ order, and
-        // vertex_past_c0 is monotonic (false then true), so binary
-        // search finds the transition in O(log m).
+        // [C91 §3.1 Case 2]: "We can therefore skip all the way to c₀."
+        // O(1) via arc_starts lookup (the hit arc from local_shoot indexes
+        // directly into the fusion sequence) + O(1) within-bucket scan
+        // (conformal degree ≤ 4 → at most O(1) endpoints per arc bucket).
         std::size_t junction_edge = C1.num_edges() - 1;
         std::size_t right_half_len = junction_edge + 1;
         auto trav_pos = [&](std::size_t edge, Side side) -> std::size_t {
@@ -455,7 +478,10 @@ std::size_t fusion_startup(FusionState& state,
         }
 
         // §3.1 Case 2 (Lemma 2.1): All skipped vertices see ∂C₁.
-        // Debug-verify all skipped vertices sequentially to strictly prove the paper's invariant.
+        // This is a paper-guaranteed structural property; only verify
+        // under CHAZELLE_EXPENSIVE_ASSERTS to avoid inflating startup
+        // from O(f(γ₂)) to O(m) in normal debug builds.
+#ifdef CHAZELLE_EXPENSIVE_ASSERTS
         for (std::size_t skipped_i = 1; skipped_i < lo; ++skipped_i) {
             if (!state.sequence[skipped_i].is_companion) {
                 assert(state.sequence[skipped_i].chord_idx != NONE &&
@@ -463,6 +489,7 @@ std::size_t fusion_startup(FusionState& state,
                        "chord endpoint of S₁ (sees ∂C₁ by construction)");
             }
         }
+#endif
 
         return lo;
     }
