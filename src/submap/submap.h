@@ -68,7 +68,22 @@ public:
     ///   - Tree property
     ///   - Every live chord's regions are live nodes
     ///   - Every live arc's region_node is a live node
+    ///   - Arc-sequence ∂C ordering (LEFT before RIGHT, ascending /
+    ///     descending first_edge per side)
+    ///   - start_arc / end_arc validity
     void check_invariants() const;
+
+    /// [C91 §2.2 + §2.4]: Polygon-dependent invariants on top of
+    /// `check_invariants()`:
+    ///   - §2.4(iii) tex 138 + §2.4 tex 144: arcs sharing the same
+    ///     `first_edge` are key_y-monotonic in canonical traversal
+    ///     direction (required by `double_identify` Phase 2 binary
+    ///     search).
+    ///   - §2.2 tex 106: every live arc's `edge_count` cache matches
+    ///     `polygon.count_nonnull_edges` over its underlying edge
+    ///     range (required for correct `region_weight` and granularity
+    ///     decisions).
+    void check_invariants(const class Polygon& polygon) const;
 
     // ── Accessors ───────────────────────────────────────────────
 

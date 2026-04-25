@@ -114,9 +114,15 @@ RayHit local_shoot(Point p, Side direction,
             if (hit_dist < best_dist) {
                 best = hit;
             } else if (hit_dist == best_dist) {
-                // [C91 §2.5]: Double boundary disambiguation.
-                // If two hit points map to the exact same geometric location,
-                // we must determine which 'face' of the perimeter the ray strikes.
+                // [C91 §2.1] (tex 72): Double boundary disambiguation.
+                // "We give each edge of C an infinitesimal width so as to make
+                // the curve C into a very thin simple polygon… we refer to the
+                // two sides of the double boundary as one would speak of the
+                // left and right sides of a snake."  The two sides of the same
+                // edge sit at the same geometric location but are topologically
+                // distinct ∂C points; ray-shooting must select the side struck
+                // first by the (infinitesimally thick) ray.  See also §2.4
+                // (tex 142) on double-backing detection.
                 assert(hit.edge < C.num_edges());
                 const auto& e = C.edge(hit.edge);
                 bool edge_ascending = symbolic_y_less(

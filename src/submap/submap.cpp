@@ -63,11 +63,19 @@ std::size_t Submap::add_arc(Arc arc) {
 std::size_t Submap::add_chord(Chord chord) {
     std::size_t idx = chords_.size();
 
-    // [C91 §2.4(ii)]: Validate per-endpoint adj arcs.
+    // [C91 §2.4(ii)] (tex 137): "pointers to the arc-structures of the
+    // two, three, or four arcs adjacent to it."  The per-endpoint count
+    // is 1 or 2 (1 at a polygon-vertex endpoint, 2 at a non-vertex
+    // endpoint per §2.2 tex 94).  Per-endpoint bounds 1..2 imply the
+    // §2.4(ii) total ∈ {2, 3, 4} (1+1, 1+2, 2+1, or 2+2).
     assert(chord.left_adj.count >= 1 && chord.left_adj.count <= 2 &&
            "§2.4(ii): LEFT endpoint must have 1 or 2 adjacent arcs");
     assert(chord.right_adj.count >= 1 && chord.right_adj.count <= 2 &&
            "§2.4(ii): RIGHT endpoint must have 1 or 2 adjacent arcs");
+    assert(chord.left_adj.count + chord.right_adj.count >= 2 &&
+           chord.left_adj.count + chord.right_adj.count <= 4 &&
+           "§2.4(ii) (tex 137): chord must have 2, 3, or 4 adjacent "
+           "arcs in total across both endpoints");
     auto check_adj = [&](const Chord::AdjArcs& adj) {
         for (std::size_t k = 0; k < adj.count; ++k) {
             assert(adj.arcs[k] != NONE &&
@@ -90,6 +98,29 @@ std::size_t Submap::add_chord(Chord chord) {
     assert(chord.region[0] != chord.region[1] &&
            "§2.2: chord must connect two distinct regions "
            "(tree, no self-loops)");
+
+    // [C91 §2.1] (tex 72) + §2.2 (tex 108): null-length chords arise
+    // at y-extrema of C from the "inside" pair of duplicate vertices.
+    // Both chord endpoints sit at the same ∂C point, so they share
+    // edge, side, and symbolic y; on each ∂C side of the NLC there is
+    // exactly one adjacent arc (the duplicate vertices in the pair are
+    // next to each other along ∂C, separated by the NLC).
+    // remove_chord (line 210-212) re-asserts (2) at removal time;
+    // asserting at construction catches mis-creation earlier.
+    if (chord.is_null_length) {
+        assert(chord.left_edge == chord.right_edge &&
+               chord.left_side == chord.right_side &&
+               "§2.1 tex 72: null-length chord endpoints must coincide "
+               "(same edge and ∂C side — both at the y-extremum's "
+               "'inside' pair of duplicate vertices)");
+        assert(chord.y_tag != SOS_NONE &&
+               "§2 tex 47 (SoS): null-length chord must carry the "
+               "y-extremum vertex's SoS tag");
+        assert(chord.left_adj.count == 1 && chord.right_adj.count == 1 &&
+               "§2.1 tex 72: null-length chord must have exactly 1 "
+               "adjacent arc per ∂C side (the single arc flanking the "
+               "duplicate-vertex pair on each side)");
+    }
 
     chords_.push_back(chord);
 
@@ -486,6 +517,16 @@ std::size_t Submap::num_live_arcs() const noexcept {
 // ── Invariant checks ────────────────────────────────────────────
 
 void Submap::assert_tree_property() const {
+    // [C91 §2.2] (tex 110): "Combinatorially, a region corresponds to a
+    // subtree of the visibility tree of C."  A submap is the polygonal
+    // subdivision induced by removing chords from V(C); that subdivision
+    // always has at least one region.  Asserted up front so an empty
+    // submap fails with the right diagnostic instead of the misleading
+    // "0 ≠ 1" tree-property message below.
+    assert(num_live_nodes() >= 1 &&
+           "§2.2: submap must have at least one region "
+           "(induced from V(C))");
+
     // [C91 §2.2]: "the dual graph of a submap is itself a tree."
     // For a tree: num_live_regions == num_live_chords + 1.
     assert(num_live_nodes() == num_live_chords() + 1 &&
@@ -619,6 +660,116 @@ void Submap::check_invariants() const {
             assert(c_end_edge >= elo && c_end_edge <= ehi &&
                    "§2.4(iii): end_arc must pass through "
                    "end_vertex");
+        }
+    }
+}
+
+void Submap::check_invariants(const Polygon& polygon) const {
+    // First all polygon-independent invariants.
+    check_invariants();
+
+    // [C91 §2.4] (tex 144): within a same-(first_side, first_edge)
+    // interval, key_y must be monotonic — `double_identify` Phase 2
+    // (submap.cpp `keys_ascending` line ~837) infers the direction
+    // from interval endpoints and binary-searches by key_y, so an
+    // intermediate arc out of order in the inferred direction
+    // silently corrupts identification.
+    //
+    // We check monotonicity in the direction inferred from endpoints
+    // (matching Phase 2's semantics).  This is more permissive than
+    // requiring strict canonical ascending/descending traversal: at
+    // NLC duplicate-vertex pairs both arcs share a raw y but differ
+    // in SoS tag, and the direction implied by tags need not match
+    // the geometric edge ascent.  All that matters for Phase 2
+    // correctness is that the table is monotonic in some direction.
+    {
+        std::size_t i = 0;
+        while (i < arc_sequence_.size()) {
+            if (arc_sequence_[i].dead) { ++i; continue; }
+            // Find end of the maximal live (first_side, first_edge) run.
+            std::size_t j = i;
+            while (true) {
+                std::size_t next = j + 1;
+                while (next < arc_sequence_.size() &&
+                       arc_sequence_[next].dead) ++next;
+                if (next >= arc_sequence_.size()) break;
+                if (arc_sequence_[next].first_side !=
+                        arc_sequence_[i].first_side ||
+                    arc_sequence_[next].first_edge !=
+                        arc_sequence_[i].first_edge) break;
+                j = next;
+            }
+            // Run is arc-sequence indices in [i, j] (live, possibly
+            // with dead gaps inside).  Direction is inferred from
+            // first vs last live element.
+            if (j > i) {
+                bool asc = symbolic_y_leq(
+                    arc_sequence_[i].key_symbolic_y(),
+                    arc_sequence_[j].key_symbolic_y());
+                std::size_t prev_live = i;
+                for (std::size_t k = i + 1; k <= j; ++k) {
+                    if (arc_sequence_[k].dead) continue;
+                    if (asc) {
+                        assert(symbolic_y_leq(
+                                arc_sequence_[prev_live].key_symbolic_y(),
+                                arc_sequence_[k].key_symbolic_y()) &&
+                               "§2.4 tex 144: arcs sharing first_edge "
+                               "must have key_y monotonic (ascending "
+                               "by inference) for double_identify "
+                               "Phase 2 binary search");
+                    } else {
+                        assert(symbolic_y_geq(
+                                arc_sequence_[prev_live].key_symbolic_y(),
+                                arc_sequence_[k].key_symbolic_y()) &&
+                               "§2.4 tex 144: arcs sharing first_edge "
+                               "must have key_y monotonic (descending "
+                               "by inference) for double_identify "
+                               "Phase 2 binary search");
+                    }
+                    prev_live = k;
+                }
+            }
+            i = j + 1;
+        }
+    }
+
+    // [C91 §2.2] (tex 106): "the maximum number of nonnull length
+    // edges in any of its arcs."  `arc.edge_count` is a cache used by
+    // `region_weight` and `simulated_contraction_weight`; verify it
+    // equals the authoritative count from the input table over the
+    // arc's underlying edge range.  A stale or wrong cache silently
+    // miscomputes weights → wrong γ-granularity decisions.
+    //
+    // §2.4 (tex 133): "Null-length arcs can be represented explicitly."
+    // A null-length arc encodes a single ∂C point (the duplicate-vertex
+    // pair flanking an NLC) rather than an edge span — its
+    // `first_edge`/`last_edge` is a positional hint, not a traversed
+    // edge.  Under §2.1's simple-polygon assumption every polygon edge
+    // is geometrically nonnull, so `edge_count == 0` uniquely identifies
+    // null-length arcs and we skip the cache check for them.
+    //
+    // For wrapped (double-backing) arcs the underlying range covers
+    // both legs as a contiguous range (see arc.h `underlying_edge_range`).
+    // Wrapped arcs are not present in canonical normal-form submaps
+    // (§3.0 oracle (ii) condition (2) — "no double-backing"); start_arc
+    // / end_arc may wrap and are counted via the same union-range.
+    if (num_live_arcs() > 0) {
+        assert(start_vertex != NONE && end_vertex != NONE &&
+               end_vertex > 0 &&
+               "§2.4(iii): start/end_vertex must be set when arcs exist");
+        for (std::size_t i = 0; i < arc_sequence_.size(); ++i) {
+            const auto& a = arc_sequence_[i];
+            if (a.dead) continue;
+            if (a.edge_count == 0) continue;  // §2.4 tex 133: null-length arc.
+            assert(a.first_edge < polygon.num_edges() &&
+                   a.last_edge < polygon.num_edges() &&
+                   "§2.4(iii): arc edges must be valid input-table indices");
+            auto [lo, hi] = a.underlying_edge_range(start_vertex, end_vertex);
+            std::size_t actual = polygon.count_nonnull_edges(lo, hi);
+            assert(a.edge_count == actual &&
+                   "§2.2 tex 106: arc.edge_count cache must match "
+                   "polygon.count_nonnull_edges over the arc's "
+                   "underlying edge range");
         }
     }
 }
@@ -1039,6 +1190,13 @@ std::size_t Submap::simulated_contraction_weight(
     const auto& c = chords_[chord_idx];
     assert(c.region[0] != NONE && c.region[1] != NONE &&
            "§2.4(i): chord must have valid regions");
+    // [C91 §2.2] (tex 102): submap dual graph is a tree — chord
+    // endpoints must be distinct regions.  Enforced at add_chord;
+    // re-asserted here so the contraction weight has well-defined
+    // semantics (region_weight(r0) and region_weight(r1) are independent).
+    assert(c.region[0] != c.region[1] &&
+           "§2.2: chord must connect two distinct regions "
+           "(tree, no self-loops)");
 
     // [C91 §2.3] (tex 121): "contracting any edge... produces a new
     // node whose weight."

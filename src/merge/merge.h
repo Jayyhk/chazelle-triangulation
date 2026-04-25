@@ -95,11 +95,13 @@ inline void assert_merge_preconditions(const MergeInput& in) {
     }
 
     // [C91 §3] (tex 166): "We assume that each Sᵢ is given in
-    // normal form."  check_invariants() verifies §2.4(i)–(iii):
-    // tree property, chord/arc adjacency, arc-sequence ordering,
-    // and start_arc/end_arc validity.
-    in.S1->check_invariants();
-    in.S2->check_invariants();
+    // normal form."  check_invariants(polygon) verifies §2.4(i)–(iii)
+    // — tree property, chord/arc adjacency, arc-sequence ordering,
+    // and start_arc/end_arc validity — plus the polygon-dependent
+    // §2.4 tex 144 key_y monotonicity required by double_identify
+    // and the §2.2 tex 106 arc.edge_count cache consistency.
+    in.S1->check_invariants(*in.C1);
+    in.S2->check_invariants(*in.C2);
 
     // [C91 §3]: "Sᵢ be a γᵢ-granular conformal submap of V(Cᵢ)."
     assert(in.S1->is_conformal() &&
