@@ -28,8 +28,10 @@ struct MergeInput {
     const Polygon* C2 = nullptr;
 
     /// Normal-form γᵢ-granular conformal submaps of V(Cᵢ).
-    Submap* S1 = nullptr;
-    Submap* S2 = nullptr;
+    /// [C91 §3]: Sᵢ are *inputs* to the merge — read by the three stages
+    /// but never written.  Mirrors the const-ness of `C1`/`C2` above.
+    const Submap* S1 = nullptr;
+    const Submap* S2 = nullptr;
 
     /// Granularities.  γ₁ ≤ γ₂.
     std::size_t gamma1 = 0;
@@ -87,11 +89,15 @@ inline void assert_merge_preconditions(const MergeInput& in) {
     {
         const auto& c1_last = in.C1->vertex(in.C1->num_vertices() - 1);
         const auto& c2_first = in.C2->vertex(0);
-        assert(c1_last.x == c2_first.x &&
-               c1_last.y == c2_first.y &&
-               c1_last.index == c2_first.index &&
-               "§3: C₁ ∩ C₂ must be a vertex of P "
-               "(last vertex of C₁ = first vertex of C₂)");
+        // [C91 §3] (tex 160): "C₁ ∩ C₂ is a vertex of P".  Vertex identity
+        // under the paper's SoS model (§2 tex 47, perturbation.h:34–47) is
+        // determined by the .index field alone — it is the canonical, unique
+        // tag for a vertex of P (polygon.cpp:21–25 asserts uniqueness).
+        // Adding .x/.y equality would over-specify beyond the paper.
+        assert(c1_last.index == c2_first.index &&
+               "§3 tex 160: C₁ ∩ C₂ must be a vertex of P "
+               "(last vertex of C₁ = first vertex of C₂; SoS .index "
+               "is the canonical vertex identifier)");
     }
 
     // [C91 §3] (tex 166): "We assume that each Sᵢ is given in

@@ -12,6 +12,7 @@
 #include "../polygon/polygon.h"
 #include "../submap/submap.h"
 
+#include <cassert>
 #include <cstddef>
 #include <vector>
 
@@ -23,9 +24,16 @@ namespace chazelle {
 /// of P that contain these two endpoints as well as two flags
 /// indicating which side of ∂P is to be understood)."
 ///
-/// §3.0(ii) condition (1): "the pair should be ordered to reflect a
-/// clockwise traversal along ∂P."  That is, first_edge/first_side
-/// comes before last_edge/last_side in the clockwise ∂C order.
+/// Clockwise ordering invariant: `first_edge`/`first_side` precedes
+/// `last_edge`/`last_side` in clockwise ∂C order.  This holds for both
+/// oracle contexts the struct is shared by, but for distinct paper reasons:
+///   - §3.0(i) ray-shooter subarcs of α inherit α's traversal direction,
+///     which is itself clockwise by construction (§2.4 tex 138 canonical
+///     traversal of ∂C; tex 133 "Let e₁, ..., eₜ be the edges of an arc
+///     in clockwise order along the double boundary").
+///   - §3.0(ii) cut() pieces are required to be clockwise explicitly by
+///     condition (1) (tex 170: "the pair should be ordered to reflect a
+///     clockwise traversal along ∂P").
 struct Subarc {
     std::size_t first_edge;   ///< Edge of P containing the first endpoint (clockwise-first).
     Side first_side;          ///< Which side of ∂P for the first endpoint.
@@ -135,6 +143,10 @@ struct ArcCuttingOracle {
     /// Subdivide subarc α' of arc α into at most g(γᵢ) pieces
     /// satisfying conditions (1)–(3).
     ///
+    /// Callers MUST validate the result via `assert_cut_postconditions`
+    /// (defined below) before consuming the pieces — that helper enforces
+    /// the four §3.0(ii) post-conditions the paper guarantees.
+    ///
     /// @param arc_idx Index of region arc α in Sᵢ's arc-sequence
     ///                table — "specified by a pointer to its
     ///                arc-structure" (§3.0, tex 166).
@@ -144,5 +156,121 @@ struct ArcCuttingOracle {
     virtual std::vector<ArcPiece> cut(std::size_t arc_idx,
                                       const Subarc& target) const = 0;
 };
+
+/// [C91 §3.0(ii)] (tex 170): Asserts the paper-mandated post-conditions on
+/// the output of `ArcCuttingOracle::cut`.
+///
+/// The four conditions from tex 170 (verbatim):
+///   - bound: "in O(g(γᵢ)) time, subdivides the subarc α' into at most
+///     g(γᵢ) subarcs α₁, α₂, ..."
+///   - (1):   "the pair should be ordered to reflect a clockwise traversal
+///     along ∂P and two flags should be included to indicate on which sides
+///     of ∂P these endpoints fall"
+///   - (2):   "the relative interior of no ᾱⱼ should contain a point of
+///     ∂Cᵢ that corresponds to an endpoint of Cᵢ, that is, each subarc
+///     must lie entirely on one side of C (no double-backing)"
+///   - (3):   "except for ᾱ₁ and ᾱ₂ (in the case where these are single-
+///     edge pieces attached to the points of C corresponding to the
+///     endpoints of α'), all the ᾱⱼ are vertex-to-vertex subchains of Cᵢ
+///     ... and, for each of them, an h(γᵢ)-granular conformal submap of
+///     V(ᾱⱼ) is available in normal form."
+///
+/// Plus the implicit subdivision identity α' = α₁ ∪ ... ∪ αₖ:
+///   - first piece's first endpoint = α'.first
+///   - last  piece's last  endpoint = α'.last
+///
+/// Callers in §3.2 / §3.3 must invoke this on every `cut` result to ensure
+/// the oracle's contract holds before consuming the pieces.
+///
+/// @param target       The α' that was passed to `cut`.
+/// @param pieces       The pieces returned by `cut` (data() + size()).
+/// @param count        Number of pieces.
+/// @param max_pieces   Upper bound g(γᵢ) on the piece count.
+/// @param h_gamma      h(γᵢ) — granularity bound for non-boundary submaps.
+inline void assert_cut_postconditions(
+        const Subarc& target,
+        const ArcPiece* pieces, std::size_t count,
+        std::size_t max_pieces,
+        std::size_t h_gamma) {
+    // Bound (tex 170): "subdivides ... into at most g(γᵢ) subarcs"
+    // implies count ≥ 1 (a subarc cannot be subdivided into zero pieces)
+    // and count ≤ g(γᵢ).
+    assert(count >= 1 &&
+           "§3.0(ii) tex 170: cut() must produce at least one piece");
+    assert(count <= max_pieces &&
+           "§3.0(ii) tex 170: cut() must produce at most g(γᵢ) pieces");
+
+    // Subdivision identity α' = α₁ ∪ ... ∪ αₖ.
+    assert(pieces[0].subarc.first_edge == target.first_edge &&
+           pieces[0].subarc.first_side == target.first_side &&
+           "§3.0(ii) tex 170: first piece must start at α'.first "
+           "(subdivision identity α' = α₁ ∪ ... ∪ αₖ)");
+    assert(pieces[count - 1].subarc.last_edge == target.last_edge &&
+           pieces[count - 1].subarc.last_side == target.last_side &&
+           "§3.0(ii) tex 170: last piece must end at α'.last "
+           "(subdivision identity α' = α₁ ∪ ... ∪ αₖ)");
+
+    for (std::size_t j = 0; j < count; ++j) {
+        const ArcPiece& p = pieces[j];
+
+        // (2) (tex 170): "each subarc must lie entirely on one side of C
+        // (no double-backing)".
+        assert(p.subarc.first_side == p.subarc.last_side &&
+               "§3.0(ii)(2) tex 170: each piece must lie entirely on one "
+               "side of C (no double-backing)");
+
+        // (1) (tex 170): "the pair should be ordered to reflect a clockwise
+        // traversal along ∂P".  LEFT side traverses edges ascending; RIGHT
+        // side traverses edges descending (§2.4 tex 138 canonical traversal).
+        if (p.subarc.first_side == LEFT) {
+            assert(p.subarc.first_edge <= p.subarc.last_edge &&
+                   "§3.0(ii)(1) tex 170: LEFT-side piece must have "
+                   "first_edge ≤ last_edge (clockwise = ascending on LEFT)");
+        } else {
+            assert(p.subarc.first_edge >= p.subarc.last_edge &&
+                   "§3.0(ii)(1) tex 170: RIGHT-side piece must have "
+                   "first_edge ≥ last_edge (clockwise = descending on RIGHT)");
+        }
+
+        // (3) (tex 170): "except for ᾱ₁ and ᾱ₂ ... all the ᾱⱼ are
+        // vertex-to-vertex subchains of Cᵢ ..."  Boundary pieces are
+        // permitted only at the sequence endpoints (j=0 or j=count-1)
+        // since they correspond to the (at most two) endpoints of α'.
+        const bool at_endpoint = (j == 0 || j + 1 == count);
+        if (!at_endpoint) {
+            assert(!p.is_boundary_piece &&
+                   "§3.0(ii)(3) tex 170: only the first and last pieces "
+                   "may be boundary pieces (ᾱ₁ and ᾱ₂ in the paper's "
+                   "labeling correspond to α''s two endpoints)");
+        }
+
+        if (!p.is_boundary_piece) {
+            // (3) (tex 170): "an h(γᵢ)-granular conformal submap of V(ᾱⱼ)
+            // is available in normal form."  "Available" implies non-null
+            // submap + non-null underlying curve.
+            assert(p.submap != nullptr &&
+                   "§3.0(ii)(3) tex 170: non-boundary piece requires an "
+                   "h(γᵢ)-granular conformal submap (non-null)");
+            assert(p.curve != nullptr &&
+                   "§3.0(ii)(3) tex 170: non-boundary piece requires its "
+                   "underlying curve V(ᾱⱼ) (non-null)");
+            // "conformal submap of V(ᾱⱼ) ... in normal form."
+            assert(p.submap->is_conformal() &&
+                   "§3.0(ii)(3) tex 170: non-boundary piece's submap must "
+                   "be conformal");
+            // "h(γᵢ)-granular ... submap of V(ᾱⱼ)."
+            assert(p.submap->is_granular(h_gamma, *p.curve) &&
+                   "§3.0(ii)(3) tex 170: non-boundary piece's submap must "
+                   "be h(γᵢ)-granular");
+        } else {
+            // (3) (tex 170): boundary pieces are "single-edge pieces
+            // attached to the points of C corresponding to the endpoints
+            // of α'".
+            assert(p.subarc.first_edge == p.subarc.last_edge &&
+                   "§3.0(ii)(3) tex 170: boundary piece must be a single-"
+                   "edge piece (attached to an endpoint of α')");
+        }
+    }
+}
 
 } // namespace chazelle
