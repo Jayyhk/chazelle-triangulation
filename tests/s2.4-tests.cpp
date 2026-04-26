@@ -5,6 +5,27 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
+#include <csignal>
+#include <functional>
+#include <sys/wait.h>
+#include <unistd.h>
+
+namespace {
+// Death-test helper: forks; child runs `fn` with stderr silenced; returns
+// true iff child terminated by SIGABRT (an assert fired).
+bool assert_fires(std::function<void()> fn) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        if (freopen("/dev/null", "w", stderr) == nullptr) std::_Exit(2);
+        fn();
+        std::_Exit(0);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return false;
+    return WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT;
+}
+}
 
 using namespace chazelle;
 
@@ -256,6 +277,191 @@ static void test_double_identify_miss() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  8. check_invariants(polygon) — direct positive test
+// ════════════════════════════════════════════════════════════════
+
+static void test_check_invariants_polygon_positive() {
+    // [C91 §2.4 (i)–(iii) + §2.2]: Polygon-aware overload accepts a
+    // well-formed normal-form submap (key_y monotonic + edge_count
+    // cache consistent with polygon).
+    auto poly = test_polygon();
+    Submap s;
+    s.add_node();
+
+    Arc a;
+    a = {}; a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0;
+    a.edge_count = poly.count_nonnull_edges(0, 3);
+    a.key_y = poly.vertex(0).y; a.key_y_tag = 0;
+    std::size_t ai0 = s.add_arc(a);
+
+    a = {}; a.first_edge = 3; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = 0;
+    a.edge_count = poly.count_nonnull_edges(0, 3);
+    a.key_y = poly.vertex(4).y; a.key_y_tag = 4;
+    s.add_arc(a);
+
+    s.start_arc = ai0; s.end_arc = ai0;
+    s.start_vertex = 0; s.end_vertex = 4;
+
+    s.check_invariants(poly);
+
+    std::printf("  [PASS] check_invariants_polygon_positive\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  9. check_invariants(polygon) — size-3 same-first_edge run
+//     (§2.4 tex 144 monotonicity beyond trivial size-2)
+// ════════════════════════════════════════════════════════════════
+
+static void test_check_invariants_polygon_size_3_run() {
+    // [C91 §2.4 tex 144]: arcs sharing first_edge must be key_y
+    // monotonic.  Build a 3-arc run on edge 1 (LEFT side) separated
+    // by 2 NLCs; SoS tags 2/5/6 give descending perturbed y in array
+    // order.  check_invariants(polygon) infers descending and verifies
+    // all consecutive pairs.
+    auto poly = test_polygon();
+
+    Submap s;
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
+    std::size_t r2 = s.add_node();
+    double yv = poly.vertex(1).y;
+
+    Arc a;
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
+    a.key_y = yv; a.key_y_tag = 2;
+    std::size_t ai0 = s.add_arc(a);
+
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r1; a.edge_count = 0;
+    a.key_y = yv; a.key_y_tag = 5;
+    std::size_t ai1 = s.add_arc(a);
+
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r2; a.edge_count = 0;
+    a.key_y = yv; a.key_y_tag = 6;
+    std::size_t ai2 = s.add_arc(a);
+
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
+    a.key_y = yv; a.key_y_tag = 2;
+    s.add_arc(a);
+
+    Chord c;
+    c = {}; c.region[0] = r0; c.region[1] = r1;
+    c.left_edge = 1; c.right_edge = 1; c.left_side = LEFT; c.right_side = LEFT;
+    c.y = yv; c.y_tag = 5; c.is_null_length = true;
+    c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
+    s.add_chord(c);
+
+    c = {}; c.region[0] = r1; c.region[1] = r2;
+    c.left_edge = 1; c.right_edge = 1; c.left_side = LEFT; c.right_side = LEFT;
+    c.y = yv; c.y_tag = 6; c.is_null_length = true;
+    c.left_adj = {{ai1}, 1}; c.right_adj = {{ai2}, 1};
+    s.add_chord(c);
+
+    s.start_arc = ai0; s.end_arc = ai2;
+    s.start_vertex = 1; s.end_vertex = 2;
+
+    s.check_invariants(poly);
+
+    std::printf("  [PASS] check_invariants_polygon_size_3_run\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  10. check_invariants(polygon) — wrapped (LEFT→RIGHT) endpoint arc
+//      (§2.4 tex 142 double-backing)
+// ════════════════════════════════════════════════════════════════
+
+static void test_check_invariants_polygon_wrapped_arc() {
+    // [C91 §2.4 tex 142]: "an arc might wrap around both sides of C,
+    // something we call double-backing."  Single-arc submap whose only
+    // arc wraps at c_end (LEFT→RIGHT); the edge_count cache check
+    // (§2.2 tex 106) uses the union-range count.
+    Polygon poly({{0,0,0}, {1,1,1}, {2,0,2}});
+
+    Submap s;
+    s.add_node();
+
+    Arc a;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
+    a.region_node = 0;
+    a.edge_count = poly.count_nonnull_edges(0, 1);
+    a.key_y = poly.vertex(0).y; a.key_y_tag = 0;
+    std::size_t ai0 = s.add_arc(a);
+
+    s.start_arc = ai0; s.end_arc = ai0;
+    s.start_vertex = 0; s.end_vertex = 2;
+
+    s.check_invariants(poly);
+
+    std::printf("  [PASS] check_invariants_polygon_wrapped_arc\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  11. Death: non-monotonic key_y in a same-first_edge run
+//      (§2.4 tex 144)
+// ════════════════════════════════════════════════════════════════
+
+static void test_non_monotonic_run_fires() {
+    // [C91 §2.4 tex 144]: same-first_edge run must be key_y monotonic
+    // in the inferred direction.  Endpoints span tags 2..6 (descending
+    // inferred) but middle arc has tag 1 (HIGHER perturbed y than
+    // first) — non-monotonic.
+    assert(assert_fires([]{
+        auto poly = test_polygon();
+        Submap s;
+        std::size_t r0 = s.add_node();
+        std::size_t r1 = s.add_node();
+        std::size_t r2 = s.add_node();
+        double yv = poly.vertex(1).y;
+
+        Arc a;
+        a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+        a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
+        a.key_y = yv; a.key_y_tag = 2;
+        std::size_t ai0 = s.add_arc(a);
+
+        a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+        a.region_node = r1; a.edge_count = 0;
+        a.key_y = yv; a.key_y_tag = 1;            // ← OUT OF ORDER
+        std::size_t ai1 = s.add_arc(a);
+
+        a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+        a.region_node = r2; a.edge_count = 0;
+        a.key_y = yv; a.key_y_tag = 6;
+        std::size_t ai2 = s.add_arc(a);
+
+        a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+        a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
+        a.key_y = yv; a.key_y_tag = 2;
+        s.add_arc(a);
+
+        Chord c;
+        c = {}; c.region[0] = r0; c.region[1] = r1;
+        c.left_edge = 1; c.right_edge = 1; c.left_side = LEFT; c.right_side = LEFT;
+        c.y = yv; c.y_tag = 1; c.is_null_length = true;
+        c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
+        s.add_chord(c);
+
+        c = {}; c.region[0] = r1; c.region[1] = r2;
+        c.left_edge = 1; c.right_edge = 1; c.left_side = LEFT; c.right_side = LEFT;
+        c.y = yv; c.y_tag = 6; c.is_null_length = true;
+        c.left_adj = {{ai1}, 1}; c.right_adj = {{ai2}, 1};
+        s.add_chord(c);
+
+        s.start_arc = ai0; s.end_arc = ai2;
+        s.start_vertex = 1; s.end_vertex = 2;
+
+        s.check_invariants(poly);  // ← non-monotonic must fire
+    }));
+    std::printf("  [PASS] non_monotonic_run_fires\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::printf("§2.4 tests:\n");
@@ -266,6 +472,10 @@ int main() {
     test_arc_sequence_ordering();
     test_double_identify_worst_case();
     test_double_identify_miss();
+    test_check_invariants_polygon_positive();
+    test_check_invariants_polygon_size_3_run();
+    test_check_invariants_polygon_wrapped_arc();
+    test_non_monotonic_run_fires();
     std::printf("All §2.4 tests passed.\n");
     return 0;
 }
