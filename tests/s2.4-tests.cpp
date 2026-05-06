@@ -8,15 +8,19 @@
 #include <cstdlib>
 #include <csignal>
 #include <functional>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
-// Death-test helper: forks; child runs `fn` with stderr silenced; returns
-// true iff child terminated by SIGABRT (an assert fired).
+// Death-test helper: forks; child runs `fn` with stderr silenced and core
+// dumps disabled (PR_SET_DUMPABLE=0 skips the kernel's coredump pipe — on
+// Ubuntu/apport systems this avoids ~1s of crash-reporter latency per
+// abort).  Returns true iff the child terminated by SIGABRT.
 bool assert_fires(std::function<void()> fn) {
     pid_t pid = fork();
     if (pid == 0) {
+        prctl(PR_SET_DUMPABLE, 0);
         if (freopen("/dev/null", "w", stderr) == nullptr) std::_Exit(2);
         fn();
         std::_Exit(0);

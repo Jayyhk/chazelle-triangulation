@@ -407,6 +407,237 @@ static void test_startup_case2() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  10. shooting_direction — all four (side, ascent) cases
+// ════════════════════════════════════════════════════════════════
+
+static void test_shooting_direction_all_cases() {
+    // [C91 §2.1 tex 72]: chord direction = "left of an observer walking
+    // clockwise around ∂C".  Under §2.1 tex 66's induced orientation,
+    // RIGHT-side walks WITH curve, LEFT-side walks AGAINST curve.
+    //   walk = ±curve_dir  ⟹  observer's left = perp_CCW(walk).
+    //
+    // Construct edges with controlled ascending / descending y, then
+    // verify all four (side × ascent) combinations.
+    Polygon up({{0,0,0}, {1,2,1}});             // edge 0 ascending (y: 0 → 2).
+    Polygon down({{0,2,0}, {1,0,1}});           // edge 0 descending.
+
+    // LEFT side, ascending edge: LEFT walks against curve = (-1,-2);
+    // observer's left = perp_CCW(-1,-2) = (2,-1) → horizontal +x → RIGHT.
+    assert(shooting_direction(0, LEFT, up) == RIGHT);
+
+    // LEFT side, descending edge: walk against descending curve = (-1, +2);
+    // perp_CCW = (-2, -1) → horizontal -x → LEFT.
+    assert(shooting_direction(0, LEFT, down) == LEFT);
+
+    // RIGHT side, ascending: RIGHT walks with curve = (1,2);
+    // perp_CCW = (-2, 1) → horizontal -x → LEFT.
+    assert(shooting_direction(0, RIGHT, up) == LEFT);
+
+    // RIGHT side, descending: walk = (1, -2);
+    // perp_CCW = (2, 1) → horizontal +x → RIGHT.
+    assert(shooting_direction(0, RIGHT, down) == RIGHT);
+
+    std::printf("  [PASS] shooting_direction_all_cases\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  11. local_shoot — §2.1 double-boundary tie-break at same distance
+// ════════════════════════════════════════════════════════════════
+
+/// Oracle returning two arcs at the *same* x but different sides.
+struct TieBreakRayShooter : RayShootingOracle {
+    Side first_arc_side;                        ///< side of arc 0 hit
+    Side second_arc_side;                       ///< side of arc 1 hit
+    TieBreakRayShooter(Side s0, Side s1)
+        : first_arc_side(s0), second_arc_side(s1) {}
+    RayHit shoot(Point p, Side /*dir*/,
+                 std::size_t arc_idx,
+                 const Subarc& target) const override {
+        RayHit h;
+        h.hit = true;
+        h.x = 5.0;                              // SAME x for both → distance tie
+        h.y = p.y;
+        h.edge = target.first_edge;
+        h.side = (arc_idx == 0) ? first_arc_side : second_arc_side;
+        return h;
+    }
+};
+
+static void test_local_shoot_tie_break() {
+    // [C91 §2.1 tex 72] (snake left/right) + §2.4 tex 142:
+    // when two arcs deliver hits at exactly the same x (distance tie),
+    // the disambiguation in fusion.cpp:114-145 picks the face struck
+    // first by an infinitesimally thick ray, computed from the edge's
+    // geometric ascent and the shooting direction:
+    //   struck_first_face (dist > 0, dir=RIGHT) = minus_x_face
+    //   minus_x_face for ascending edge = LEFT
+    auto C1 = make_C1();                        // edge 1: (1,2)→(2,4) ascending
+    auto S1 = make_S1(C1);
+
+    // Region 0 has two arcs; oracle returns both at x=5 with controlled
+    // sides via arc_idx.  For shooting RIGHT toward an ascending-edge
+    // hit, struck_first_face = LEFT (the -x face).
+    //
+    // First oracle: arc 0 → LEFT, others → RIGHT.  Best stays at the
+    //   first hit (LEFT, struck_first_face=LEFT, no swap needed).
+    // Second oracle: arc 0 → RIGHT, others → LEFT.  Tie-break swaps to
+    //   the LEFT-side hit (matching struck_first_face=LEFT).
+    // Both must return side=LEFT — the §2.1 tex 72 disambiguation rule.
+    Point p{0.0, 2.0, 99};
+
+    TieBreakRayShooter oracle(LEFT, RIGHT);
+    RayHit h1 = local_shoot(p, RIGHT, 0, S1, C1, oracle);
+    assert(h1.hit);
+    assert(h1.x == 5.0);
+    assert(h1.side == LEFT &&
+           "§2.1 tex 72: struck-first face for shooting RIGHT toward "
+           "an ascending-edge hit must be LEFT (the -x face)");
+
+    TieBreakRayShooter oracle_rev(RIGHT, LEFT);
+    RayHit h2 = local_shoot(p, RIGHT, 0, S1, C1, oracle_rev);
+    assert(h2.hit);
+    assert(h2.x == 5.0);
+    assert(h2.side == LEFT &&
+           "§2.1 tex 72: tie-break must select the same face regardless "
+           "of which arc the oracle reports it on");
+
+    std::printf("  [PASS] local_shoot_tie_break\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  12. fusion_startup — d1 == d2 tie defaults to Case 1 (∂C₂)
+// ════════════════════════════════════════════════════════════════
+
+static void test_startup_d1_eq_d2_defaults_to_case1() {
+    // [C91 §3.1 tex 191]: "for simplicity we still go on saying that c₀
+    // sees a point of ∂C₂ with respect to C."  When hit_c1 and hit_c2
+    // are at equal distance (degenerate under SoS), the implementation
+    // defaults to Case 1 (c₀ ∈ ∂C₂).
+    auto C1 = make_C1();
+    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
+    auto S1 = make_S1(C1);
+
+    Submap S2;
+    S2.add_node();
+    Arc a{};
+    a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0; a.edge_count = 2;
+    a.key_y = C2.vertex(0).y; a.key_y_tag = 0;
+    std::size_t ai0 = S2.add_arc(a);
+    a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
+    S2.add_arc(a);
+    S2.start_arc = ai0; S2.end_arc = ai0;
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // Both oracles return hits at the SAME x (3.0), so d1 == d2.
+    StartupOracle oracle1(3.0);
+    StartupOracle oracle2(3.0);
+
+    FusionState state;
+    build_fusion_sequence(state, S1, C1);
+
+    std::size_t start = fusion_startup(state, S1, C1, S2, C2, oracle1, oracle2);
+
+    // tex 191 default: tie → Case 1 → main loop starts at k=1.
+    assert(start == 1);
+    assert(!state.chords.empty());
+
+    std::printf("  [PASS] startup_d1_eq_d2_defaults_to_case1\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  13. build_fusion_sequence skips NLCs (§3.1 tex 179 + §2.2 tex 96)
+// ════════════════════════════════════════════════════════════════
+
+static void test_build_fusion_sequence_skips_nlcs() {
+    // [C91 §3.1 tex 179]: "Let a₁, a₂, ..., aₘ be the canonical vertex
+    // enumeration of S₁ ... exit chord endpoints in S₁."  Per §2.2 tex
+    // 96, exit chords are distinguished from null-length chords; per §3.1
+    // tex 224, NLCs are "carried over automatically" to the fused submap
+    // and must NOT appear in the main-loop sequence.
+    auto C = make_C1();                         // 5 vertices, 4 edges.
+
+    // Synthetic submap with 1 exit chord + 1 NLC.  NLCs are at y-extrema
+    // (vertex 2 = (2, 4) is a y-max in C1).
+    Submap s;
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();              // for exit chord
+    std::size_t r_nlc = s.add_node();           // empty region of NLC
+
+    Arc a{};
+    a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 2;
+    a.key_y = C.vertex(0).y; a.key_y_tag = 0;
+    std::size_t ai0 = s.add_arc(a);
+
+    // NLC empty arc on LEFT at vertex 2 (y-max).
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_nlc; a.edge_count = 0;    // null-length
+    a.key_y = C.vertex(2).y; a.key_y_tag = 2;
+    std::size_t ai_nlc = s.add_arc(a);
+
+    a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r1; a.edge_count = 3;
+    a.key_y = C.vertex(2).y; a.key_y_tag = 22;  // distinct tag
+    std::size_t ai1 = s.add_arc(a);
+
+    a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r1; a.edge_count = 3;
+    a.key_y = C.vertex(4).y; a.key_y_tag = 4;
+    std::size_t ai2 = s.add_arc(a);
+
+    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = 2;
+    a.key_y = C.vertex(2).y; a.key_y_tag = 22;
+    std::size_t ai3 = s.add_arc(a);
+
+    // Exit chord (non-NLC): r0 ↔ r1 at vertex 2's y level.
+    Chord ec;
+    ec.region[0] = r0; ec.region[1] = r1;
+    ec.left_edge = 1; ec.right_edge = 1;
+    ec.left_side = LEFT; ec.right_side = RIGHT;
+    ec.y = C.vertex(2).y; ec.y_tag = 22;
+    ec.left_adj = {{ai0, ai1}, 2};
+    ec.right_adj = {{ai2, ai3}, 2};
+    s.add_chord(ec);
+
+    // NLC: r0 ↔ r_nlc at vertex 2 LEFT side.
+    Chord nlc;
+    nlc.region[0] = r0; nlc.region[1] = r_nlc;
+    nlc.left_edge = 1; nlc.right_edge = 1;
+    nlc.left_side = LEFT; nlc.right_side = LEFT;
+    nlc.y = C.vertex(2).y; nlc.y_tag = 2;
+    nlc.is_null_length = true;
+    nlc.left_adj = {{ai0}, 1};
+    nlc.right_adj = {{ai_nlc}, 1};
+    s.add_chord(nlc);
+
+    s.start_arc = ai0; s.end_arc = ai1;
+    s.start_vertex = 0; s.end_vertex = 4;
+
+    FusionState state;
+    build_fusion_sequence(state, s, C);
+
+    // Sequence = a₀ + 2 endpoints (exit chord only — NLC excluded) + a_{m+1}
+    //          = 4 vertices.  If the NLC were included, we'd get 6.
+    assert(state.sequence.size() == 4 &&
+           "§3.1 tex 179: NLCs must not appear in the canonical "
+           "vertex enumeration (paper distinguishes 'exit chord "
+           "endpoints' from null-length chords per §2.2 tex 96)");
+
+    // None of the non-companion vertices should reference the NLC.
+    std::size_t nlc_idx = 1;                    // NLC is chord #1
+    for (std::size_t i = 0; i < state.sequence.size(); ++i) {
+        const auto& v = state.sequence[i];
+        if (v.is_companion) continue;
+        assert(v.chord_idx != nlc_idx);
+    }
+
+    std::printf("  [PASS] build_fusion_sequence_skips_nlcs\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -420,6 +651,10 @@ int main() {
     test_local_shoot_nearest();
     test_startup_case1();
     test_startup_case2();
+    test_shooting_direction_all_cases();
+    test_local_shoot_tie_break();
+    test_startup_d1_eq_d2_defaults_to_case1();
+    test_build_fusion_sequence_skips_nlcs();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }
