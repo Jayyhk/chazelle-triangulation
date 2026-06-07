@@ -29,6 +29,13 @@ std::size_t Submap::add_node() {
 }
 
 std::size_t Submap::add_arc(Arc arc) {
+    // [C91 §2.4(ii)] (tex 137): every arc-structure carries a pointer to
+    // the live region it bounds.  O(1) check.
+    assert(arc.region_node != NONE &&
+           arc.region_node < nodes_.size() &&
+           !nodes_[arc.region_node].dead &&
+           "§2.4(ii) tex 137: arc.region_node must point to a live region");
+
     std::size_t idx = arc_sequence_.size();
 
     // [C91 §2.4(iii)] (tex 138): "The arc-structures are stored in a
@@ -105,6 +112,15 @@ std::size_t Submap::add_chord(Chord chord) {
            "§2.2: chord must connect two distinct regions "
            "(tree, no self-loops)");
 
+    // [C91 §2 tex 47 (SoS)] + [C91 §2.1 tex 70]: every chord is horizontal
+    // at the y of some polygon vertex (the visibility source).  That
+    // vertex has a valid SoS tag, so every chord must carry one.  Without
+    // it, endpoint_is_polygon_vertex() and double_identify's y-
+    // disambiguation silently misclassify.
+    assert(chord.y_tag != SOS_NONE &&
+           "§2 tex 47 (SoS): chord must carry the source y-extremum "
+           "vertex's SoS tag");
+
     // [C91 §2.1] (tex 72) + §2.2 (tex 108): null-length chords arise
     // at y-extrema of C from the "inside" pair of duplicate vertices.
     // Both chord endpoints sit at the same ∂C point, so they share
@@ -119,9 +135,6 @@ std::size_t Submap::add_chord(Chord chord) {
                "§2.1 tex 72: null-length chord endpoints must coincide "
                "(same edge and ∂C side — both at the y-extremum's "
                "'inside' pair of duplicate vertices)");
-        assert(chord.y_tag != SOS_NONE &&
-               "§2 tex 47 (SoS): null-length chord must carry the "
-               "y-extremum vertex's SoS tag");
         assert(chord.left_adj.count == 1 && chord.right_adj.count == 1 &&
                "§2.1 tex 72: null-length chord must have exactly 1 "
                "adjacent arc per ∂C side (the single arc flanking the "
@@ -131,10 +144,11 @@ std::size_t Submap::add_chord(Chord chord) {
     chords_.push_back(chord);
 
     // [C91 §2.4(i)]: Update adjacency — each region knows its
-    // incident chords.  Both regions must be valid.
+    // incident chords.  Both regions must be live (the dual tree's
+    // chord-edges always connect two live nodes).  O(1).
     for (std::size_t r : chord.region) {
-        assert(r != NONE && r < nodes_.size() &&
-               "§2.4(i): chord must connect two valid regions");
+        assert(r != NONE && r < nodes_.size() && !nodes_[r].dead &&
+               "§2.4(i): chord must connect two LIVE regions");
         nodes_[r].incident_chords.push_back(idx);
     }
 
@@ -784,6 +798,65 @@ void Submap::check_invariants(const Polygon& polygon) const {
                    "§2.2 tex 106: arc.edge_count cache must match "
                    "polygon.count_nonnull_edges over the arc's "
                    "underlying edge range");
+        }
+    }
+
+    // [C91 §2.2] (tex 94): "the removal of a chord entails removing not
+    // only the chord itself but also those endpoints that are not vertices
+    // of C, and glueing back ∂C at those points."  remove_chord and
+    // simulated_contraction_weight classify a chord endpoint as a polygon
+    // vertex iff its (y, y_tag) symbolic-y-equals one of the underlying
+    // edge's two vertices.  When an endpoint has exactly one adjacent arc
+    // (count == 1) §2.2 requires it to be a vertex of C, so the chord's
+    // SoS tag must match that vertex's tag.  A mismatch silently flips
+    // the classification: do_merge fires where it should not, corrupting
+    // arc adjacency.  O(1) per chord, O(num_chords) total — matches
+    // check_invariants's existing O(m) bound.
+    auto matches_an_endpoint = [&](std::size_t edge_idx,
+                                    SymbolicY chord_y) -> bool {
+        assert(edge_idx < polygon.num_edges());
+        const auto& e = polygon.edge(edge_idx);
+        return symbolic_y_equal(chord_y, symbolic_y_of(polygon.vertex(e.start_idx))) ||
+               symbolic_y_equal(chord_y, symbolic_y_of(polygon.vertex(e.end_idx)));
+    };
+    for (std::size_t ci = 0; ci < chords_.size(); ++ci) {
+        const auto& c = chords_[ci];
+        if (c.dead) continue;
+        // NLCs use a distinct SoS-tag convention (auxiliary tags beyond
+        // polygon vertex indices to disambiguate multiple NLCs at the
+        // same y-extremum); skip them here.  Their structural invariants
+        // are enforced separately in add_chord.
+        if (c.is_null_length) continue;
+
+        // [C91 §2.1 tex 70]: chords arise from horizontal visibility
+        // shots at polygon vertices, so a non-NLC chord is horizontal
+        // at some vertex's y and carries that vertex's SoS tag.  The
+        // tag identifies the source vertex (= polygon.vertex(c.y_tag));
+        // chord.y must symbolic-y-equal that vertex's y.  O(1) per chord
+        // — preserves check_invariants's O(m) bound.
+        assert(c.y_tag < polygon.num_vertices() &&
+               "§2.1 tex 70: non-NLC chord y_tag must index a polygon "
+               "vertex (the source of the horizontal visibility shot)");
+        SymbolicY chord_y{c.y, c.y_tag};
+        assert(symbolic_y_equal(chord_y,
+                                symbolic_y_of(polygon.vertex(c.y_tag))) &&
+               "§2.1 tex 70: non-NLC chord must be horizontal at its "
+               "source vertex's y (chord.y_tag identifies the vertex)");
+
+        // §2.2 tex 94: when a chord endpoint has exactly one adjacent
+        // arc (count==1) it is a polygon vertex (paper's "vertex of C");
+        // the source vertex must therefore lie on the underlying edge.
+        if (c.left_adj.count == 1) {
+            assert(matches_an_endpoint(c.left_edge, chord_y) &&
+                   "§2.2 tex 94: non-NLC chord with count==1 LEFT endpoint "
+                   "must carry an SoS tag matching one of the underlying "
+                   "edge's polygon-vertex tags");
+        }
+        if (c.right_adj.count == 1) {
+            assert(matches_an_endpoint(c.right_edge, chord_y) &&
+                   "§2.2 tex 94: non-NLC chord with count==1 RIGHT endpoint "
+                   "must carry an SoS tag matching one of the underlying "
+                   "edge's polygon-vertex tags");
         }
     }
 }
