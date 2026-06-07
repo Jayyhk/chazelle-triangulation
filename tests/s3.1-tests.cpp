@@ -117,6 +117,7 @@ static void test_fusion_sequence_no_chords() {
     a.first_edge = 0; a.last_edge = 1;
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
+    a.key_y_tag = 0;
     s.add_arc(a);
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;

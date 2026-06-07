@@ -231,6 +231,7 @@ static void test_empty_region_weight() {
     Arc a;
     a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 0;
+    a.key_y_tag = 0;
     s.add_arc(a);
     assert(s.region_weight(r0) == 0);
 
@@ -258,18 +259,22 @@ static void test_remove_chord_4_adj_arcs() {
     // r0 LEFT arc: edges 0–1 (up to chord at y=1.5 on edge 1)
     a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
+    a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
     // r1 LEFT arc: edges 1–3 (from chord at y=1.5 on edge 1 onward)
     a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 1; a.edge_count = 3;
+    a.key_y_tag = 0;
     std::size_t ai1 = s.add_arc(a);
     // r1 RIGHT arc: edges 3–1 (descending, from end down to chord)
     a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 1; a.edge_count = 3;
+    a.key_y_tag = 0;
     std::size_t ai2 = s.add_arc(a);
     // r0 RIGHT arc: edges 1–0 (descending, from chord down to start)
     a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
+    a.key_y_tag = 0;
     std::size_t ai3 = s.add_arc(a);
 
     Chord c;
@@ -315,15 +320,19 @@ static void test_remove_chord_no_merge_at_vertex() {
     Arc a;
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
+    a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 1; a.edge_count = 1;
+    a.key_y_tag = 0;
     std::size_t ai1 = s.add_arc(a);
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 1; a.edge_count = 1;
+    a.key_y_tag = 0;
     std::size_t ai2 = s.add_arc(a);
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1;
+    a.key_y_tag = 0;
     std::size_t ai3 = s.add_arc(a);
 
     Chord c;
@@ -506,21 +515,25 @@ static void test_null_length_chord() {
     Arc a;
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 1;
+    a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     // Zero-length arc in the NLC empty region.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 0;
+    a.key_y_tag = 0;
     std::size_t ai1 = s.add_arc(a);
 
     // LEFT arc after NLC.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 1;
+    a.key_y_tag = 0;
     std::size_t ai2 = s.add_arc(a);
 
     // RIGHT arc.
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r0; a.edge_count = 1;
+    a.key_y_tag = 0;
     s.add_arc(a);
 
     // NLC chord.
@@ -565,18 +578,22 @@ static void test_null_length_chord_right_side() {
     Arc a;
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 1;
+    a.key_y_tag = 0;
     s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r0; a.edge_count = 1;
+    a.key_y_tag = 0;
     std::size_t ai_pre = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r1; a.edge_count = 0;
+    a.key_y_tag = 0;
     std::size_t ai_nlc = s.add_arc(a);
 
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r0; a.edge_count = 1;
+    a.key_y_tag = 0;
     s.add_arc(a);
 
     Chord c;
@@ -624,11 +641,13 @@ static void test_nlc_mismatched_edges_fires() {
         a = {}; a.first_edge = 0; a.last_edge = 0;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0; a.edge_count = 1;
+        a.key_y_tag = 0;
         std::size_t ai0 = s.add_arc(a);
 
         a = {}; a.first_edge = 1; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r1; a.edge_count = 0;
+        a.key_y_tag = 0;
         std::size_t ai1 = s.add_arc(a);
 
         Chord c;
@@ -654,11 +673,13 @@ static void test_nlc_mismatched_sides_fires() {
         a = {}; a.first_edge = 1; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0; a.edge_count = 1;
+        a.key_y_tag = 0;
         std::size_t ai0 = s.add_arc(a);
 
         a = {}; a.first_edge = 1; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r1; a.edge_count = 0;
+        a.key_y_tag = 0;
         std::size_t ai1 = s.add_arc(a);
 
         Chord c;
@@ -684,11 +705,13 @@ static void test_nlc_missing_y_tag_fires() {
         a = {}; a.first_edge = 1; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0; a.edge_count = 1;
+        a.key_y_tag = 0;
         std::size_t ai0 = s.add_arc(a);
 
         a = {}; a.first_edge = 1; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r1; a.edge_count = 0;
+        a.key_y_tag = 0;
         std::size_t ai1 = s.add_arc(a);
 
         Chord c;
@@ -715,16 +738,19 @@ static void test_nlc_wrong_adj_count_fires() {
         a = {}; a.first_edge = 1; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0; a.edge_count = 1;
+        a.key_y_tag = 0;
         std::size_t ai0 = s.add_arc(a);
 
         a = {}; a.first_edge = 1; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0; a.edge_count = 1;
+        a.key_y_tag = 0;
         std::size_t ai0b = s.add_arc(a);
 
         a = {}; a.first_edge = 1; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r1; a.edge_count = 0;
+        a.key_y_tag = 0;
         std::size_t ai1 = s.add_arc(a);
 
         Chord c;

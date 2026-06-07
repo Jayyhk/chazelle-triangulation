@@ -36,6 +36,15 @@ std::size_t Submap::add_arc(Arc arc) {
            !nodes_[arc.region_node].dead &&
            "§2.4(ii) tex 137: arc.region_node must point to a live region");
 
+    // [C91 §2 tex 47 (SoS)] + [C91 §2.4 tex 144]: arc.key_y is used by
+    // double_identify Phase 2's binary search and tie-break by symbolic-y;
+    // arc.key_y_tag must therefore carry a valid SoS tag.  Real arcs
+    // inherit their start vertex's tag; null-length arcs inherit the
+    // NLC's tag.  No paper-valid arc has a NONE tag.
+    assert(arc.key_y_tag != SOS_NONE &&
+           "§2 tex 47 (SoS) + §2.4 tex 144: arc.key_y_tag must carry a "
+           "valid SoS tag");
+
     std::size_t idx = arc_sequence_.size();
 
     // [C91 §2.4(iii)] (tex 138): "The arc-structures are stored in a
@@ -788,6 +797,12 @@ void Submap::check_invariants(const Polygon& polygon) const {
         for (std::size_t i = 0; i < arc_sequence_.size(); ++i) {
             const auto& a = arc_sequence_[i];
             if (a.dead) continue;
+            // §2 tex 47 (SoS) + §2.4 tex 144: every live arc carries a
+            // valid SoS tag for double_identify Phase 2 binary search.
+            // Applies to both real and null-length arcs.
+            assert(a.key_y_tag != SOS_NONE &&
+                   "§2 tex 47 (SoS): live arc must carry a valid SoS tag "
+                   "(key_y_tag != NONE) for double_identify y-disambiguation");
             if (a.edge_count == 0) continue;  // §2.4 tex 133: null-length arc.
             assert(a.first_edge < polygon.num_edges() &&
                    a.last_edge < polygon.num_edges() &&
