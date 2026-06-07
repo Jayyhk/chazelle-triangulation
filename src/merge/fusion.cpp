@@ -97,6 +97,18 @@ RayHit local_shoot(Point p, Side direction,
         RayHit hit = oracle.shoot(p, direction, ai, sub);
         if (!hit.hit) continue;
 
+        // [C91 §3.0(i) tex 169]: "reports the single point of α' (if any)
+        // that a ray of light shot from p in the given direction would hit."
+        // Oracle contract is forward-only: hit.x must lie at or past p.x
+        // along the shooting direction.  A backward hit would have negative
+        // signed distance and "beat" every legitimate forward hit, silently
+        // corrupting best-of-nearest selection.
+        double hit_signed_dist = (direction == LEFT)
+            ? (p.x - hit.x) : (hit.x - p.x);
+        assert(hit_signed_dist >= 0.0 &&
+               "§3.0(i) tex 169: ray-shooting oracle must report a forward "
+               "hit (hit_signed_dist >= 0 in the shooting direction)");
+
         // [C91 §3.1]: Track the explicit arc index to propagate O(1) context
         hit.hit_arc_idx = ai;
 
