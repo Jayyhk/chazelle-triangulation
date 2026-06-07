@@ -273,7 +273,14 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         assert(c.left_adj.count == 1 && c.right_adj.count == 1 &&
                "§2.2: null-length chord at vertex must have exactly "
                "1 adjacent arc per side");
-        // [C91 §2.2] (tex 108): NLC endpoints are polygon vertices.
+        // [C91 §2.1 tex 72] + [§2.2 tex 108]: NLCs arise at y-extrema
+        // from the "inside" pair of duplicate ∂C-vertices, so both
+        // endpoints are polygon vertices by construction.  O(1)-free
+        // assertion: left_is_vertex/right_is_vertex were already
+        // computed above.
+        assert(left_is_vertex && right_is_vertex &&
+               "§2.1 tex 72: NLC endpoints must both be polygon vertices "
+               "(y-extremum 'inside' duplicate pair)");
         // Vertex endpoints do NOT trigger arc merging (§2.2 tex 94).
         // The null-length arc (right_adj) is kept alive and absorbed
         // into the main region by the reassignment step below —
