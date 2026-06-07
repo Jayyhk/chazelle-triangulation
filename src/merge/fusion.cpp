@@ -199,6 +199,11 @@ std::size_t fusion_startup(FusionState& state,
            "§3.1: fusion sequence must have at least a₀ and a_{m+1}");
     const auto& a0 = state.sequence[0];
     assert(a0.is_companion && a0.side == RIGHT);
+    // [C91 §3.1 tex 179]: a_{m+1} is the LEFT companion at the junction,
+    // end of the clockwise tour around ∂C₁.  Symmetric to a₀.
+    const auto& a_m1 = state.sequence.back();
+    assert(a_m1.is_companion && a_m1.side == LEFT &&
+           "§3.1 tex 179: sequence.back() must be the a_{m+1} LEFT companion");
 
     // [C91 §3.1]: "Using local shooting, we find the point of ∂C₁
     // that a₀ sees with respect to C₁."
@@ -486,14 +491,15 @@ std::size_t fusion_startup(FusionState& state,
             lo++;
         }
 
-        if (lo >= state.sequence.size()) {
-            if (state.sequence.size() > 1 && !state.sequence[1].is_companion) {
-                assert(state.sequence[1].chord_idx != NONE &&
-                       "§3.1 Case 2 (Lemma 2.1): skipped vertex must be a "
-                       "chord endpoint of S₁ (sees ∂C₁ by construction)");
-            }
-            return state.sequence.size() - 1;
-        }
+        // [C91 §3.1 tex 179, 188]: c₀ is the visibility hit from a₀ on ∂C₁ and
+        // hence strictly precedes a_{m+1} on the clockwise tour.  a_{m+1} sits
+        // at the maximal trav_pos (LEFT side at the junction's SymbolicY), so
+        // vertex_past_c0(a_{m+1}) is always true and the while loop must exit
+        // with lo ≤ sequence.size() − 1.
+        assert(lo < state.sequence.size() &&
+               "§3.1 tex 179, 188: a_{m+1} sits at maximal trav_pos so "
+               "vertex_past_c0(a_{m+1}) holds; the loop above must terminate "
+               "with lo ≤ sequence.size() − 1");
 
         // §3.1 Case 2 (Lemma 2.1): All skipped vertices see ∂C₁.
         // This is a paper-guaranteed structural property; only verify
@@ -804,8 +810,10 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     state.sequence = std::move(result);
 
     // [C91 §3.1]: Map arc keys directly to their contiguous bounds in sequence.
-    state.arc_starts.assign(num_arcs, NONE);
-    for (std::size_t i = 0; i < bucket_starts.size(); ++i) {
+    // bucket_starts.size() == num_arcs by construction (both branches above),
+    // so every slot is assigned — no NONE sentinels remain.
+    state.arc_starts.resize(num_arcs);
+    for (std::size_t i = 0; i < num_arcs; ++i) {
         state.arc_starts[i] = bucket_starts[i] + 1; // +1 because a_0 is prepended
     }
 }
