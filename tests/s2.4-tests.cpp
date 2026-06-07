@@ -58,7 +58,7 @@ static void test_double_identify_simple() {
 
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = 0.0; a.key_y_tag = 0;
-    std::size_t ai1 = s.add_arc(a);
+    s.add_arc(a);
 
     // §2.4 (tex 144): end_arc = last LEFT arc (the turnaround point).
     s.start_arc = ai0; s.end_arc = ai0;
@@ -86,7 +86,7 @@ static void test_double_identify_multi_edge() {
 
     a.first_edge = 3; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = 3.0; a.key_y_tag = 3;
-    std::size_t ai1 = s.add_arc(a);
+    s.add_arc(a);
 
     // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
     s.start_arc = ai0; s.end_arc = ai0;
@@ -160,7 +160,7 @@ static void test_endpoint_pointers() {
     std::size_t ai0 = s.add_arc(a);
 
     a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    std::size_t ai1 = s.add_arc(a);
+    s.add_arc(a);
 
     s.start_arc = ai0;
     // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
@@ -267,7 +267,7 @@ static void test_double_identify_miss() {
     std::size_t ai0 = s.add_arc(a);
 
     a.first_side = RIGHT; a.last_side = RIGHT;
-    std::size_t ai1 = s.add_arc(a);
+    s.add_arc(a);
 
     // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
     s.start_arc = ai0; s.end_arc = ai0;
