@@ -989,6 +989,15 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
             std::size_t elo = std::min(a.first_edge, a.last_edge);
             std::size_t ehi = std::max(a.first_edge, a.last_edge);
             if (a.first_side != a.last_side) {
+                // [C91 §3.0(ii)(2)] (tex 170): arcs in canonical normal-form
+                // submaps are guaranteed single-side ("no double-backing")
+                // — only start_arc and end_arc may wrap around a C-endpoint
+                // (§2.4 (iii) tex 138).  A non-start/end wrapped arc would
+                // make plain min/max return the wrong edge range silently.
+                assert((ai == start_arc || ai == end_arc) &&
+                       "§3.0(ii)(2) tex 170 / §2.4(iii) tex 138: only "
+                       "start_arc and end_arc may double-back in a normal-"
+                       "form submap");
                 if (ai == start_arc)
                     elo = std::min(elo, start_vertex);
                 if (ai == end_arc) {
