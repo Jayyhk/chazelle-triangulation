@@ -1297,6 +1297,7 @@ bool Submap::is_granular(std::size_t gamma,
     //   Combining: |E| ≤ ⌊8(n−1)/(γ+1)⌋ since |E| is integer, hence
     //   V ≤ 2·⌊8(n−1)/(γ+1)⌋.  The floor sits inside the doubling, so no
     //   additive slack is needed.
+#ifdef CHAZELLE_EXPENSIVE_ASSERTS
     if (is_conformal()) {
         std::size_t denom = gamma + 1; // γ+1 > 0 even when γ = 0
         std::size_t bound = 2 * (8 * (polygon.num_vertices() - 1) / denom);
@@ -1304,6 +1305,7 @@ bool Submap::is_granular(std::size_t gamma,
                "§2.3 Lemma 2.3 (tex 126,129): V ≤ 2·⌊8(n−1)/(γ+1)⌋ for "
                "γ-granular conformal submap");
     }
+#endif
 
     return true;
 }

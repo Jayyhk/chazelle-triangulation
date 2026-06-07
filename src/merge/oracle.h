@@ -191,7 +191,7 @@ inline void assert_cut_postconditions(
         const Subarc& target,
         const ArcPiece* pieces, std::size_t count,
         std::size_t max_pieces,
-        std::size_t h_gamma) {
+        [[maybe_unused]] std::size_t h_gamma) {
     // Bound (tex 170): "subdivides ... into at most g(γᵢ) subarcs"
     // implies count ≥ 1 (a subarc cannot be subdivided into zero pieces)
     // and count ≤ g(γᵢ).
@@ -254,14 +254,27 @@ inline void assert_cut_postconditions(
             assert(p.curve != nullptr &&
                    "§3.0(ii)(3) tex 170: non-boundary piece requires its "
                    "underlying curve V(ᾱⱼ) (non-null)");
-            // "conformal submap of V(ᾱⱼ) ... in normal form."
+            // §2.4(iv) tex 139: "If the submap is conformal, then its tree
+            // decomposition should be available."  Part of "normal form" —
+            // O(1) check, kept unguarded.
+            assert(!p.submap->tree_decomposition().empty() &&
+                   "§2.4(iv) tex 139: non-boundary piece's conformal submap "
+                   "must have its tree decomposition available (normal form)");
+#ifdef CHAZELLE_EXPENSIVE_ASSERTS
+            // "in normal form" — full structural validation (§2.4(i)–(iv));
+            // O(m) so gated to avoid inflating cut() beyond paper's
+            // O(g(γᵢ)) per call (§3.0(ii) tex 170).
+            p.submap->check_invariants(*p.curve);
+            // "conformal submap of V(ᾱⱼ)" — O(num_nodes).
             assert(p.submap->is_conformal() &&
                    "§3.0(ii)(3) tex 170: non-boundary piece's submap must "
                    "be conformal");
-            // "h(γᵢ)-granular ... submap of V(ᾱⱼ)."
+            // "h(γᵢ)-granular ... submap of V(ᾱⱼ)" — O(num_chords +
+            // simulated_contraction_weight per chord).
             assert(p.submap->is_granular(h_gamma, *p.curve) &&
                    "§3.0(ii)(3) tex 170: non-boundary piece's submap must "
                    "be h(γᵢ)-granular");
+#endif
         } else {
             // (3) (tex 170): boundary pieces are "single-edge pieces
             // attached to the points of C corresponding to the endpoints

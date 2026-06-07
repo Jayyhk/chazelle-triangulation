@@ -535,10 +535,13 @@ void fuse_s1_into_s2(FusionState& state,
 
     // [C91 §3.1 invariant (B)]: "The point q of ∂C that is seen by p belongs
     // to ∂C₂ and the chord pq lies in the region of S₂ called current."
+    // local_shoot is O(f(γ₂)) — gated to avoid doubling startup's own bound.
+#ifdef CHAZELLE_EXPENSIVE_ASSERTS
     assert(local_shoot(state.p,
                shooting_direction(state.p_edge, state.p_side, C1),
                state.s2_region, S2, C2, oracle2).hit &&
            "§3.1 invariant (B): p must see ∂C₂ after startup");
+#endif
 
     // [C91 §3.1]: "We let a variable p run through ∂C₁ in clockwise
     // order, stopping at a₀, ..., a_{m+1}."
@@ -555,14 +558,18 @@ void fuse_s1_into_s2(FusionState& state,
         // [C91 §3.1 invariant (B)] (tex 195): "The point q of ∂C
         // that is seen by p belongs to ∂C₂ and the chord pq lies in
         // the region of S₂ called current."
-        // The entire computation is inside the assert so it is elided
-        // under NDEBUG (local_shoot has virtual side effects the
-        // compiler cannot optimize away on its own).
+        // local_shoot is O(f(γ₂)) per call — running it every iteration
+        // would inflate the main loop from O(m + …) to O(m·f(γ₂)) in
+        // debug builds, violating the paper's per-merge bound.  Gate
+        // under CHAZELLE_EXPENSIVE_ASSERTS (matches the §3.1 startup
+        // skipped-vertex pattern at line ~502).
+#ifdef CHAZELLE_EXPENSIVE_ASSERTS
         assert(local_shoot(
                    state.p,
                    shooting_direction(state.p_edge, state.p_side, C1),
                    state.s2_region, S2, C2, oracle2).hit &&
                "§3.1 invariant (B): p must see a point q on ∂C₂");
+#endif
 
         // [C91 §3.1 invariant (A)]: "The points of ∂C that are seen
         // by the exit chord endpoints of S₁ on the portion of ∂C₁
