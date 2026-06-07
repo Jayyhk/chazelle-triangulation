@@ -209,11 +209,25 @@ public:
     /// decomposition should be available."
     void build_tree_decomposition();
     const TreeDecomposition& tree_decomposition() const noexcept {
-        return tree_decomp_;
+        // [C91 §3.3] (tex 277): "linear in the size of the submap tree."
+        // Mutators are O(1); they flag the cached TD stale instead of
+        // destroying it.  Stale TD reads as empty so consumers fail fast
+        // (e.g. merge.h's !tree_decomposition().empty() precondition).
+        // Static empty constant — no destruction work in the getter, so
+        // both this call and every mutator are strictly O(1).
+        static const TreeDecomposition empty_;
+        return tree_decomp_dirty_ ? empty_ : tree_decomp_;
     }
 
 private:
     TreeDecomposition tree_decomp_;
+    /// [C91 §2.4(iv)]: set by every mutator (add_node / add_arc / add_chord
+    /// / remove_chord / compact) so the next consumer of `tree_decomposition()`
+    /// sees an empty TD and rebuilds.  Cleared by `build_tree_decomposition`.
+    /// O(1) set; the deferred destruction of the stale tree_decomp_ is
+    /// absorbed by the next `build()` (which clears internally) or the
+    /// Submap destructor.
+    bool tree_decomp_dirty_ = false;
     /// [C91 §2.4(i)]: Nodes (regions) of the submap tree.
     std::vector<SubmapNode> nodes_;
 

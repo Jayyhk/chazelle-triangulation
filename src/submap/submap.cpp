@@ -22,9 +22,9 @@ std::size_t SubmapNode::degree() const noexcept {
 std::size_t Submap::add_node() {
     std::size_t idx = nodes_.size();
     nodes_.push_back(SubmapNode{});
-    // [C91 §2.4(iv)]: tree decomposition indexes nodes_; mutating the
-    // table invalidates any previously built decomposition.
-    tree_decomp_ = TreeDecomposition{};
+    // [C91 §2.4(iv)]: tree decomposition indexes nodes_; flag stale.
+    // O(1) — destruction is deferred to next build() or destructor.
+    tree_decomp_dirty_ = true;
     return idx;
 }
 
@@ -61,8 +61,8 @@ std::size_t Submap::add_arc(Arc arc) {
     }
     arc_sequence_.push_back(arc);
     // [C91 §2.4(iv)]: tree decomposition references the arc sequence
-    // via region adjacency; mutating arc_sequence_ invalidates it.
-    tree_decomp_ = TreeDecomposition{};
+    // via region adjacency; flag stale.  O(1).
+    tree_decomp_dirty_ = true;
     return idx;
 }
 
@@ -138,9 +138,9 @@ std::size_t Submap::add_chord(Chord chord) {
         nodes_[r].incident_chords.push_back(idx);
     }
 
-    // [C91 §2.4(iv)]: tree decomposition indexes chords_; appending a new
-    // chord shifts the index space callers may have captured.
-    tree_decomp_ = TreeDecomposition{};
+    // [C91 §2.4(iv)]: tree decomposition indexes chords_; flag stale.
+    // O(1).  add_chord is O(1) per §2.4 invariants.
+    tree_decomp_dirty_ = true;
     return idx;
 }
 
@@ -341,8 +341,9 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     nodes_[r1].dead = true;
 
     // [C91 §2.4(iv)]: tree decomposition can reference c and r1, both
-    // now dead; invalidate to force rebuild before any TD consumer.
-    tree_decomp_ = TreeDecomposition{};
+    // now dead; flag stale.  O(1) — required by §3.3 (tex 277) O(1) per
+    // chord removal.
+    tree_decomp_dirty_ = true;
     return r0;
 }
 
@@ -501,9 +502,10 @@ void Submap::compact() {
     compacted_ = true;
 
     // [C91 §2.4(iv)]: tree decomposition indices reference the
-    // pre-compaction chord/node tables and are now stale.  Invalidate
-    // to prevent silent use of wrong indices before rebuild.
-    tree_decomp_ = TreeDecomposition{};
+    // pre-compaction chord/node tables and are now stale.  Flag — the
+    // deferred destruction is absorbed by the next build() (which
+    // clears internally) or the Submap destructor.
+    tree_decomp_dirty_ = true;
 }
 
 // ── Live counts ─────────────────────────────────────────────────
@@ -1103,7 +1105,11 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
 // ── Tree decomposition ──────────────────────────────────────────
 
 void Submap::build_tree_decomposition() {
+    // tree_decomp_.build() clears any stale contents internally before
+    // building, so any cost from a previously-flagged stale TD is
+    // absorbed here (not in the mutators that set the flag).
     tree_decomp_.build(*this);
+    tree_decomp_dirty_ = false;
 }
 
 // ── Region weight (O(1) via chord→arc adjacency) ────────────────
