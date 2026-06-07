@@ -22,6 +22,9 @@ std::size_t SubmapNode::degree() const noexcept {
 std::size_t Submap::add_node() {
     std::size_t idx = nodes_.size();
     nodes_.push_back(SubmapNode{});
+    // [C91 §2.4(iv)]: tree decomposition indexes nodes_; mutating the
+    // table invalidates any previously built decomposition.
+    tree_decomp_ = TreeDecomposition{};
     return idx;
 }
 
@@ -57,6 +60,9 @@ std::size_t Submap::add_arc(Arc arc) {
         left_right_boundary_ = idx + 1;
     }
     arc_sequence_.push_back(arc);
+    // [C91 §2.4(iv)]: tree decomposition references the arc sequence
+    // via region adjacency; mutating arc_sequence_ invalidates it.
+    tree_decomp_ = TreeDecomposition{};
     return idx;
 }
 
@@ -132,6 +138,9 @@ std::size_t Submap::add_chord(Chord chord) {
         nodes_[r].incident_chords.push_back(idx);
     }
 
+    // [C91 §2.4(iv)]: tree decomposition indexes chords_; appending a new
+    // chord shifts the index space callers may have captured.
+    tree_decomp_ = TreeDecomposition{};
     return idx;
 }
 
@@ -331,6 +340,9 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     c.dead = true;
     nodes_[r1].dead = true;
 
+    // [C91 §2.4(iv)]: tree decomposition can reference c and r1, both
+    // now dead; invalidate to force rebuild before any TD consumer.
+    tree_decomp_ = TreeDecomposition{};
     return r0;
 }
 
