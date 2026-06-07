@@ -1278,18 +1278,32 @@ bool Submap::is_granular(std::size_t gamma,
             return false;
     }
 
-    // [C91 §2.3 Lemma 2.3] (tex 126): "If C is a polygonal curve with n vertices, any γ-granular conformal submap
-    // of the visibility map of C has O(n/γ + 1) regions and each region is bounded by O(γ) edges."
-    // This bound is conditional on γ-granularity — assert only after both conditions (i) and (ii) are confirmed.
+    // [C91 §2.3 Lemma 2.3] (tex 126): "any γ-granular conformal submap of the
+    // visibility map of C has O(n/γ + 1) regions."  The proof at tex 129 uses
+    // conformality at three points (the "fixed fraction" lower bound on |E|,
+    // the degree ≤ 4 multiplier, and the bounded vertex-reuse argument), so the
+    // bound only holds for conformal submaps.  γ-granularity is defined by
+    // (i)+(ii) alone (tex 118–122); is_granular() does not check conformality,
+    // so we gate the bound on is_conformal() here.
     //
-    // Mathematically bounded constant derivation:
-    // 1. Edges E spanning nodes of deg < 3 is > N/2 of total tree edges (N is regions).
-    // 2. Converged capacity: sum(W_u + W_v) > |E|*gamma. Max vertex duplicated overlap <= 4. Maximum graph boundary <= 4n.
-    // 3. Solving: 16n >= 4*sum(W_v) >= sum(W_u+W_v) > |E|*gamma >= (N/2)*gamma => N < 32*(n/gamma).
-    // Note: Mathematically this is strictly N < 32(n/gamma), but because C++ performs integer
-    // division truncation on (n/gamma), we use <= 32*(n/gamma) + 32 to safely preserve the ceiling bounds.
-    assert(num_live_nodes() <= 32 * (polygon.num_vertices() / (gamma > 0 ? gamma : 1)) + 32 &&
-           "§2.3 Lemma 2.3: Violates strict mathematically proven N < 32(n/gamma) bound");
+    // Constant derived from the paper proof (conformality required):
+    //   1. V ≤ 2|E| (tree handshake: from V − 2|E| = 2(|E_high| + 1) − V and
+    //      V ≥ 2|E_high| + 2 for any tree with chords, valid universally).
+    //   2. |E|·(γ+1) ≤ Σ_{e=(u,v)∈E} (W_u + W_v) ≤ 4·Σ_u W_u (deg ≤ 4 from
+    //      conformality; merged weight > γ means ≥ γ+1 since weights are integer
+    //      nonnull-edge counts).
+    //   3. Σ_u W_u ≤ Σ_arcs (arc weight) = 2·(nonnull C-edges) ≤ 2(n−1) (each
+    //      nonnull C-edge gives 2 nonnull ∂C-edges; arcs partition ∂C).
+    //   Combining: |E| ≤ ⌊8(n−1)/(γ+1)⌋ since |E| is integer, hence
+    //   V ≤ 2·⌊8(n−1)/(γ+1)⌋.  The floor sits inside the doubling, so no
+    //   additive slack is needed.
+    if (is_conformal()) {
+        std::size_t denom = gamma + 1; // γ+1 > 0 even when γ = 0
+        std::size_t bound = 2 * (8 * (polygon.num_vertices() - 1) / denom);
+        assert(num_live_nodes() <= bound &&
+               "§2.3 Lemma 2.3 (tex 126,129): V ≤ 2·⌊8(n−1)/(γ+1)⌋ for "
+               "γ-granular conformal submap");
+    }
 
     return true;
 }
