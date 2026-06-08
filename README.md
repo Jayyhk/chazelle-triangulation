@@ -4,10 +4,7 @@ A faithful C++20 implementation of Chazelle's 1991 deterministic linear-time
 algorithm for triangulating simple polygons [C91]. The implementation includes
 the Lipton-Tarjan [LT79] planar separator for ray-shooting and the
 Fournier-Montuno [FM84] method for the final trapezoidization-to-triangulation
-step. Intended as a reference implementation for studying the algorithm.
-
-> [!CAUTION]
-> This is a work in progress! With high probability there are bugs present. Use at your own risk.
+step.
 
 ## Implementation Progress
 
@@ -62,21 +59,6 @@ in counterclockwise boundary order.
 
 **Output:** timing information per phase, followed by triangle count and one
 line per triangle giving three vertex indices.
-
-## Project Structure
-
-```
-src/
-├── polygon/         Polygon, edges, SoS perturbation              [C91 §2.0–2.1]
-├── submap/          Submaps, arcs, chords, tree decomposition,    [C91 §2.2–2.5]
-│                    shielding
-├── merge/           Merge orchestrator, oracles, fusion            [C91 §3.0–3.1]
-├── common.h
-└── main.cpp         Entry point
-tests/               Unit + e2e tests (§2.0–2.5, §3.0–3.1)
-papers/              Transcribed reference papers
-visualizer/          Python visualization tools
-```
 
 ## References
 
