@@ -1,4 +1,4 @@
-// tests/s2.5-tests.cpp — Tests for §2.5: Shielding (Lemma 2.4).
+// tests/s2.5-tests.cpp — Tests for [C91 §2.5]: Shielding (Lemma 2.4).
 
 #include "submap/shielding.h"
 
@@ -83,7 +83,7 @@ static void test_properties() {
                 auto r = classify_shielding(a != 0, b != 0, eq != 0);
                 assert(r.num_pieces >= 1 && r.num_pieces <= 3);
                 assert(r.shielded_from[0] == BoundarySide::B2 &&
-                       "§2.5: first piece (from c) must always be "
+                       "[C91 §2.5]: first piece (from c) must always be "
                        "shielded from B₂");
             }
         }
@@ -155,7 +155,7 @@ static void test_enum() {
 // ════════════════════════════════════════════════════════════════
 
 int main() {
-    std::printf("§2.5 tests:\n");
+    std::printf("[C91 §2.5 tests]:\n");
     test_no_intersection();
     test_a_prime_only();
     test_both_distinct();

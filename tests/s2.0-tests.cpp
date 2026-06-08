@@ -1,4 +1,4 @@
-// tests/test_section2_0.cpp — Tests for §2.0: SoS y-perturbation.
+// tests/test_section2_0.cpp — Tests for [C91 §2.0]: SoS y-perturbation.
 
 #include "polygon/point.h"
 #include "polygon/perturbation.h"
@@ -203,7 +203,7 @@ static void test_square_vertices() {
 // ════════════════════════════════════════════════════════════════
 
 int main() {
-    std::printf("§2.0 tests:\n");
+    std::printf("[C91 §2.0 tests]:\n");
     test_distinct_y();
     test_sos_tiebreak();
     test_transitivity();

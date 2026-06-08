@@ -1,4 +1,4 @@
-// tests/2.4-tests.cpp — Tests for §2.4: representation, double identification.
+// tests/2.4-tests.cpp — Tests for [C91 §2.4]: representation, double identification.
 
 #include "submap/submap.h"
 #include "polygon/polygon.h"
@@ -60,7 +60,7 @@ static void test_double_identify_simple() {
     a.key_y = 0.0; a.key_y_tag = 0;
     s.add_arc(a);
 
-    // §2.4 (tex 144): end_arc = last LEFT arc (the turnaround point).
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (the turnaround point).
     s.start_arc = ai0; s.end_arc = ai0;
     s.start_vertex = 0; s.end_vertex = 1;
 
@@ -88,7 +88,7 @@ static void test_double_identify_multi_edge() {
     a.key_y = 3.0; a.key_y_tag = 3;
     s.add_arc(a);
 
-    // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
     s.start_arc = ai0; s.end_arc = ai0;
     s.start_vertex = 0; s.end_vertex = 4;
 
@@ -125,7 +125,7 @@ static void test_double_identify_same_edge() {
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 1; a.edge_count = 1; a.key_y = 2.0; a.key_y_tag = 2;
-    std::size_t ai_end_left = s.add_arc(a); // last LEFT arc — §2.4 (tex 144)
+    std::size_t ai_end_left = s.add_arc(a); // last LEFT arc — [C91 §2.4] (tex 144)
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1; a.key_y = 2.0; a.key_y_tag = 2;
@@ -135,7 +135,7 @@ static void test_double_identify_same_edge() {
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.0; a.key_y_tag = 0;
     s.add_arc(a);
 
-    // §2.4 (tex 144): end_arc = last LEFT arc (ai_end_left).
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai_end_left).
     s.start_arc = ai0; s.end_arc = ai_end_left;
     s.start_vertex = 0; s.end_vertex = 2;
 
@@ -164,7 +164,7 @@ static void test_endpoint_pointers() {
     s.add_arc(a);
 
     s.start_arc = ai0;
-    // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
     s.end_arc = ai0;
     s.start_vertex = 0;
     s.end_vertex = 2;
@@ -233,7 +233,7 @@ static void test_double_identify_worst_case() {
     s.add_arc(a);
 
     a.region_node = 0; a.edge_count = 1; a.key_y = 1.5; a.key_y_tag = 2;
-    std::size_t ai_end_left = s.add_arc(a); // last LEFT arc — §2.4 (tex 144)
+    std::size_t ai_end_left = s.add_arc(a); // last LEFT arc — [C91 §2.4] (tex 144)
 
     // 3 RIGHT arcs on edge 1.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
@@ -246,7 +246,7 @@ static void test_double_identify_worst_case() {
     a.region_node = 0; a.edge_count = 1; a.key_y = 0.5; a.key_y_tag = 0;
     s.add_arc(a);
 
-    // §2.4 (tex 144): end_arc = last LEFT arc (ai_end_left = arc 2).
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai_end_left = arc 2).
     s.start_arc = ai0; s.end_arc = ai_end_left;
     s.start_vertex = 0; s.end_vertex = 2;
 
@@ -275,7 +275,7 @@ static void test_double_identify_miss() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     s.add_arc(a);
 
-    // §2.4 (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
     s.start_arc = ai0; s.end_arc = ai0;
     s.start_vertex = 0; s.end_vertex = 1;
 
@@ -291,7 +291,7 @@ static void test_double_identify_miss() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_check_invariants_polygon_positive() {
-    // [C91 §2.4 (i)–(iii) + §2.2]: Polygon-aware overload accepts a
+    // [C91 §2.4 (i)–(iii) + [C91 §2.2]]: Polygon-aware overload accepts a
     // well-formed normal-form submap (key_y monotonic + edge_count
     // cache consistent with polygon).
     auto poly = test_polygon();
@@ -321,7 +321,7 @@ static void test_check_invariants_polygon_positive() {
 
 // ════════════════════════════════════════════════════════════════
 //  9. check_invariants(polygon) — size-3 same-first_edge run
-//     (§2.4 tex 144 monotonicity beyond trivial size-2)
+//     ([C91 §2.4 tex 144] monotonicity beyond trivial size-2)
 // ════════════════════════════════════════════════════════════════
 
 static void test_check_invariants_polygon_size_3_run() {
@@ -382,14 +382,14 @@ static void test_check_invariants_polygon_size_3_run() {
 
 // ════════════════════════════════════════════════════════════════
 //  10. check_invariants(polygon) — wrapped (LEFT→RIGHT) endpoint arc
-//      (§2.4 tex 142 double-backing)
+//      ([C91 §2.4 tex 142] double-backing)
 // ════════════════════════════════════════════════════════════════
 
 static void test_check_invariants_polygon_wrapped_arc() {
     // [C91 §2.4 tex 142]: "an arc might wrap around both sides of C,
     // something we call double-backing."  Single-arc submap whose only
     // arc wraps at c_end (LEFT→RIGHT); the edge_count cache check
-    // (§2.2 tex 106) uses the union-range count.
+    // ([C91 §2.2 tex 106]) uses the union-range count.
     Polygon poly({{0,0,0}, {1,1,1}, {2,0,2}});
 
     Submap s;
@@ -413,7 +413,7 @@ static void test_check_invariants_polygon_wrapped_arc() {
 
 // ════════════════════════════════════════════════════════════════
 //  11. Death: non-monotonic key_y in a same-first_edge run
-//      (§2.4 tex 144)
+//      ([C91 §2.4 tex 144])
 // ════════════════════════════════════════════════════════════════
 
 static void test_non_monotonic_run_fires() {
@@ -474,7 +474,7 @@ static void test_non_monotonic_run_fires() {
 // ════════════════════════════════════════════════════════════════
 
 int main() {
-    std::printf("§2.4 tests:\n");
+    std::printf("[C91 §2.4 tests]:\n");
     test_double_identify_simple();
     test_double_identify_multi_edge();
     test_double_identify_same_edge();

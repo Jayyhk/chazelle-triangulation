@@ -13,14 +13,14 @@ void TreeDecomposition::build(const Submap& submap) {
     root_ = NONE;
 
     assert(submap.is_conformal() &&
-           "§2.4(iv): tree decomposition requires conformal submap");
+           "[C91 §2.4(iv)]: tree decomposition requires conformal submap");
     assert(submap.num_nodes() >= 1 &&
-           "§2.3: submap must have ≥ 1 region");
+           "[C91 §2.3]: submap must have ≥ 1 region");
     // Compacted — build() indexes directly into nodes_/chords_, so dead
     // entries would corrupt the decomposition.
     assert(submap.num_live_nodes() == submap.num_nodes() &&
            submap.num_live_chords() == submap.num_chords() &&
-           "§2.4(iv): tree decomposition requires compacted submap");
+           "[C91 §2.4(iv)]: tree decomposition requires compacted submap");
 
     std::vector<std::size_t> all_chords;
     for (std::size_t i = 0; i < submap.num_chords(); ++i)
@@ -31,7 +31,7 @@ void TreeDecomposition::build(const Submap& submap) {
 
     if (all_chords.empty()) {
         // Single-region submap → one leaf.
-        assert(!all_regions.empty() && "§2.3: no-chord submap has 1 region");
+        assert(!all_regions.empty() && "[C91 §2.3]: no-chord submap has 1 region");
         TDNode leaf;
         leaf.region_idx = all_regions[0];
         root_ = nodes_.size();
@@ -39,19 +39,19 @@ void TreeDecomposition::build(const Submap& submap) {
         return;
     }
 
-    // [§2.3 tex 116]: reusable buffer, O(m).
+    // [C91 §2.3 tex 116]: reusable buffer, O(m).
     std::vector<std::size_t> region_local_buf(submap.num_nodes(), NONE);
     root_ = decompose(submap, all_chords, all_regions, NONE, region_local_buf);
 
-    // [§2.3]: internal nodes ↔ chords; leaves ↔ regions (bijection).
+    // [C91 §2.3]: internal nodes ↔ chords; leaves ↔ regions (bijection).
     std::size_t num_internal = 0, num_leaves = 0;
     for (const auto& n : nodes_) {
         if (n.is_internal()) ++num_internal; else ++num_leaves;
     }
     assert(num_internal == all_chords.size() &&
-           "§2.3: tree decomposition internals must biject with chords");
+           "[C91 §2.3]: tree decomposition internals must biject with chords");
     assert(num_leaves == all_regions.size() &&
-           "§2.3: tree decomposition leaves must biject with regions");
+           "[C91 §2.3]: tree decomposition leaves must biject with regions");
 }
 
 std::size_t TreeDecomposition::decompose(
@@ -62,7 +62,7 @@ std::size_t TreeDecomposition::decompose(
         std::vector<std::size_t>& region_local) {
 
     if (chords.empty()) {
-        assert(regions.size() == 1 && "§2.3: leaf is a single region");
+        assert(regions.size() == 1 && "[C91 §2.3]: leaf is a single region");
         TDNode leaf;
         leaf.region_idx = regions[0];
         leaf.parent = parent_td;
@@ -124,7 +124,7 @@ std::size_t TreeDecomposition::decompose(
         if (max_sub < best_max) { best_max = max_sub; centroid = i; }
     }
 
-    // [§2.3]: some edge incident on the centroid splits ≤ 3/4 / 3/4.
+    // [C91 §2.3]: some edge incident on the centroid splits ≤ 3/4 / 3/4.
     std::size_t best_chord_local = 0;
     std::size_t best_split = n;
     for (auto [ci, v] : adj[centroid]) {
@@ -136,10 +136,10 @@ std::size_t TreeDecomposition::decompose(
         if (split < best_split) { best_split = split; best_chord_local = ci; }
     }
 
-    // [§2.3 tex 114]: paper bound is on edges (n−1 total): ≤ ⌊3(n−1)/4⌋
+    // [C91 §2.3 tex 114]: paper bound is on edges (n−1 total): ≤ ⌊3(n−1)/4⌋
     // edges per side ⟹ ≤ ⌊3(n−1)/4⌋ + 1 regions.
     assert(best_split <= 3 * (n - 1) / 4 + 1 &&
-           "§2.3: centroid split must give ≤ 3/4 edges per side");
+           "[C91 §2.3]: centroid split must give ≤ 3/4 edges per side");
 
     std::size_t chosen_chord = chords[best_chord_local];
     TDNode internal;

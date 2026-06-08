@@ -44,7 +44,7 @@ MergeResult merge(const MergeInput& in) {
 
     MergeResult result(build_merged_curve(*in.C1, *in.C2));
 
-    // [§3]: "The merge proceeds in three stages."
+    // [C91 §3]: "The merge proceeds in three stages."
     fuse(result.S, in, result.C);
     restore_conformality(result.S, in, result.C);
     enforce_granularity(result.S, in, result.C);

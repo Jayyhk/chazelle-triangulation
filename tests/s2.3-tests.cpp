@@ -1,4 +1,4 @@
-// tests/2.3-tests.cpp — Tests for §2.3: conformality, granularity, tree decomposition.
+// tests/2.3-tests.cpp — Tests for [C91 §2.3]: conformality, granularity, tree decomposition.
 
 #include "submap/submap.h"
 #include "polygon/polygon.h"
@@ -11,7 +11,7 @@ using namespace chazelle;
 static Polygon test_polygon() {
     // 4-vertex non-monotone polygon with vertices at the chord y values
     // (y=0.5 at index 2, y=1.5 at index 3).  Chord SoS tags identify
-    // these source vertices per §2.1 tex 70.  Three edges keep region
+    // these source vertices per [C91 §2.1 tex 70.]  Three edges keep region
     // weights bounded so the γ=2 granularity demo below remains achievable.
     return Polygon({
         {0, 0,   0},
@@ -33,7 +33,7 @@ static Submap build_conformal_submap() {
     // Submap: r0 — c0 — r1 — c1 — r2
     // c0 at y=0.5 on edge 0 (non-vertex), c1 at y=1.5 on edge 1 (non-vertex).
     // Adjacent arcs at each chord endpoint share the junction edge
-    // (§2.2 tex 94: "glueing back ∂C at those points").
+    // ([C91 §2.2 tex 94]: "glueing back ∂C at those points").
     Submap s;
     s.add_node(); // r0
     s.add_node(); // r1
@@ -41,7 +41,7 @@ static Submap build_conformal_submap() {
 
     // Polygon has 4 nonnull edges (all consecutive vertex pairs differ in
     // both coords).  Arc edge_count = polygon.count_nonnull_edges(lo, hi)
-    // over the arc's underlying edge range, per §2.2 tex 106 cache invariant.
+    // over the arc's underlying edge range, per [C91 §2.2 tex 106] cache invariant.
     Arc a;
 
     // LEFT half (ascending first_edge in ∂C order):
@@ -81,7 +81,7 @@ static Submap build_conformal_submap() {
 
     Chord c;
     // c0: r0 — r1.  Horizontal exit chord at y=0.5 (vertex 2's y)
-    // sourced at vertex 2 per §2.1 tex 70; tag identifies the source.
+    // sourced at vertex 2 per [C91 §2.1 tex 70]; tag identifies the source.
     c = {}; c.region[0] = 0; c.region[1] = 1;
     c.left_edge = 0; c.right_edge = 0; c.y = 0.5; c.y_tag = 2;
     c.left_adj = {{0, 1}, 2}; c.right_adj = {{4, 5}, 2};
@@ -92,7 +92,7 @@ static Submap build_conformal_submap() {
     c.left_adj = {{1, 2}, 2}; c.right_adj = {{3, 4}, 2};
     s.add_chord(c);
 
-    // §2.4(iii) tex 138: endpoint pointers (LEFT-side, at C's two ends).
+    // [C91 §2.4(iii) tex 138]: endpoint pointers (LEFT-side, at C's two ends).
     s.start_arc = 0; s.end_arc = 2;
     s.start_vertex = 0; s.end_vertex = 3;
     s.check_invariants(test_polygon());
@@ -246,7 +246,7 @@ static void test_is_granular_true() {
     c.left_adj = {{ai0, ai1}, 2}; c.right_adj = {{ai2, ai3}, 2};
     s.add_chord(c);
 
-    // §2.4(iii) tex 138: endpoint pointers (LEFT-side, at C's two ends).
+    // [C91 §2.4(iii) tex 138]: endpoint pointers (LEFT-side, at C's two ends).
     s.start_arc = ai0; s.end_arc = ai1;
     s.start_vertex = 0; s.end_vertex = 3;
     s.check_invariants(test_polygon());
@@ -333,7 +333,7 @@ static void test_td_single_region() {
 // ════════════════════════════════════════════════════════════════
 
 int main() {
-    std::printf("§2.3 tests:\n");
+    std::printf("[C91 §2.3 tests]:\n");
     test_is_conformal();
     test_is_semigranular();
     test_simulated_contraction_weight();

@@ -29,7 +29,7 @@ struct FusionVertex {
     bool is_companion;         // True for a₀ or a_{m+1}.
 };
 
-// [C91 §3.1] (tex 181): Fixed-capacity result for collect_region_arcs —
+// [C91 §3.1 tex 181]: Fixed-capacity result for collect_region_arcs —
 // conformality bounds the count: "at most four arcs need to be checked."
 struct RegionArcs {
     static constexpr std::size_t MAX = 4;
@@ -107,7 +107,7 @@ std::size_t fusion_startup(FusionState& state,
 
 // [C91 §3.1]: Main loop — traverse ∂C₁ clockwise, shooting into S₂ at
 // each stop to discover new chords.
-// TODO: (§3.1) implement main loop body.
+// TODO: ([C91 §3.1]) implement main loop body.
 void fuse_s1_into_s2(FusionState& state,
                       const Submap& S1, const Polygon& C1,
                       const Submap& S2, const Polygon& C2,

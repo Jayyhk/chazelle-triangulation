@@ -1,4 +1,4 @@
-// tests/s3.1-tests.cpp — Tests for §3.1: Fusion of two submaps.
+// tests/s3.1-tests.cpp — Tests for [C91 §3.1]: Fusion of two submaps.
 
 #include "merge/fusion.h"
 #include "polygon/polygon.h"
@@ -307,7 +307,7 @@ struct StartupOracle : RayShootingOracle {
         // A horizontal ray always hits the face it approaches first.
         // Shooting LEFT → hits a LEFT-side point; RIGHT → RIGHT.
         // This ensures the discovered chord connects opposite sides
-        // (§2.2 tex 96: exit chords cross the double boundary).
+        // ([C91 §2.2 tex 96]: exit chords cross the double boundary).
         h.side = dir;
         return h;
     }
@@ -334,7 +334,7 @@ static void test_startup_case1() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
     std::size_t ai1 = S2.add_arc(a);
-    // §2.4 (tex 144): end_arc = last LEFT arc (ai0).
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
@@ -382,7 +382,7 @@ static void test_startup_case2() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
     std::size_t ai1 = S2.add_arc(a);
-    // §2.4 (tex 144): end_arc = last LEFT arc (ai0).
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
@@ -413,7 +413,7 @@ static void test_startup_case2() {
 
 static void test_shooting_direction_all_cases() {
     // [C91 §2.1 tex 72]: chord direction = "left of an observer walking
-    // clockwise around ∂C".  Under §2.1 tex 66's induced orientation,
+    // clockwise around ∂C".  Under [C91 §2.1 tex 66]'s induced orientation,
     // RIGHT-side walks WITH curve, LEFT-side walks AGAINST curve.
     //   walk = ±curve_dir  ⟹  observer's left = perp_CCW(walk).
     //
@@ -442,7 +442,7 @@ static void test_shooting_direction_all_cases() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  11. local_shoot — §2.1 double-boundary tie-break at same distance
+//  11. local_shoot — [C91 §2.1] double-boundary tie-break at same distance
 // ════════════════════════════════════════════════════════════════
 
 // Oracle returning two arcs at the *same* x but different sides.
@@ -465,7 +465,7 @@ struct TieBreakRayShooter : RayShootingOracle {
 };
 
 static void test_local_shoot_tie_break() {
-    // [C91 §2.1 tex 72] (snake left/right) + §2.4 tex 142:
+    // [C91 §2.1 tex 72] (snake left/right) + [C91 §2.4 tex 142]:
     // when two arcs deliver hits at exactly the same x (distance tie),
     // the disambiguation in fusion.cpp:114-145 picks the face struck
     // first by an infinitesimally thick ray, computed from the edge's
@@ -483,7 +483,7 @@ static void test_local_shoot_tie_break() {
     //   first hit (LEFT, struck_first_face=LEFT, no swap needed).
     // Second oracle: arc 0 → RIGHT, others → LEFT.  Tie-break swaps to
     //   the LEFT-side hit (matching struck_first_face=LEFT).
-    // Both must return side=LEFT — the §2.1 tex 72 disambiguation rule.
+    // Both must return side=LEFT — the [C91 §2.1 tex 72] disambiguation rule.
     Point p{0.0, 2.0, 99};
 
     TieBreakRayShooter oracle(LEFT, RIGHT);
@@ -491,7 +491,7 @@ static void test_local_shoot_tie_break() {
     assert(h1.hit);
     assert(h1.x == 5.0);
     assert(h1.side == LEFT &&
-           "§2.1 tex 72: struck-first face for shooting RIGHT toward "
+           "[C91 §2.1 tex 72]: struck-first face for shooting RIGHT toward "
            "an ascending-edge hit must be LEFT (the -x face)");
 
     TieBreakRayShooter oracle_rev(RIGHT, LEFT);
@@ -499,7 +499,7 @@ static void test_local_shoot_tie_break() {
     assert(h2.hit);
     assert(h2.x == 5.0);
     assert(h2.side == LEFT &&
-           "§2.1 tex 72: tie-break must select the same face regardless "
+           "[C91 §2.1 tex 72]: tie-break must select the same face regardless "
            "of which arc the oracle reports it on");
 
     std::printf("  [PASS] local_shoot_tie_break\n");
@@ -548,14 +548,15 @@ static void test_startup_d1_eq_d2_defaults_to_case1() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  13. build_fusion_sequence skips null-length chords (§3.1 tex 179 + §2.2 tex 96)
+//  13. build_fusion_sequence skips null-length chords ([C91 §3.1 tex 179] + [C91 §2.2 tex 96])
 // ════════════════════════════════════════════════════════════════
 
 static void test_build_fusion_sequence_skips_null_length_chords() {
     // [C91 §3.1 tex 179]: "Let a₁, a₂, ..., aₘ be the canonical vertex
-    // enumeration of S₁ ... exit chord endpoints in S₁."  Per §2.2 tex
-    // 96, exit chords are distinguished from null-length chords; per §3.1
-    // tex 224, null-length chords are "carried over automatically" to
+    // enumeration of S₁ ... exit chord endpoints in S₁."  Per
+    // [C91 §2.2 tex 96], exit chords are distinguished from null-length
+    // chords; per [C91 §3.1 tex 224], null-length chords are "carried
+    // over automatically" to
     // the fused submap and must NOT appear in the main-loop sequence.
     auto C = make_C1();                         // 5 vertices, 4 edges.
 
@@ -623,9 +624,9 @@ static void test_build_fusion_sequence_skips_null_length_chords() {
     // Sequence = a₀ + 2 exit-chord endpoints + a_{m+1} = 4 vertices.
     // (The null-length chord is excluded; including it would give 6.)
     assert(state.sequence.size() == 4 &&
-           "§3.1 tex 179: null-length chords must not appear in the "
+           "[C91 §3.1 tex 179]: null-length chords must not appear in the "
            "canonical vertex enumeration (paper distinguishes 'exit chord "
-           "endpoints' from null-length chords per §2.2 tex 96)");
+           "endpoints' from null-length chords per [C91 §2.2 tex 96])");
 
     // None of the non-companion vertices should reference the null-length chord.
     std::size_t null_chord_idx = 1;             // null-length chord is chord #1
@@ -750,7 +751,7 @@ static void test_startup_vertex_to_vertex_tie_break() {
 // arcs at the crossing — one above (from v_mid_L down to crossing)
 // and one below (from crossing down to v_end_L).
 //
-// (The null-length chord at v_mid is conceptually present per §2.1 tex 72
+// (The null-length chord at v_mid is conceptually present per [C91 §2.1 tex 72]
 // but is not modeled explicitly — the lambda processes only the matching
 // chord at junction's y_tag, so other chords don't enter the matching
 // branch.  This minimal S₂ exercises the count==2 path directly.)
@@ -851,7 +852,7 @@ static void test_startup_mid_edge_tie_break() {
 
 int main() {
     std::setbuf(stdout, nullptr);
-    std::printf("§3.1 tests:\n");
+    std::printf("[C91 §3.1 tests]:\n");
     test_fusion_sequence_basic();
     test_fusion_sequence_no_chords();
     test_fusion_sequence_ordering();

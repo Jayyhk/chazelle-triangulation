@@ -16,15 +16,15 @@
 
 namespace chazelle {
 
-// [§2.4(i)]: Tree node (region).
+// [C91 §2.4(i)]: Tree node (region).
 struct SubmapNode {
-    // Incident chord indices.  [§2.3]: conformal ⟹ degree ≤ 4.
+    // Incident chord indices.  [C91 §2.3]: conformal ⟹ degree ≤ 4.
     std::vector<std::size_t> incident_chords;
 
     // Number of live (non-dead) incident chords.
     std::size_t degree() const noexcept;
 
-    bool dead = false;          // [§3.3]: tombstone for O(1) removal.
+    bool dead = false;          // [C91 §3.3]: tombstone for O(1) removal.
 };
 
 class Submap {
@@ -35,7 +35,7 @@ public:
     std::size_t add_arc(Arc arc);
     std::size_t add_chord(Chord chord);
 
-    // [§2.2 tex 94]: Remove a chord — "remove the chord and those
+    // [C91 §2.2 tex 94]: Remove a chord — "remove the chord and those
     // endpoints that are not vertices of C, gluing back ∂C at those
     // points."  Arcs are merged only at non-vertex endpoints.
     // @param polygon  needed to detect which endpoints are polygon vertices.
@@ -45,7 +45,7 @@ public:
 
     // ── Invariants ──────────────────────────────────────────────
 
-    // [§2.2]: "the dual graph of a submap is itself a tree" —
+    // [C91 §2.2]: "the dual graph of a submap is itself a tree" —
     // num_live_regions == num_live_chords + 1.
     void assert_tree_property() const;
 
@@ -55,9 +55,9 @@ public:
     void check_invariants() const;
 
     // Polygon-dependent invariants on top of `check_invariants()`:
-    //   §2.4(iii) tex 138 + tex 144: arcs sharing first_edge are
+    //   [C91 §2.4(iii) tex 138 + tex 144]: arcs sharing first_edge are
     //     key_y-monotonic (required by double_identify Phase 2 bsearch).
-    //   §2.2 tex 106: every live arc's `edge_count` cache matches
+    //   [C91 §2.2 tex 106]: every live arc's `edge_count` cache matches
     //     `polygon.count_nonnull_edges` over its underlying edge range.
     void check_invariants(const class Polygon& polygon) const;
 
@@ -94,24 +94,24 @@ public:
         return arc_sequence_[i];
     }
 
-    // ── §2.4(iii): C endpoints ──────────────────────────────────
+    // ── [C91 §2.4(iii)]: C endpoints ──────────────────────────────────
 
-    // [§2.4(iii)]: input-table indices of C's endpoints + pointers to
+    // [C91 §2.4(iii)]: input-table indices of C's endpoints + pointers to
     // the arc-structures passing through them.
     std::size_t start_vertex = NONE;
     std::size_t end_vertex   = NONE;
     std::size_t start_arc    = NONE;
     std::size_t end_arc      = NONE;
 
-    // [§2.4]: First RIGHT arc in arc-sequence.  LEFT = [0, boundary),
+    // [C91 §2.4]: First RIGHT arc in arc-sequence.  LEFT = [0, boundary),
     // RIGHT = [boundary, num_arcs).
     std::size_t left_right_boundary() const noexcept {
         return left_right_boundary_;
     }
 
-    // ── §2.4: Double identification ────────────────────────────
+    // ── [C91 §2.4]: Double identification ────────────────────────────
 
-    // [§2.4 tex 144]: "double identification of a point of ∂C" — all
+    // [C91 §2.4 tex 144]: "double identification of a point of ∂C" — all
     // arcs passing through (edge, symbolic_y).  O(log m).
     // At most 6 arcs (worst case: y-extremum with chords on both sides).
     struct DoubleIdentifyResult {
@@ -130,27 +130,27 @@ public:
                                           SymbolicY y,
                                           const class Polygon& polygon) const;
 
-    // ── §2.2 / §2.3: Properties ────────────────────────────────
+    // ── [C91 §2.2 / §2.3]: Properties ──────────────────────────────────────
 
-    // [§2.2]: Region weight = max nonnull-edge count over its arcs;
+    // [C91 §2.2]: Region weight = max nonnull-edge count over its arcs;
     // 0 for empty regions.
     std::size_t region_weight(std::size_t node_idx) const noexcept;
 
-    // [§2.3]: conformal = node-degree ≤ 4 everywhere.
+    // [C91 §2.3]: conformal = node-degree ≤ 4 everywhere.
     bool is_conformal() const noexcept;
 
-    // [§2.3]: γ-semigranular = every region weight ≤ γ.
+    // [C91 §2.3]: γ-semigranular = every region weight ≤ γ.
     bool is_semigranular(std::size_t gamma) const noexcept;
 
-    // [§2.3]: γ-granular = (i) all weights ≤ γ AND (ii) contracting
+    // [C91 §2.3]: γ-granular = (i) all weights ≤ γ AND (ii) contracting
     // any edge incident on a < 3-degree node yields a region of weight
     // > γ.  By default, (i)-only with no exit chord is still γ-granular.
     bool is_granular(std::size_t gamma,
                       const class Polygon& polygon) const noexcept;
 
-    // [§2.3]: Weight of the merged region if `chord_idx` were contracted.
+    // [C91 §2.3]: Weight of the merged region if `chord_idx` were contracted.
     // May be less than the sum: non-vertex chord endpoints disappear
-    // (§2.2 tex 94).
+    // ([C91 §2.2 tex 94]).
     std::size_t simulated_contraction_weight(
         std::size_t chord_idx,
         const class Polygon& polygon) const noexcept;
@@ -158,19 +158,19 @@ public:
     // ── Compaction ──────────────────────────────────────────────
 
     // Strip dead arcs/chords/nodes; rebuild index mappings.  O(m).
-    // Called once before putting S in normal form (§3.3).
+    // Called once before putting S in normal form ([C91 §3.3]).
     void compact();
 
     std::size_t num_live_nodes()  const noexcept;
     std::size_t num_live_chords() const noexcept;
     std::size_t num_live_arcs()   const noexcept;
 
-    // ── §2.4(iv): Tree decomposition ────────────────────────────
+    // ── [C91 §2.4(iv)]: Tree decomposition ────────────────────────────
 
-    // [§2.4(iv)]: conformal ⟹ tree decomposition available.
+    // [C91 §2.4(iv)]: conformal ⟹ tree decomposition available.
     void build_tree_decomposition();
     const TreeDecomposition& tree_decomposition() const noexcept {
-        // §3.3 tex 277 needs mutators O(1).  Mutators flag dirty rather
+        // [C91 §3.3 tex 277] needs mutators O(1).  Mutators flag dirty rather
         // than rebuilding; a stale tree decomposition reads as empty so
         // consumers fail fast (e.g. merge.h's !tree_decomposition().empty()
         // precondition).
@@ -185,16 +185,16 @@ private:
     // (which clears internally) or the Submap destructor.
     bool tree_decomp_dirty_ = false;
 
-    std::vector<SubmapNode> nodes_;     // [§2.4(i)]: tree nodes.
-    std::vector<Chord> chords_;         // [§2.4(ii)]: tree edges.
-    // [§2.4(iii)]: arc-structures in canonical ∂C traversal order.
+    std::vector<SubmapNode> nodes_;     // [C91 §2.4(i)]: tree nodes.
+    std::vector<Chord> chords_;         // [C91 §2.4(ii)]: tree edges.
+    // [C91 §2.4(iii)]: arc-structures in canonical ∂C traversal order.
     std::vector<Arc> arc_sequence_;
 
-    // [§2.4]: First RIGHT arc index — enables O(1) LEFT/RIGHT split
+    // [C91 §2.4]: First RIGHT arc index — enables O(1) LEFT/RIGHT split
     // for double_identify's O(log m) bound (tex 144).
     std::size_t left_right_boundary_ = 0;
 
-    // [§2.4 tex 144]: double_identify needs a compacted arc-sequence;
+    // [C91 §2.4 tex 144]: double_identify needs a compacted arc-sequence;
     // tracked as O(1) flag rather than O(m) per-call scan.
     bool compacted_ = true;
 };

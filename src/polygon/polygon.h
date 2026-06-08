@@ -31,17 +31,17 @@ public:
         return edges_[i];
     }
 
-    // [§2.1 Fig 2.2.3]: one of C's two endpoints.
+    // [C91 §2.1 Fig 2.2.3]: one of C's two endpoints.
     bool is_endpoint(std::size_t vertex_index) const noexcept {
-        assert(vertex_index < vertices_.size() && "§2.1: invalid vertex");
+        assert(vertex_index < vertices_.size() && "[C91 §2.1]: invalid vertex");
         return vertex_index == 0
             || vertex_index == vertices_.size() - 1;
     }
 
-    // [§2.1 Fig 2.2.2]: local y-extremum under SoS.  Endpoints are
+    // [C91 §2.1 Fig 2.2.2]: local y-extremum under SoS.  Endpoints are
     // case 3, not case 2 — never extrema.
     bool is_y_extremum(std::size_t vertex_index) const noexcept {
-        assert(vertex_index < vertices_.size() && "§2.1: invalid vertex");
+        assert(vertex_index < vertices_.size() && "[C91 §2.1]: invalid vertex");
         if (is_endpoint(vertex_index)) return false;
         return is_local_y_extremum(
             vertices_[vertex_index - 1],
@@ -49,7 +49,7 @@ public:
             vertices_[vertex_index + 1]);
     }
 
-    // [§2.2]: count of nonnull-length edges in [lo, hi].  O(1) via prefix
+    // [C91 §2.2]: count of nonnull-length edges in [lo, hi].  O(1) via prefix
     // sums; used by region_weight ("max nonnull edges in any of its arcs").
     std::size_t count_nonnull_edges(std::size_t lo,
                                      std::size_t hi) const noexcept;

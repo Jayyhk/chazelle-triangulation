@@ -3,7 +3,7 @@
 // [C91 §2.2 tex 96]: region-arc — "pieces of C and not of C" alternating
 // with exit chords along a region's boundary.
 // [C91 §2.4 tex 133]: Arc-structure points directly into Polygon's edge
-// array.  §2.4(ii): pointer to the tree node whose region the arc bounds.
+// array.  [C91 §2.4(ii)]: pointer to the tree node whose region the arc bounds.
 
 #include "../polygon/point.h"
 #include "../polygon/perturbation.h"
@@ -22,13 +22,13 @@ struct Arc {
     std::size_t last_edge = NONE;   // Last edge (eₜ); == first_edge for single-edge arcs.
     Side last_side = LEFT;
 
-    // [§2.4(ii)]: Tree node of the region this arc bounds.
+    // [C91 §2.4(ii)]: Tree node of the region this arc bounds.
     std::size_t region_node = NONE;
 
-    // [§2.2]: Cached nonnull edge count for weight computation.
+    // [C91 §2.2]: Cached nonnull edge count for weight computation.
     std::size_t edge_count = 0;
 
-    // [§2.4]: Symbolic y of the arc's starting position on ∂C.  Used by
+    // [C91 §2.4]: Symbolic y of the arc's starting position on ∂C.  Used by
     // double_identify to disambiguate arcs sharing an edge.
     double key_y = 0.0;
     std::size_t key_y_tag = NONE;
@@ -37,13 +37,13 @@ struct Arc {
         return {key_y, key_y_tag};
     }
 
-    // [§3]: Underlying range of C edges (ᾱ) — "the portion of C to which
+    // [C91 §3]: Underlying range of C edges (ᾱ) — "the portion of C to which
     // an arc α of ∂C corresponds.  An arc may double-back around an
     // endpoint of C, so ᾱ may not always be as 'long' as α."
     //
     // Non-wrapped (first_side == last_side): ᾱ = [min,max] of edges.
     // Wrapped: both legs map to the same C edges, meeting at the
-    // turnaround edge (§2.1 tex 72: wraps occur at C endpoints).
+    // turnaround edge ([C91 §2.1 tex 72]: wraps occur at C endpoints).
     //
     // @param c_start  C's start vertex index (RIGHT→LEFT wrap turnaround).
     // @param c_end    C's end vertex index   (LEFT→RIGHT wrap turnaround at c_end - 1).
@@ -68,7 +68,7 @@ struct Arc {
         }
     }
 
-    // [§3.3]: Tombstone for O(1) removal; stripped by compact().
+    // [C91 §3.3]: Tombstone for O(1) removal; stripped by compact().
     bool dead = false;
 };
 

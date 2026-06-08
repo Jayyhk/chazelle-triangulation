@@ -47,7 +47,7 @@ private:
     std::vector<TDNode> nodes_;
     std::size_t root_ = NONE;
 
-    // [§2.3 tex 116]: O(m log m) via a shared region_local_buf
+    // [C91 §2.3 tex 116]: O(m log m) via a shared region_local_buf
     // (pre-allocated to submap.num_nodes(); cleaned per call).
     std::size_t decompose(
         const class Submap& submap,

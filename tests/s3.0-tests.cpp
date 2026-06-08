@@ -1,4 +1,4 @@
-// tests/s3.0-tests.cpp — Tests for §3.0: merge setup and preconditions.
+// tests/s3.0-tests.cpp — Tests for [C91 §3.0]: merge setup and preconditions.
 
 #include "merge/merge.h"
 
@@ -33,7 +33,7 @@ bool assert_fires(std::function<void()> fn) {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  Stub oracles for testing (§3.4 provides real implementations)
+//  Stub oracles for testing ([C91 §3.4] provides real implementations)
 // ════════════════════════════════════════════════════════════════
 
 struct StubRayShooter : RayShootingOracle {
@@ -102,7 +102,7 @@ static Submap make_single_region_submap(const Polygon& poly) {
     a.key_y_tag = poly.num_vertices() - 1;
     std::size_t ai1 = s.add_arc(a);
 
-    // §2.4 tex 144: end_arc = last LEFT arc (left_right_boundary_ - 1).
+    // [C91 §2.4 tex 144]: end_arc = last LEFT arc (left_right_boundary_ - 1).
     s.start_arc = ai0;
     s.end_arc = ai0;
     s.start_vertex = 0;
@@ -510,7 +510,7 @@ static void test_merge_preconds_null_oracle_fires() {
 
 int main() {
     std::setbuf(stdout, nullptr);
-    std::printf("§3.0 tests:\n");
+    std::printf("[C91 §3.0 tests]:\n");
     test_valid_preconditions();
     test_merged_curve();
     test_gamma_ordering();

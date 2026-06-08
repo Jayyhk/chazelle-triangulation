@@ -1,4 +1,4 @@
-// tests/2.1-tests.cpp — Tests for §2.1: double boundary ∂C classification.
+// tests/2.1-tests.cpp — Tests for [C91 §2.1]: double boundary ∂C classification.
 
 #include "polygon/polygon.h"
 #include "polygon/perturbation.h"
@@ -206,7 +206,7 @@ static void test_polygon_construction() {
 // ════════════════════════════════════════════════════════════════
 
 int main() {
-    std::printf("§2.1 tests:\n");
+    std::printf("[C91 §2.1 tests]:\n");
     test_is_endpoint();
     test_local_extremum_fns();
     test_sos_extremum();

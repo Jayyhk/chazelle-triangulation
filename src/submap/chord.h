@@ -13,11 +13,11 @@
 namespace chazelle {
 
 struct Chord {
-    // [§2.4(i)]: The two regions this chord separates.
+    // [C91 §2.4(i)]: The two regions this chord separates.
     std::size_t region[2] = {NONE, NONE};
 
-    // [§2.4(ii)]: Per-endpoint adj arcs.  Count is 1 at polygon-vertex
-    // endpoints, 2 at non-vertex endpoints (§2.2 tex 94: non-vertex
+    // [C91 §2.4(ii)]: Per-endpoint adj arcs.  Count is 1 at polygon-vertex
+    // endpoints, 2 at non-vertex endpoints ([C91 §2.2 tex 94]: non-vertex
     // endpoints merge on chord removal).
     struct AdjArcs {
         std::size_t arcs[2] = {NONE, NONE};
@@ -41,7 +41,7 @@ struct Chord {
     // True iff both endpoints sit at the same ∂C point.
     bool is_null_length = false;
 
-    // [§3.3]: Tombstone for O(1) removal; stripped by compact().
+    // [C91 §3.3]: Tombstone for O(1) removal; stripped by compact().
     bool dead = false;
 };
 

@@ -1,4 +1,4 @@
-// tests/2.2-tests.cpp — Tests for §2.2: submaps, weight, chord removal.
+// tests/2.2-tests.cpp — Tests for [C91 §2.2]: submaps, weight, chord removal.
 
 #include "polygon/polygon.h"
 #include "submap/submap.h"
@@ -615,7 +615,7 @@ static void test_null_length_chord_right_side() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  11. Death: assert_tree_property on empty submap (§2.2 tex 110)
+//  11. Death: assert_tree_property on empty submap ([C91 §2.2 tex 110])
 // ════════════════════════════════════════════════════════════════
 
 static void test_empty_submap_fires() {
@@ -628,7 +628,7 @@ static void test_empty_submap_fires() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  12. Deaths: add_chord null-length chord structural invariants (§2.1 tex 72)
+//  12. Deaths: add_chord null-length chord structural invariants ([C91 §2.1 tex 72])
 // ════════════════════════════════════════════════════════════════
 
 static void test_null_length_chord_mismatched_edges_fires() {
@@ -768,7 +768,7 @@ static void test_null_length_chord_wrong_adj_count_fires() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  13. Death: arc.edge_count cache mismatch (§2.2 tex 106)
+//  13. Death: arc.edge_count cache mismatch ([C91 §2.2 tex 106])
 // ════════════════════════════════════════════════════════════════
 
 static void test_wrong_edge_count_fires() {
@@ -803,7 +803,7 @@ static void test_wrong_edge_count_fires() {
 // ════════════════════════════════════════════════════════════════
 
 int main() {
-    std::printf("§2.2 tests:\n");
+    std::printf("[C91 §2.2 tests]:\n");
     test_count_nonnull_edges();
     test_submap_construction();
     test_check_invariants();

@@ -1,4 +1,4 @@
-// tests/s2-e2e-tests.cpp — Exhaustive property-based tests for §2.0–2.4.
+// tests/s2-e2e-tests.cpp — Exhaustive property-based tests for [C91 §2.0–2.4].
 //
 // Strategy: generate random polygonal curves, build submaps with
 // visibility chords, then verify every operation against brute-force
@@ -23,7 +23,7 @@
 using namespace chazelle;
 
 // ════════════════════════════════════════════════════════════════════
-//  §0. Random polygon generator
+//  [C91 §0]. Random polygon generator
 // ════════════════════════════════════════════════════════════════════
 
 // Generate a random nonclosed polygonal curve with n vertices.
@@ -50,7 +50,7 @@ static Polygon random_polygon(std::mt19937& rng, std::size_t n) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  §0b. Brute-force helpers
+//  [C91 §0]b. Brute-force helpers
 // ════════════════════════════════════════════════════════════════════
 
 // Compute the x-coordinate where horizontal line y=qy intersects edge e.
@@ -167,7 +167,7 @@ static bool brute_is_semigranular(const Submap& s, std::size_t gamma) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  §1. Submap builder: construct a valid submap from a polygon
+//  [C91 §1]. Submap builder: construct a valid submap from a polygon
 //       by placing chords at interior vertices (y-extrema and
 //       non-extrema) to create a multi-region submap.
 // ════════════════════════════════════════════════════════════════════
@@ -369,7 +369,7 @@ static Submap build_nonvertex_chord_submap(const Polygon& poly,
         s.add_arc(a);
         a.first_side = RIGHT; a.last_side = RIGHT;
         s.add_arc(a);
-        // §2.4 (tex 144): end_arc = last LEFT arc (arc 0).
+        // [C91 §2.4] (tex 144): end_arc = last LEFT arc (arc 0).
         s.start_arc = 0; s.end_arc = 0;
         s.start_vertex = 0; s.end_vertex = 1;
         return s;
@@ -576,11 +576,11 @@ static void test_remove_chord(std::mt19937& rng, int iters) {
             assert(s.num_live_nodes() == pre_nodes - 1);
             assert(s.num_live_chords() == pre_chords - 1);
 
-            // TODO: (§3.3) After normalize() is implemented, verify
+            // TODO: ([C91 §3.3]) After normalize() is implemented, verify
             // region_weight == brute_region_weight here between removals.
             // Currently skipped: chord→arc adjacency is stale after
             // cascaded removals (orphaned arcs), and normalize() — which
-            // rebuilds it — doesn't exist yet (it's part of §3.3's
+            // rebuilds it — doesn't exist yet (it's part of [C91 §3.3]'s
             // "put S in normal form" step).
         }
 
@@ -594,7 +594,7 @@ static void test_remove_chord(std::mt19937& rng, int iters) {
         assert(s.num_nodes() == 1);
         assert(s.num_chords() == 0);
         s.check_invariants();
-        // TODO: (§3.3) After normalize() is implemented, call it here
+        // TODO: ([C91 §3.3]) After normalize() is implemented, call it here
         // and verify region_weight(0) == brute_region_weight(s, 0).
     }
     std::printf("  [PASS] test_remove_chord\n");
@@ -816,7 +816,7 @@ static void test_compact(std::mt19937& rng, int iters) {
         // Full invariant check.
         s.check_invariants();
 
-        // TODO: (§3.3) After normalize() is implemented, call it after
+        // TODO: ([C91 §3.3]) After normalize() is implemented, call it after
         // compact() and verify:
         //   for (std::size_t i = 0; i < s.num_nodes(); ++i)
         //       assert(s.region_weight(i) == brute_region_weight(s, i));
@@ -1046,7 +1046,7 @@ static void test_full_pipeline(std::mt19937& rng, int iters) {
         s.check_invariants();
         assert(s.is_conformal());
 
-        // TODO: (§3.3) After normalize() is implemented, call it here
+        // TODO: ([C91 §3.3]) After normalize() is implemented, call it here
         // and replace the structural check below with:
         //   for (std::size_t i = 0; i < s.num_nodes(); ++i)
         //       assert(s.region_weight(i) == brute_region_weight(s, i));
@@ -1100,7 +1100,7 @@ static void test_edge_cases() {
         a.first_side = RIGHT; a.last_side = RIGHT;
         a.key_y = 1.0; a.key_y_tag = 1;
         s.add_arc(a);
-        // §2.4 (tex 144): end_arc = last LEFT arc (ai0).
+        // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
         s.start_arc = ai0; s.end_arc = ai0;
         s.start_vertex = 0; s.end_vertex = 1;
 
@@ -1136,7 +1136,7 @@ static void test_edge_cases() {
         a.first_side = RIGHT; a.last_side = RIGHT;
         a.key_y = 2.0; a.key_y_tag = 2;
         s.add_arc(a);
-        // §2.4 (tex 144): end_arc = last LEFT arc (ai0).
+        // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
         s.start_arc = ai0; s.end_arc = ai0;
         s.start_vertex = 0; s.end_vertex = 2;
 
@@ -1291,7 +1291,7 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         // Invariants.
         s.assert_tree_property();
         assert(s.region_weight(r1) == 0); // empty region inside null-length chord
-        // TODO: (§3.3) region_weight(r0) undercounts here because a3
+        // TODO: ([C91 §3.3]) region_weight(r0) undercounts here because a3
         // (the RIGHT arc) isn't in the null-length chord's adj list —
         // it's only reachable via a full arc scan.  After normalize() is
         // implemented, assert region_weight(r0) == brute_region_weight.
@@ -1354,7 +1354,7 @@ int main(int argc, char** argv) {
     if (argc > 1) seed = static_cast<unsigned>(std::atoi(argv[1]));
     std::mt19937 rng(seed);
 
-    std::printf("§2.0–2.4 e2e tests (seed=%u):\n", seed);
+    std::printf("[C91 §2.0–2.4 e2e tests (seed=%u)]:\n", seed);
     std::fflush(stdout);
 
     std::setbuf(stdout, nullptr); // unbuffered for crash diagnostics

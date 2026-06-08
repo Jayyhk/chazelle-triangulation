@@ -39,15 +39,15 @@ inline ShieldingResult classify_shielding(bool a_prime,
                                            bool b_prime,
                                            bool a_prime_eq_b_prime
                                                = false) noexcept {
-    // §2.5: "the third case ... was eliminated earlier, since it
+    // [C91 §2.5]: "the third case ... was eliminated earlier, since it
     // corresponds to a situation where one of the B_i is empty."
     assert(!(b_prime && !a_prime) &&
-           "§2.5: b' cannot exist without a'");
+           "[C91 §2.5]: b' cannot exist without a'");
 
     ShieldingResult r;
 
     if (!a_prime && !b_prime) {
-        // §2.5: "else the lemma is trivially correct."  A doesn't cross
+        // [C91 §2.5]: "else the lemma is trivially correct."  A doesn't cross
         // ab, so it stays entirely on the c-side (B₁-side), shielded
         // from B₂.
         r.num_pieces = 1;
@@ -81,10 +81,10 @@ inline ShieldingResult classify_shielding(bool a_prime,
         r.shielded_from[2] = BoundarySide::B2;
     }
 
-    // [C91 §2.5 Lemma 2.4] tex 153: "subdivide A into a total of one,
+    // [C91 §2.5 Lemma 2.4 tex 153]: "subdivide A into a total of one,
     // two, or three connected curves."
     assert(r.num_pieces >= 1 && r.num_pieces <= 3 &&
-           "§2.5 Lemma 2.4: A must subdivide into 1, 2, or 3 pieces");
+           "[C91 §2.5 Lemma 2.4]: A must subdivide into 1, 2, or 3 pieces");
 
     return r;
 }

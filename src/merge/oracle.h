@@ -1,8 +1,8 @@
 #pragma once
 
-// [C91 §3]: Oracle primitives for submap merging — ray-shooter (§3.0(i))
-// and arc-cutter (§3.0(ii)).  Abstract interfaces; implementations in
-// §3.4 and the up-phase (§4).
+// [C91 §3]: Oracle primitives for submap merging — ray-shooter ([C91 §3.0(i)])
+// and arc-cutter ([C91 §3.0(ii)]).  Abstract interfaces; implementations in
+// [C91 §3.4] and the up-phase ([C91 §4]).
 
 #include "../polygon/point.h"
 #include "../polygon/polygon.h"
@@ -18,8 +18,8 @@ namespace chazelle {
 // specified by (edge of P, ∂P side).
 //
 // Invariant: (first_edge, first_side) precedes (last_edge, last_side) in
-// clockwise ∂C order.  Holds for both oracle contexts: §3.0(i) subarcs
-// inherit α's clockwise traversal (§2.4 tex 133/138); §3.0(ii) cut() pieces
+// clockwise ∂C order.  Holds for both oracle contexts: [C91 §3.0(i)] subarcs
+// inherit α's clockwise traversal ([C91 §2.4 tex 133/138]); [C91 §3.0(ii)] cut() pieces
 // require it explicitly (tex 170 condition (1)).
 struct Subarc {
     std::size_t first_edge;
@@ -28,7 +28,7 @@ struct Subarc {
     Side last_side;
 };
 
-// [C91 §3.0(i)] (tex 169): Ray-hit report — point + edge of P containing it.
+// [C91 §3.0(i) tex 169]: Ray-hit report — point + edge of P containing it.
 struct RayHit {
     bool hit = false;
     double x = 0.0;
@@ -41,7 +41,7 @@ struct RayHit {
     std::size_t hit_arc_idx = NONE;
 };
 
-// [C91 §3.0(ii)] (tex 170): One piece αⱼ returned by cut().
+// [C91 §3.0(ii) tex 170]: One piece αⱼ returned by cut().
 // Conditions (1)–(3) summarized; full quotes in `assert_cut_postconditions`.
 struct ArcPiece {
     Subarc subarc;                  // (1): location on ∂C, clockwise.
@@ -50,10 +50,10 @@ struct ArcPiece {
     bool is_boundary_piece = false; // true ⟹ single-edge ᾱ₁/ᾱ₂ at α''s endpoints.
 };
 
-// [C91 §3.0(i)] (tex 166–169): Ray-shooter — "given any point p along with
+// [C91 §3.0(i) tex 166–169]: Ray-shooter — "given any point p along with
 // a horizontal direction and any subarc α' of α, reports the single point
 // of α' (if any) that a ray from p would hit."  O(f(γᵢ)) per query.
-// Implementation: §3.4.
+// Implementation: [C91 §3.4].
 struct RayShootingOracle {
     virtual ~RayShootingOracle() = default;
     // @param arc_idx  region arc α's index in Sᵢ's arc-sequence
@@ -63,9 +63,9 @@ struct RayShootingOracle {
                          const Subarc& target) const = 0;
 };
 
-// [C91 §3.0(ii)] (tex 170): Arc-cutter — subdivides α' into at most g(γᵢ)
+// [C91 §3.0(ii) tex 170]: Arc-cutter — subdivides α' into at most g(γᵢ)
 // pieces in O(g(γᵢ)) time, satisfying conditions (1)–(3).
-// Implementation: §4 (up-phase).
+// Implementation: [C91 §4] (up-phase).
 struct ArcCuttingOracle {
     virtual ~ArcCuttingOracle() = default;
     // Callers MUST validate via `assert_cut_postconditions` before consuming.
@@ -74,7 +74,7 @@ struct ArcCuttingOracle {
                                       const Subarc& target) const = 0;
 };
 
-// [C91 §3.0(ii)] (tex 170): Enforces cut()'s post-conditions.
+// [C91 §3.0(ii) tex 170]: Enforces cut()'s post-conditions.
 //
 // Bound (verbatim): "in O(g(γᵢ)) time, subdivides the subarc α' into at
 //                    most g(γᵢ) subarcs α₁, α₂, ..."
@@ -96,39 +96,39 @@ struct ArcCuttingOracle {
 //   first piece's first endpoint = α'.first;
 //   last piece's last endpoint   = α'.last.
 //
-// Callers in §3.2 / §3.3 must invoke this on every `cut` result to ensure
+// Callers in [C91 §3.2 / §3.3] must invoke this on every `cut` result to ensure
 // the oracle's contract holds before consuming the pieces.
 inline void assert_cut_postconditions(
         const Subarc& target,
         const ArcPiece* pieces, std::size_t count,
         std::size_t max_pieces,
         [[maybe_unused]] std::size_t h_gamma) {
-    assert(count >= 1 && "§3.0(ii) tex 170: cut() must produce ≥1 piece");
+    assert(count >= 1 && "[C91 §3.0(ii) tex 170]: cut() must produce ≥1 piece");
     assert(count <= max_pieces &&
-           "§3.0(ii) tex 170: cut() must produce ≤ g(γᵢ) pieces");
+           "[C91 §3.0(ii) tex 170]: cut() must produce ≤ g(γᵢ) pieces");
 
     // Subdivision identity: α' = α₁ ∪ ... ∪ αₖ.
     assert(pieces[0].subarc.first_edge == target.first_edge &&
            pieces[0].subarc.first_side == target.first_side &&
-           "§3.0(ii) tex 170: first piece must start at α'.first");
+           "[C91 §3.0(ii) tex 170]: first piece must start at α'.first");
     assert(pieces[count - 1].subarc.last_edge == target.last_edge &&
            pieces[count - 1].subarc.last_side == target.last_side &&
-           "§3.0(ii) tex 170: last piece must end at α'.last");
+           "[C91 §3.0(ii) tex 170]: last piece must end at α'.last");
 
     for (std::size_t j = 0; j < count; ++j) {
         const ArcPiece& p = pieces[j];
 
         // (2): no double-backing.
         assert(p.subarc.first_side == p.subarc.last_side &&
-               "§3.0(ii)(2) tex 170: each piece must lie on one side of C");
+               "[C91 §3.0(ii)(2) tex 170]: each piece must lie on one side of C");
 
-        // (1): clockwise — LEFT ascends, RIGHT descends (§2.4 tex 138).
+        // (1): clockwise — LEFT ascends, RIGHT descends ([C91 §2.4 tex 138]).
         if (p.subarc.first_side == LEFT) {
             assert(p.subarc.first_edge <= p.subarc.last_edge &&
-                   "§3.0(ii)(1) tex 170: LEFT piece must ascend in edge");
+                   "[C91 §3.0(ii)(1) tex 170]: LEFT piece must ascend in edge");
         } else {
             assert(p.subarc.first_edge >= p.subarc.last_edge &&
-                   "§3.0(ii)(1) tex 170: RIGHT piece must descend in edge");
+                   "[C91 §3.0(ii)(1) tex 170]: RIGHT piece must descend in edge");
         }
 
         // (3): boundary pieces only at j=0 or j=count-1 (the at-most-two
@@ -136,32 +136,32 @@ inline void assert_cut_postconditions(
         const bool at_endpoint = (j == 0 || j + 1 == count);
         if (!at_endpoint) {
             assert(!p.is_boundary_piece &&
-                   "§3.0(ii)(3) tex 170: only first/last pieces may be boundary");
+                   "[C91 §3.0(ii)(3) tex 170]: only first/last pieces may be boundary");
         }
 
         if (!p.is_boundary_piece) {
             // (3): h(γᵢ)-granular conformal submap of V(ᾱⱼ) in normal form.
             assert(p.submap != nullptr &&
-                   "§3.0(ii)(3) tex 170: non-boundary piece requires a submap");
+                   "[C91 §3.0(ii)(3) tex 170]: non-boundary piece requires a submap");
             assert(p.curve != nullptr &&
-                   "§3.0(ii)(3) tex 170: non-boundary piece requires its curve");
-            // §2.4(iv) tex 139: conformal ⟹ tree decomposition available.
+                   "[C91 §3.0(ii)(3) tex 170]: non-boundary piece requires its curve");
+            // [C91 §2.4(iv) tex 139]: conformal ⟹ tree decomposition available.
             assert(!p.submap->tree_decomposition().empty() &&
-                   "§2.4(iv) tex 139: normal-form conformal submap "
+                   "[C91 §2.4(iv) tex 139]: normal-form conformal submap "
                    "needs its tree decomposition");
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
             // Full normal-form / conformal / granular validation — O(m), gated
             // to keep cut() within its O(g(γᵢ)) paper budget.
             p.submap->check_invariants(*p.curve);
             assert(p.submap->is_conformal() &&
-                   "§3.0(ii)(3) tex 170: non-boundary piece must be conformal");
+                   "[C91 §3.0(ii)(3) tex 170]: non-boundary piece must be conformal");
             assert(p.submap->is_granular(h_gamma, *p.curve) &&
-                   "§3.0(ii)(3) tex 170: non-boundary piece must be h(γᵢ)-granular");
+                   "[C91 §3.0(ii)(3) tex 170]: non-boundary piece must be h(γᵢ)-granular");
 #endif
         } else {
             // (3): boundary pieces are single-edge at α''s endpoints.
             assert(p.subarc.first_edge == p.subarc.last_edge &&
-                   "§3.0(ii)(3) tex 170: boundary piece must be single-edge");
+                   "[C91 §3.0(ii)(3) tex 170]: boundary piece must be single-edge");
         }
     }
 }
