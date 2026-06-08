@@ -68,7 +68,3 @@ line per triangle giving three vertex indices.
   Equivalent Problems," _ACM Transactions on Graphics_, 3(2):153-174, 1984.
 - **[LT79]** R.J. Lipton and R.E. Tarjan, "A Separator Theorem for Planar
   Graphs," _SIAM Journal on Applied Mathematics_, 36(2):177-189, 1979.
-
-## License
-
-<!-- TODO: add license -->
