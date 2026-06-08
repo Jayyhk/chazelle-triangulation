@@ -37,6 +37,8 @@ public:
     /// [C91 §2.1] (Fig 2.2.3): True if vertex is one of the two
     /// endpoints of C.
     bool is_endpoint(std::size_t vertex_index) const noexcept {
+        assert(vertex_index < vertices_.size() &&
+               "§2.1: vertex_index must be a valid vertex of C");
         return vertex_index == 0
             || vertex_index == vertices_.size() - 1;
     }
@@ -45,6 +47,8 @@ public:
     /// under SoS.  Endpoints are never extrema — they are case 3,
     /// not case 2.
     bool is_y_extremum(std::size_t vertex_index) const noexcept {
+        assert(vertex_index < vertices_.size() &&
+               "§2.1: vertex_index must be a valid vertex of C");
         if (is_endpoint(vertex_index)) return false;
         return is_local_y_extremum(
             vertices_[vertex_index - 1],
