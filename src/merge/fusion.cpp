@@ -274,6 +274,12 @@ std::size_t fusion_startup(FusionState& state,
             ? (a0_point.x - hit_c1.x) : (hit_c1.x - a0_point.x);
         double d2 = (a0_dir == LEFT)
             ? (a0_point.x - hit_c2.x) : (hit_c2.x - a0_point.x);
+        // [C91 §3.1 tex 191]: "for simplicity we still go on saying that
+        // c₀ sees a point of ∂C₂ with respect to C."  The paper allows
+        // edge cases (a₀ at a y-extremum where c₀ technically cannot see
+        // ∂C₂) and explicitly mandates defaulting to "c₀ on ∂C₂".  The
+        // `d2 <= d1` (rather than `d2 < d1`) selects Case 1 in ties,
+        // implementing the paper's tex 191 default.
         if (d2 <= d1) {
             c0 = hit_c2; c0_on_c2 = true;
         } else {
