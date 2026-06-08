@@ -639,6 +639,213 @@ static void test_build_fusion_sequence_skips_nlcs() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  13. fusion_startup — vertex-to-vertex tie-break
+// ════════════════════════════════════════════════════════════════
+//
+// Exercises the resolve_s2_region branch where both endpoints of the
+// matching S₂ chord are polygon vertices (both curve-endpoint vertices
+// in practice).  Construction:
+//
+//   C₂'s start endpoint (= junction) and C₂'s end endpoint share
+//   raw y under SoS (distinct tags).  V(C₂) has a horizontal chord
+//   between them at y = junction.y, surviving γ-granularity in S₂.
+//
+//   C₁'s last edge ascends → leaving_downward = true and a₀ shoots LEFT.
+//   C₂'s vertices arranged so that v_end is to the LEFT of junction
+//   (lower x), matching the shoot direction.
+//
+// Expected: with leaving_downward=true (moving DOWN below the chord),
+// we enter the region BELOW the chord (the "outside" of the curve).
+static void test_startup_vertex_to_vertex_tie_break() {
+    // C₁: last edge v3(3,1) → v4(4,3) ascends → leaving_downward=true,
+    // a₀_dir = LEFT.
+    auto C1 = make_C1();  // {(0,0,0), (1,2,1), (2,4,2), (3,1,3), (4,3,4)}
+    auto S1 = make_S1(C1);
+
+    // C₂: start at junction (4,3,4), goes UP-LEFT to (3,5,5), then
+    // DOWN-LEFT to end vertex (2,3,6).  Start and end share raw y=3.
+    Polygon C2({{4,3,4}, {3,5,5}, {2,3,6}});
+
+    // S₂ structure (minimal: NLC at v_mid is γ-removed, leaving just
+    // one big arc per ∂C side and the matching chord between two regions).
+    Submap S2;
+    std::size_t r_loop    = S2.add_node(); // contains the curve arcs (above chord)
+    std::size_t r_outside = S2.add_node(); // empty region below chord
+
+    // Big LEFT-side arc covering edges 0–1 (v4 → v5 → v6 on LEFT side).
+    Arc a{};
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_loop;
+    a.edge_count = 2;
+    a.key_y = C2.vertex(0).y; a.key_y_tag = C2.vertex(0).index; // = 3, tag=4
+    std::size_t ai_left = S2.add_arc(a);
+
+    // Big RIGHT-side arc covering edges 1 → 0 (descending: v6 → v5 → v4).
+    a = {};
+    a.first_edge = 1; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r_loop;
+    a.edge_count = 2;
+    a.key_y = C2.vertex(2).y; a.key_y_tag = C2.vertex(2).index; // = 3, tag=6
+    std::size_t ai_right = S2.add_arc(a);
+
+    // Matching chord at y=3, y_tag = junction's tag (4).
+    // Both endpoints are polygon vertices.
+    Chord c{};
+    c.region[0] = r_loop;
+    c.region[1] = r_outside;
+    c.left_edge = 1; c.left_side = LEFT;
+    c.right_edge = 0; c.right_side = RIGHT;
+    c.y = 3.0; c.y_tag = 4; // junction's index
+    c.left_adj = {{ai_left}, 1};
+    c.right_adj = {{ai_right}, 1};
+    S2.add_chord(c);
+
+    S2.start_arc = ai_left; S2.end_arc = ai_left;
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // a₀ at (4,3). Edge 3 ascending → shoot LEFT (toward lower x).
+    // Oracle for S₁: hit at x=-10 (far LEFT, not interesting).
+    // Oracle for S₂: hit at x=2 (where v_end of C₂ is).
+    // c₀ on ∂C₂ (closer) → Case 1.  a₀c₀ lies on the matching chord.
+    StartupOracle oracle1(-10.0);
+    StartupOracle oracle2(2.0);
+
+    FusionState state;
+    build_fusion_sequence(state, S1, C1);
+
+    std::size_t start = fusion_startup(state, S1, C1, S2, C2,
+                                        oracle1, oracle2);
+
+    // Case 1: main loop starts at k=1.
+    assert(start == 1);
+    // Tie-break: leaving_downward=true → we move DOWN below the chord.
+    // Above-chord region is r_loop (containing C₂'s arcs); below is
+    // r_outside.  Algorithm elects r_outside.
+    assert(state.s2_region == r_outside &&
+           "vertex-to-vertex tie-break: leaving_downward=true should "
+           "elect the region below the chord (r_outside)");
+    assert(!state.chords.empty());
+
+    std::printf("  [PASS] startup_vertex_to_vertex_tie_break\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  14. fusion_startup — mid-edge matching chord tie-break
+// ════════════════════════════════════════════════════════════════
+//
+// Exercises the count==2 branch of resolve_s2_region.  Under SoS this
+// is the typical case: the junction's horizontal ray crosses an edge
+// of ∂C₂ mid-edge (not at a vertex), so the matching chord has
+// count==1 at the junction (curve-endpoint) and count==2 at the
+// mid-edge other endpoint.  The two adj arcs at the count==2 endpoint
+// lie on opposite sides of the chord; the lambda must classify them
+// correctly via the structural check + adjacent vertex SoS comparison.
+//
+// Setup: C₂'s curve goes UP from junction (y=3) to v_mid (y=5) and
+// back DOWN past y=3 to v_end (y=1).  The horizontal ray from junction
+// at y=3 crosses edge 1 (v_mid → v_end) mid-edge.  Two LEFT-side adj
+// arcs at the crossing — one above (from v_mid_L down to crossing)
+// and one below (from crossing down to v_end_L).
+//
+// (NLC at v_mid is conceptually present per §2.1 tex 72 but is not
+// modeled explicitly — the lambda processes only the matching chord
+// at junction's y_tag, so other chords don't enter the matching
+// branch.  This minimal S₂ exercises the count==2 path directly.)
+static void test_startup_mid_edge_tie_break() {
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+
+    // C₂: junction at y=3, peak at y=5, end at y=1.  Edge 1 descends
+    // from y=5 to y=1 crossing y=3 at x≈2.5.
+    Polygon C2({{4,3,4}, {3,5,5}, {2,1,6}});
+
+    Submap S2;
+    std::size_t r_above = S2.add_node();
+    std::size_t r_below = S2.add_node();
+
+    // LEFT-side arc above the chord: from v_mid_L down edge 1 to
+    // mid-edge crossing.  Single-edge on edge 1.  Starts at v_mid_L
+    // (NLC top companion conceptually), ends at the chord crossing.
+    Arc a{};
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_above;
+    a.edge_count = 1;
+    a.key_y = C2.vertex(1).y;          // 5 (starts at v_mid)
+    a.key_y_tag = C2.vertex(1).index;   // 5 (v_mid's tag — NOT chord.y_tag)
+    std::size_t ai_above_L = S2.add_arc(a);
+
+    // LEFT-side arc below the chord: from mid-edge crossing down edge 1
+    // to v_end_L.  Single-edge on edge 1.  Starts at the chord.
+    a = {};
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_below;
+    a.edge_count = 1;
+    a.key_y = 3.0;            // chord's y
+    a.key_y_tag = 4;           // chord's y_tag (junction's tag)
+    std::size_t ai_below_L = S2.add_arc(a);
+
+    // RIGHT-side arc at v_junction_R (count==1 endpoint at the junction).
+    // Single-edge on edge 0.  RIGHT-side traversal starts at v_mid_R
+    // and descends edge 0 to v_junction_R.
+    a = {};
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r_above;
+    a.edge_count = 1;
+    a.key_y = C2.vertex(1).y;          // 5 (starts at v_mid_R)
+    a.key_y_tag = C2.vertex(1).index;   // 5
+    std::size_t ai_right_at_junction = S2.add_arc(a);
+
+    // Matching chord at y=3, y_tag=4 (junction's tag).
+    // Left slot: mid-edge crossing on edge 1 (count==2).
+    // Right slot: v_junction_R on edge 0 (count==1).
+    Chord c{};
+    c.region[0] = r_above;
+    c.region[1] = r_below;
+    c.left_edge = 1; c.left_side = LEFT;
+    c.right_edge = 0; c.right_side = RIGHT;
+    c.y = 3.0; c.y_tag = 4;
+    c.left_adj = {{ai_above_L, ai_below_L}, 2};
+    c.right_adj = {{ai_right_at_junction}, 1};
+    S2.add_chord(c);
+
+    S2.start_arc = ai_above_L; S2.end_arc = ai_above_L;
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // a₀ shoots LEFT and hits the mid-edge crossing on edge 1 at x≈2.5.
+    StartupOracle oracle1(-10.0);
+    StartupOracle oracle2(2.5);
+
+    FusionState state;
+    build_fusion_sequence(state, S1, C1);
+    std::size_t start = fusion_startup(state, S1, C1, S2, C2,
+                                        oracle1, oracle2);
+
+    assert(start == 1);
+    // Tie-break: leaving_downward=true → elect region BELOW chord.
+    //
+    // Trace through resolve_s2_region's count==2 branch:
+    //   - ai_above_L: single-edge on chord's edge.  key_y_tag=5 ≠
+    //     chord.y_tag=4 → ENDS at chord.  Previous vertex (LEFT,
+    //     last_edge=1) = C₂.edge(1).start_idx = v_mid (y=5 > 3) →
+    //     arc0_above = TRUE.
+    //   - ai_below_L: single-edge.  key_y_tag=4 == chord.y_tag=4 →
+    //     STARTS at chord.  Next vertex (LEFT, first_edge=1) =
+    //     C₂.edge(1).end_idx = v_end (y=1 < 3) → arc1_above = FALSE.
+    //   - above_r = r_above, below_r = r_below.
+    //   - leaving_downward=true → return below_r = r_below.
+    assert(state.s2_region == r_below &&
+           "mid-edge tie-break: leaving_downward=true should elect "
+           "the region below the chord (r_below)");
+
+    std::printf("  [PASS] startup_mid_edge_tie_break\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -656,6 +863,8 @@ int main() {
     test_local_shoot_tie_break();
     test_startup_d1_eq_d2_defaults_to_case1();
     test_build_fusion_sequence_skips_nlcs();
+    test_startup_vertex_to_vertex_tie_break();
+    test_startup_mid_edge_tie_break();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }

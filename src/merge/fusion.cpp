@@ -297,15 +297,34 @@ std::size_t fusion_startup(FusionState& state,
     // clockwise traversal of ∂C₁."
     auto resolve_s2_region = [&](std::size_t initial_region, bool leaving_downward) -> std::size_t {
         // [C91 §3.1] (tex 191): If a₀ lies on an S₂ chord, that chord
-        // must be incident on initial_region.  Conformal ⟹ degree ≤ 4,
-        // so this scan is O(1) — matching the paper's O(1) claim (tex 185).
+        // must be incident on initial_region.  [§2.3 tex 114]: conformal
+        // submaps have node-degree ≤ 4, so the incident_chords scan is
+        // O(1).  (The paper does not separately bound the tie-break;
+        // startup as a whole is O(f(γ₂)) per tex 220, so this O(1)
+        // sub-operation fits well within budget.)
         SymbolicY a0y = a0.y;
         for (std::size_t ci : S2.node(initial_region).incident_chords) {
             assert(!S2.chord(ci).dead &&
                    "§2.4: normal-form (compacted) submap must have no "
                    "dead chords in incident_chords");
-            if (!symbolic_y_equal(S2.chord(ci).symbolic_y(), a0y))
+            const auto& ch = S2.chord(ci);
+            if (!symbolic_y_equal(ch.symbolic_y(), a0y))
                 continue;
+
+            // [C91 §2.1 tex 72]: per the visibility map construction,
+            // the junction has TWO ∂C₂ companions and each is incident
+            // upon one chord — so up to two distinct S₂ chords can
+            // share a₀'s symbolic y.  We need the SPECIFIC chord that
+            // a₀c₀ lies on: the one with an endpoint at a₀'s position
+            // on a₀'s ∂C side.  In C₂'s frame, the junction is
+            // C₂.vertex(0) and its incident edge is C₂.edge(0); the
+            // chord's endpoint at the junction has X_edge == 0 and
+            // X_side == a0.side.  (Note: a0.edge references C₁'s frame
+            // — C₁'s last edge — so we use the C₂-frame index 0 here.)
+            const bool incident_on_a0 =
+                (ch.left_edge  == 0 && ch.left_side  == a0.side) ||
+                (ch.right_edge == 0 && ch.right_side == a0.side);
+            if (!incident_on_a0) continue;
 
             // a₀c₀ lies on this S₂ chord.  Determine which of its
             // two regions we "locally enter as we leave p in a
@@ -315,57 +334,118 @@ std::size_t fusion_startup(FusionState& state,
             // vector leaving `p` depends entirely on whether we are in
             // Case 1 (leaving a₀) or Case 2 (leaving c₀).
 
-            // Determine which region is above/below the chord by
-            // comparing adj arcs' key_y to chord.y.  Check both
-            // endpoints — left_adj or right_adj — whichever has 2
-            // adj arcs (non-vertex endpoint per §2.2 tex 94).
-            const auto& ch = S2.chord(ci);
+            // [C91 §3.1 tex 191]: Determine which of the chord's two
+            // regions is above and which is below the chord.  For each
+            // adj arc at the chord endpoint, find the polygon vertex
+            // adjacent to the chord position along the arc's traversal;
+            // that vertex's SoS y vs chord.symbolic_y tells us which
+            // side the arc's region is on.
+            //
+            // Pick whichever endpoint has count==2 (two adj arcs on
+            // opposite sides — the structural discriminator works
+            // best here, §2.2 tex 94).  If both endpoints have count==1
+            // (vertex-to-vertex case at curve endpoints), the single
+            // adj arc on each side is sufficient.
             const Chord::AdjArcs* adj = nullptr;
-            if (ch.left_adj.count == 2)
+            std::size_t ch_edge_at_endpoint = NONE;
+            Side ch_side_at_endpoint = LEFT;
+            if (ch.left_adj.count == 2) {
                 adj = &ch.left_adj;
-            else if (ch.right_adj.count == 2)
+                ch_edge_at_endpoint = ch.left_edge;
+                ch_side_at_endpoint = ch.left_side;
+            } else if (ch.right_adj.count == 2) {
                 adj = &ch.right_adj;
+                ch_edge_at_endpoint = ch.right_edge;
+                ch_side_at_endpoint = ch.right_side;
+            }
+
+            // Helper: given an adj arc at the chord endpoint, return
+            // true iff the arc's region is strictly ABOVE the chord
+            // under SoS.  Looks at the polygon vertex adjacent to the
+            // chord position along the arc's traversal direction.
+            auto arc_region_above_chord = [&](const Arc& a) -> bool {
+                // Structural classification: does the arc START at the
+                // chord (its first_edge/first_side matches chord's slot)
+                // or END at the chord (last_edge/last_side matches)?
+                bool first_matches =
+                    (a.first_edge == ch_edge_at_endpoint &&
+                     a.first_side == ch_side_at_endpoint);
+                bool last_matches =
+                    (a.last_edge == ch_edge_at_endpoint &&
+                     a.last_side == ch_side_at_endpoint);
+                bool arc_starts_at_chord;
+                if (first_matches && !last_matches) {
+                    arc_starts_at_chord = true;
+                } else if (!first_matches && last_matches) {
+                    arc_starts_at_chord = false;
+                } else {
+                    // Single-edge arc on chord's edge (both first and
+                    // last match).  Disambiguate via key_y_tag: if it
+                    // matches chord.y_tag, the arc starts at the chord;
+                    // otherwise it starts at a polygon vertex and ends
+                    // at the chord.
+                    assert(first_matches && last_matches &&
+                           "adj arc must structurally touch the chord "
+                           "endpoint via first or last edge/side");
+                    arc_starts_at_chord = (a.key_y_tag == ch.y_tag);
+                }
+
+                // Find the polygon vertex adjacent to the chord position
+                // along the arc's traversal direction (the "next" vertex
+                // away from the chord).
+                std::size_t adj_v_idx;
+                if (arc_starts_at_chord) {
+                    // Going forward from chord position: next vertex.
+                    // LEFT ascends → next vertex = first_edge.end_idx.
+                    // RIGHT descends → next vertex = first_edge.start_idx.
+                    adj_v_idx = (a.first_side == LEFT)
+                              ? C2.edge(a.first_edge).end_idx
+                              : C2.edge(a.first_edge).start_idx;
+                } else {
+                    // Going backward from chord position: previous vertex.
+                    // LEFT traversal arrives via last_edge.start_idx.
+                    // RIGHT traversal arrives via last_edge.end_idx.
+                    adj_v_idx = (a.last_side == LEFT)
+                              ? C2.edge(a.last_edge).start_idx
+                              : C2.edge(a.last_edge).end_idx;
+                }
+
+                // SoS comparison: every vertex has a unique perturbed y,
+                // so the comparison is definitive (no degenerate case).
+                return symbolic_y_greater(
+                    symbolic_y_of(C2.vertex(adj_v_idx)), ch.symbolic_y());
+            };
 
             if (adj) {
-                // [C91 §2.4] (tex 137): At a non-vertex endpoint exactly one
-                // arc STARTS here (key_y == chord.y) and one ENDS here
-                // (key_y != chord.y).  Always use the ending arc for
-                // above/below determination — its key_y is unambiguously
-                // above or below the chord on both LEFT and RIGHT sides of ∂C.
-                //
-                // Using the starting arc is WRONG for RIGHT-side endpoints:
-                // its key_y == chord.y yields symbolic_y_less = false ("not
-                // below" → classified above), but a RIGHT-side starting arc
-                // descends downward, so its region is actually BELOW.
-                SymbolicY ky0 = S2.arc(adj->arcs[0]).key_symbolic_y();
-                SymbolicY ky1 = S2.arc(adj->arcs[1]).key_symbolic_y();
+                // count==2 endpoint: the two adj arcs are on OPPOSITE
+                // sides of the chord (one above, one below per §2.2
+                // tex 96).  Classify each via the helper.
+                bool arc0_above = arc_region_above_chord(S2.arc(adj->arcs[0]));
+                bool arc1_above = arc_region_above_chord(S2.arc(adj->arcs[1]));
+                assert(arc0_above != arc1_above &&
+                       "§2.2 tex 96: the two adj arcs at a count==2 chord "
+                       "endpoint must lie on opposite sides of the chord");
                 std::size_t r0 = S2.arc(adj->arcs[0]).region_node;
                 std::size_t r1 = S2.arc(adj->arcs[1]).region_node;
-                // Exactly one arc starts here (key_y == chord.y).
-                bool arc0_is_starting = symbolic_y_equal(ky0, ch.symbolic_y());
-                bool arc1_is_starting = symbolic_y_equal(ky1, ch.symbolic_y());
-                assert(arc0_is_starting != arc1_is_starting &&
-                       "§2.4: exactly one adj arc must start at the chord "
-                       "endpoint (key_y == chord.y); one starts, one ends");
-                // Use the ending arc (key_y != chord.y) for direction.
-                bool use_arc1 = arc0_is_starting;
-                SymbolicY ky_ref = use_arc1 ? ky1 : ky0;
-                std::size_t r_ref   = use_arc1 ? r1  : r0;
-                std::size_t r_other = use_arc1 ? r0  : r1;
-                bool ref_below = symbolic_y_less(ky_ref, ch.symbolic_y());
-                std::size_t below_r = ref_below ? r_ref   : r_other;
-                std::size_t above_r = ref_below ? r_other : r_ref;
+                std::size_t above_r = arc0_above ? r0 : r1;
+                std::size_t below_r = arc0_above ? r1 : r0;
                 return leaving_downward ? below_r : above_r;
             }
-            // Both endpoints are C₂ vertices (count==1 on both sides).
-            // Under SoS (§2, tex 47), the junction vertex has a unique
-            // symbolic y.  The junction is C₂'s start vertex (an
-            // endpoint), so §2.1 guarantees no NLC there.  No S₂ chord
-            // can match the junction's symbolic y — this path is
-            // unreachable.
-            assert(false &&
-                   "§2.1/SoS: S₂ chord at junction's symbolic y is "
-                   "impossible (junction is C₂ endpoint, no NLC)");
+
+            // Vertex-to-vertex case: both endpoints have count==1
+            // (e.g., endpoint companion chord at the junction per
+            // §2.1 tex 72).  Each endpoint has one adj arc; classify it
+            // using the same helper with the appropriate endpoint slot.
+            ch_edge_at_endpoint = ch.left_edge;
+            ch_side_at_endpoint = ch.left_side;
+            bool left_arc_above =
+                arc_region_above_chord(S2.arc(ch.left_adj.arcs[0]));
+            std::size_t r_arc = S2.arc(ch.left_adj.arcs[0]).region_node;
+            std::size_t r_other = (ch.region[0] == r_arc)
+                                ? ch.region[1] : ch.region[0];
+            std::size_t above_r = left_arc_above ? r_arc : r_other;
+            std::size_t below_r = left_arc_above ? r_other : r_arc;
+            return leaving_downward ? below_r : above_r;
         }
         return initial_region;
     };
