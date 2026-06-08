@@ -1,11 +1,13 @@
 #pragma once
 
-/// [C91 §2.4]: Arc-structure.
+/// [C91 §2.2] (tex 96): region-arc — "pieces of C and not of C"
+/// alternating with exit chords along a region's boundary.
 ///
-/// "Each arc is represented by a separate arc-structure."
-/// Points directly into the input table (Polygon's edge array).
+/// [C91 §2.4] (tex 133): Arc-structure — the in-memory representation.
+/// "Each arc is represented by a separate arc-structure." Points
+/// directly into the input table (Polygon's edge array).
 ///
-/// (ii): "each arc-structure has a pointer to the node of the tree
+/// §2.4(ii): "each arc-structure has a pointer to the node of the tree
 /// whose corresponding region is incident upon the arc."
 
 #include "../polygon/point.h"
@@ -13,6 +15,7 @@
 #include "../common.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <utility>
 
@@ -79,11 +82,23 @@ struct Arc {
         if (first_side == LEFT) {
             // LEFT→RIGHT: first_edge ascending, last_edge descending,
             // meet at c_end - 1.
+            // [C91 §2.1 tex 72]: wrap occurs at a C endpoint; both legs
+            // must lie within the C-side bounded by the turnaround edge.
+            assert(c_end >= 1 &&
+                   "wrap requires c_end >= 1 (C has at least 2 vertices)");
+            assert(first_edge <= c_end - 1 && last_edge <= c_end - 1 &&
+                   "LEFT→RIGHT wrap: both legs must end at or before "
+                   "the turnaround edge (c_end - 1)");
             std::size_t turnaround = c_end - 1;
             return {std::min(first_edge, last_edge), turnaround};
         } else {
             // RIGHT→LEFT: first_edge descending, last_edge ascending,
             // meet at c_start.
+            // [C91 §2.1 tex 72]: wrap occurs at a C endpoint; both legs
+            // must lie within the C-side bounded by the turnaround edge.
+            assert(first_edge >= c_start && last_edge >= c_start &&
+                   "RIGHT→LEFT wrap: both legs must start at or after "
+                   "the turnaround edge (c_start)");
             std::size_t turnaround = c_start;
             return {turnaround, std::max(first_edge, last_edge)};
         }

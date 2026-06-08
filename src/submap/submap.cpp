@@ -884,21 +884,23 @@ void Submap::check_invariants(const Polygon& polygon) const {
                "§2.1 tex 70: non-NLC chord must be horizontal at its "
                "source vertex's y (chord.y_tag identifies the vertex)");
 
-        // §2.2 tex 94: when a chord endpoint has exactly one adjacent
-        // arc (count==1) it is a polygon vertex (paper's "vertex of C");
-        // the source vertex must therefore lie on the underlying edge.
-        if (c.left_adj.count == 1) {
-            assert(matches_an_endpoint(c.left_edge, chord_y) &&
-                   "§2.2 tex 94: non-NLC chord with count==1 LEFT endpoint "
-                   "must carry an SoS tag matching one of the underlying "
-                   "edge's polygon-vertex tags");
-        }
-        if (c.right_adj.count == 1) {
-            assert(matches_an_endpoint(c.right_edge, chord_y) &&
-                   "§2.2 tex 94: non-NLC chord with count==1 RIGHT endpoint "
-                   "must carry an SoS tag matching one of the underlying "
-                   "edge's polygon-vertex tags");
-        }
+        // §2.2 tex 94: "removing... those endpoints that are not vertices
+        // of C" — count==1 ⟺ vertex endpoint, count==2 ⟺ non-vertex
+        // endpoint (also documented in add_chord, submap.cpp:90-92).
+        // The equivalence catches BOTH directions:
+        //   count==1 but tag-mismatch ⟹ count claims vertex but chord
+        //     points mid-edge → simulated_contraction_weight skips merges
+        //     it should attempt.
+        //   count==2 but tag-match ⟹ count claims mid-edge but chord
+        //     points at a vertex → contraction merges arcs at a vertex
+        //     that shouldn't be glued (violates §2.2 "removing non-vertex
+        //     endpoints" specifically).
+        assert((c.left_adj.count == 1) == matches_an_endpoint(c.left_edge, chord_y) &&
+               "§2.2 tex 94: LEFT endpoint — count==1 ⟺ chord SoS tag "
+               "matches one of the underlying edge's polygon-vertex tags");
+        assert((c.right_adj.count == 1) == matches_an_endpoint(c.right_edge, chord_y) &&
+               "§2.2 tex 94: RIGHT endpoint — count==1 ⟺ chord SoS tag "
+               "matches one of the underlying edge's polygon-vertex tags");
     }
 }
 
@@ -1441,10 +1443,18 @@ bool Submap::is_granular(std::size_t gamma,
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
     if (is_conformal()) {
         std::size_t denom = gamma + 1; // γ+1 > 0 even when γ = 0
-        std::size_t bound = 2 * (8 * (polygon.num_vertices() - 1) / denom);
+        // [C91 §2.3] Lemma 2.3: n is the vertex count of the SUBCHAIN C
+        // covered by the submap, not the parent polygon.  We're past the
+        // "no chords" early-return above, so live arcs exist, so §2.4(iii)
+        // (tex 138) requires start_vertex/end_vertex to be set.
+        assert(start_vertex != NONE && end_vertex != NONE &&
+               "§2.4(iii) tex 138: submap with chords must have "
+               "start_vertex/end_vertex set");
+        std::size_t n_c = end_vertex - start_vertex + 1;
+        std::size_t bound = 2 * (8 * (n_c - 1) / denom);
         assert(num_live_nodes() <= bound &&
-               "§2.3 Lemma 2.3 (tex 126,129): V ≤ 2·⌊8(n−1)/(γ+1)⌋ for "
-               "γ-granular conformal submap");
+               "§2.3 Lemma 2.3 (tex 126,129): V ≤ 2·⌊8(|C|−1)/(γ+1)⌋ for "
+               "γ-granular conformal submap (|C| = subchain vertex count)");
     }
 #endif
 

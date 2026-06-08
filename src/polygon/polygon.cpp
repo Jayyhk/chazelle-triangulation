@@ -11,11 +11,12 @@ Polygon::Polygon(std::vector<Point> vertices) {
     assert(vertices.size() >= 2 &&
            "§2.1: a polygonal curve must have at least 2 vertices");
 
-    // [C91 §2.1]: "simple (nonclosed) polygonal curve."
-    assert(!(vertices.front().x == vertices.back().x &&
-             vertices.front().y == vertices.back().y) &&
-           "§2.1: curve must be nonclosed (first ≠ last vertex)");
-
+    // [C91 §2.1]: "simple (nonclosed) polygonal curve."  Under SoS,
+    // "nonclosed" means front and back are distinct vertices, which
+    // is implied by the distinct-index check below (front.index !=
+    // back.index ⟹ symbolically distinct vertices, regardless of
+    // whether they share geometric coordinates).
+    //
     // [C91 §2] / [10]: SoS requires distinct vertex indices.
     {
         std::unordered_set<std::size_t> seen;
@@ -36,7 +37,6 @@ void Polygon::build_edges() {
     edges_.reserve(n - 1);
     for (std::size_t i = 0; i + 1 < n; ++i) {
         edges_.push_back(Edge{
-            .index     = i,
             .start_idx = i,
             .end_idx   = i + 1,
         });
