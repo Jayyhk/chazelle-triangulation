@@ -70,10 +70,10 @@ inline void assert_merge_preconditions(const MergeInput& in) {
     // [§3]: "Sᵢ a γᵢ-granular conformal submap of V(Cᵢ)."
     assert(in.S1->is_conformal() && "§3: S₁ must be conformal");
     assert(!in.S1->tree_decomposition().empty() &&
-           "§2.4(iv): S₁ TD must be available");
+           "§2.4(iv): S₁ tree decomposition must be available");
     assert(in.S2->is_conformal() && "§3: S₂ must be conformal");
     assert(!in.S2->tree_decomposition().empty() &&
-           "§2.4(iv): S₂ TD must be available");
+           "§2.4(iv): S₂ tree decomposition must be available");
     assert(in.S1->is_granular(in.gamma1, *in.C1) &&
            "§3: S₁ must be γ₁-granular");
     assert(in.S2->is_granular(in.gamma2, *in.C2) &&

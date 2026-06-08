@@ -49,9 +49,9 @@ void TreeDecomposition::build(const Submap& submap) {
         if (n.is_internal()) ++num_internal; else ++num_leaves;
     }
     assert(num_internal == all_chords.size() &&
-           "§2.3: TD internals must biject with chords");
+           "§2.3: tree decomposition internals must biject with chords");
     assert(num_leaves == all_regions.size() &&
-           "§2.3: TD leaves must biject with regions");
+           "§2.3: tree decomposition leaves must biject with regions");
 }
 
 std::size_t TreeDecomposition::decompose(

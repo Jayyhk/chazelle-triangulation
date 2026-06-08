@@ -506,25 +506,25 @@ static void test_remove_chord_3_adj_arcs() {
 
 static void test_null_length_chord() {
     // [C91 §2.1]: "one of these pairs... gives rise to a chord of
-    // null length."  NLCs create empty regions.
+    // null length."  Null-length chords create empty regions.
     Submap s;
     std::size_t r0 = s.add_node(); // main region
-    std::size_t r1 = s.add_node(); // empty NLC region
+    std::size_t r1 = s.add_node(); // empty region inside the null-length chord
 
-    // LEFT arc before NLC.
+    // LEFT arc before the null-length chord.
     Arc a;
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 1;
     a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
-    // Zero-length arc in the NLC empty region.
+    // Zero-length arc inside the null-length chord's empty region.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 0;
     a.key_y_tag = 0;
     std::size_t ai1 = s.add_arc(a);
 
-    // LEFT arc after NLC.
+    // LEFT arc after the null-length chord.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 1;
     a.key_y_tag = 0;
@@ -536,7 +536,7 @@ static void test_null_length_chord() {
     a.key_y_tag = 0;
     s.add_arc(a);
 
-    // NLC chord.
+    // Null-length chord.
     Chord c;
     c.region[0] = r0; c.region[1] = r1;
     c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
@@ -549,7 +549,7 @@ static void test_null_length_chord() {
     assert(s.chord(0).is_null_length);
     assert(s.node(r1).degree() == 1); // pendant
 
-    // NLC region is empty (weight 0).
+    // The null-length chord's interior is empty (weight 0).
     assert(s.region_weight(r1) == 0);
 
     // Tree property holds.
@@ -567,10 +567,11 @@ static void test_null_length_chord() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_null_length_chord_right_side() {
-    // [C91 §2.1 tex 72]: NLCs arise at y-extrema; the "inside" pair of
-    // duplicate vertices can land on either ∂C side depending on which
-    // way the curve turns.  Mirror the LEFT-side test on the RIGHT
-    // side to verify the NLC asserts don't accidentally hardcode LEFT.
+    // [C91 §2.1 tex 72]: null-length chords arise at y-extrema; the
+    // "inside" pair of duplicate vertices can land on either ∂C side
+    // depending on which way the curve turns.  Mirror the LEFT-side
+    // test on the RIGHT side to verify the asserts don't accidentally
+    // hardcode LEFT.
     Submap s;
     std::size_t r0 = s.add_node();
     std::size_t r1 = s.add_node();
@@ -589,7 +590,7 @@ static void test_null_length_chord_right_side() {
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r1; a.edge_count = 0;
     a.key_y_tag = 0;
-    std::size_t ai_nlc = s.add_arc(a);
+    std::size_t ai_null = s.add_arc(a);
 
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r0; a.edge_count = 1;
@@ -598,7 +599,7 @@ static void test_null_length_chord_right_side() {
 
     Chord c;
     c.region[0] = r0; c.region[1] = r1;
-    c.left_adj = {{ai_pre}, 1}; c.right_adj = {{ai_nlc}, 1};
+    c.left_adj = {{ai_pre}, 1}; c.right_adj = {{ai_null}, 1};
     c.left_edge = 1; c.right_edge = 1;
     c.left_side = RIGHT; c.right_side = RIGHT;
     c.is_null_length = true;
@@ -627,11 +628,11 @@ static void test_empty_submap_fires() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  12. Deaths: add_chord NLC structural invariants (§2.1 tex 72)
+//  12. Deaths: add_chord null-length chord structural invariants (§2.1 tex 72)
 // ════════════════════════════════════════════════════════════════
 
-static void test_nlc_mismatched_edges_fires() {
-    // [C91 §2.1 tex 72]: NLC endpoints must coincide.
+static void test_null_length_chord_mismatched_edges_fires() {
+    // [C91 §2.1 tex 72]: null-length chord endpoints must coincide.
     assert(assert_fires([]{
         Submap s;
         std::size_t r0 = s.add_node();
@@ -659,11 +660,11 @@ static void test_nlc_mismatched_edges_fires() {
         c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
         s.add_chord(c);
     }));
-    std::printf("  [PASS] nlc_mismatched_edges_fires\n");
+    std::printf("  [PASS] null_length_chord_mismatched_edges_fires\n");
 }
 
-static void test_nlc_mismatched_sides_fires() {
-    // [C91 §2.1 tex 72]: both NLC endpoints on the same ∂C side.
+static void test_null_length_chord_mismatched_sides_fires() {
+    // [C91 §2.1 tex 72]: both null-length chord endpoints on the same ∂C side.
     assert(assert_fires([]{
         Submap s;
         std::size_t r0 = s.add_node();
@@ -691,11 +692,11 @@ static void test_nlc_mismatched_sides_fires() {
         c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
         s.add_chord(c);
     }));
-    std::printf("  [PASS] nlc_mismatched_sides_fires\n");
+    std::printf("  [PASS] null_length_chord_mismatched_sides_fires\n");
 }
 
-static void test_nlc_missing_y_tag_fires() {
-    // [C91 §2 tex 47] (SoS): NLC must carry the y-extremum vertex's tag.
+static void test_null_length_chord_missing_y_tag_fires() {
+    // [C91 §2 tex 47] (SoS): null-length chord must carry the y-extremum vertex's tag.
     assert(assert_fires([]{
         Submap s;
         std::size_t r0 = s.add_node();
@@ -724,11 +725,11 @@ static void test_nlc_missing_y_tag_fires() {
         c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
         s.add_chord(c);
     }));
-    std::printf("  [PASS] nlc_missing_y_tag_fires\n");
+    std::printf("  [PASS] null_length_chord_missing_y_tag_fires\n");
 }
 
-static void test_nlc_wrong_adj_count_fires() {
-    // [C91 §2.1 tex 72]: NLC has exactly 1 adj arc per side.
+static void test_null_length_chord_wrong_adj_count_fires() {
+    // [C91 §2.1 tex 72]: null-length chord has exactly 1 adj arc per side.
     assert(assert_fires([]{
         Submap s;
         std::size_t r0 = s.add_node();
@@ -763,7 +764,7 @@ static void test_nlc_wrong_adj_count_fires() {
         c.right_adj = {{ai1}, 1};
         s.add_chord(c);
     }));
-    std::printf("  [PASS] nlc_wrong_adj_count_fires\n");
+    std::printf("  [PASS] null_length_chord_wrong_adj_count_fires\n");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -817,10 +818,10 @@ int main() {
     test_null_length_chord();
     test_null_length_chord_right_side();
     test_empty_submap_fires();
-    test_nlc_mismatched_edges_fires();
-    test_nlc_mismatched_sides_fires();
-    test_nlc_missing_y_tag_fires();
-    test_nlc_wrong_adj_count_fires();
+    test_null_length_chord_mismatched_edges_fires();
+    test_null_length_chord_mismatched_sides_fires();
+    test_null_length_chord_missing_y_tag_fires();
+    test_null_length_chord_wrong_adj_count_fires();
     test_wrong_edge_count_fires();
     std::printf("All §2.2 tests passed.\n");
     return 0;

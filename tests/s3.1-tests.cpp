@@ -548,23 +548,23 @@ static void test_startup_d1_eq_d2_defaults_to_case1() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  13. build_fusion_sequence skips NLCs (§3.1 tex 179 + §2.2 tex 96)
+//  13. build_fusion_sequence skips null-length chords (§3.1 tex 179 + §2.2 tex 96)
 // ════════════════════════════════════════════════════════════════
 
-static void test_build_fusion_sequence_skips_nlcs() {
+static void test_build_fusion_sequence_skips_null_length_chords() {
     // [C91 §3.1 tex 179]: "Let a₁, a₂, ..., aₘ be the canonical vertex
     // enumeration of S₁ ... exit chord endpoints in S₁."  Per §2.2 tex
     // 96, exit chords are distinguished from null-length chords; per §3.1
-    // tex 224, NLCs are "carried over automatically" to the fused submap
-    // and must NOT appear in the main-loop sequence.
+    // tex 224, null-length chords are "carried over automatically" to
+    // the fused submap and must NOT appear in the main-loop sequence.
     auto C = make_C1();                         // 5 vertices, 4 edges.
 
-    // Synthetic submap with 1 exit chord + 1 NLC.  NLCs are at y-extrema
-    // (vertex 2 = (2, 4) is a y-max in C1).
+    // Synthetic submap with 1 exit chord + 1 null-length chord.
+    // Null-length chords are at y-extrema (vertex 2 = (2, 4) is a y-max in C1).
     Submap s;
     std::size_t r0 = s.add_node();
-    std::size_t r1 = s.add_node();              // for exit chord
-    std::size_t r_nlc = s.add_node();           // empty region of NLC
+    std::size_t r1 = s.add_node();              // for the exit chord
+    std::size_t r_null = s.add_node();          // empty region inside the null-length chord
 
     Arc a{};
     a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
@@ -572,11 +572,11 @@ static void test_build_fusion_sequence_skips_nlcs() {
     a.key_y = C.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
-    // NLC empty arc on LEFT at vertex 2 (y-max).
+    // Null-length empty arc on LEFT at vertex 2 (y-max).
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r_nlc; a.edge_count = 0;    // null-length
+    a.region_node = r_null; a.edge_count = 0;   // null-length
     a.key_y = C.vertex(2).y; a.key_y_tag = 2;
-    std::size_t ai_nlc = s.add_arc(a);
+    std::size_t ai_null = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 3;
@@ -593,7 +593,7 @@ static void test_build_fusion_sequence_skips_nlcs() {
     a.key_y = C.vertex(2).y; a.key_y_tag = 22;
     std::size_t ai3 = s.add_arc(a);
 
-    // Exit chord (non-NLC): r0 ↔ r1 at vertex 2's y level.
+    // Exit chord: r0 ↔ r1 at vertex 2's y level.
     Chord ec;
     ec.region[0] = r0; ec.region[1] = r1;
     ec.left_edge = 1; ec.right_edge = 1;
@@ -603,16 +603,16 @@ static void test_build_fusion_sequence_skips_nlcs() {
     ec.right_adj = {{ai2, ai3}, 2};
     s.add_chord(ec);
 
-    // NLC: r0 ↔ r_nlc at vertex 2 LEFT side.
-    Chord nlc;
-    nlc.region[0] = r0; nlc.region[1] = r_nlc;
-    nlc.left_edge = 1; nlc.right_edge = 1;
-    nlc.left_side = LEFT; nlc.right_side = LEFT;
-    nlc.y = C.vertex(2).y; nlc.y_tag = 2;
-    nlc.is_null_length = true;
-    nlc.left_adj = {{ai0}, 1};
-    nlc.right_adj = {{ai_nlc}, 1};
-    s.add_chord(nlc);
+    // Null-length chord: r0 ↔ r_null at vertex 2 LEFT side.
+    Chord null_chord;
+    null_chord.region[0] = r0; null_chord.region[1] = r_null;
+    null_chord.left_edge = 1; null_chord.right_edge = 1;
+    null_chord.left_side = LEFT; null_chord.right_side = LEFT;
+    null_chord.y = C.vertex(2).y; null_chord.y_tag = 2;
+    null_chord.is_null_length = true;
+    null_chord.left_adj = {{ai0}, 1};
+    null_chord.right_adj = {{ai_null}, 1};
+    s.add_chord(null_chord);
 
     s.start_arc = ai0; s.end_arc = ai1;
     s.start_vertex = 0; s.end_vertex = 4;
@@ -620,22 +620,22 @@ static void test_build_fusion_sequence_skips_nlcs() {
     FusionState state;
     build_fusion_sequence(state, s, C);
 
-    // Sequence = a₀ + 2 endpoints (exit chord only — NLC excluded) + a_{m+1}
-    //          = 4 vertices.  If the NLC were included, we'd get 6.
+    // Sequence = a₀ + 2 exit-chord endpoints + a_{m+1} = 4 vertices.
+    // (The null-length chord is excluded; including it would give 6.)
     assert(state.sequence.size() == 4 &&
-           "§3.1 tex 179: NLCs must not appear in the canonical "
-           "vertex enumeration (paper distinguishes 'exit chord "
+           "§3.1 tex 179: null-length chords must not appear in the "
+           "canonical vertex enumeration (paper distinguishes 'exit chord "
            "endpoints' from null-length chords per §2.2 tex 96)");
 
-    // None of the non-companion vertices should reference the NLC.
-    std::size_t nlc_idx = 1;                    // NLC is chord #1
+    // None of the non-companion vertices should reference the null-length chord.
+    std::size_t null_chord_idx = 1;             // null-length chord is chord #1
     for (std::size_t i = 0; i < state.sequence.size(); ++i) {
         const auto& v = state.sequence[i];
         if (v.is_companion) continue;
-        assert(v.chord_idx != nlc_idx);
+        assert(v.chord_idx != null_chord_idx);
     }
 
-    std::printf("  [PASS] build_fusion_sequence_skips_nlcs\n");
+    std::printf("  [PASS] build_fusion_sequence_skips_null_length_chords\n");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -666,8 +666,9 @@ static void test_startup_vertex_to_vertex_tie_break() {
     // DOWN-LEFT to end vertex (2,3,6).  Start and end share raw y=3.
     Polygon C2({{4,3,4}, {3,5,5}, {2,3,6}});
 
-    // S₂ structure (minimal: NLC at v_mid is γ-removed, leaving just
-    // one big arc per ∂C side and the matching chord between two regions).
+    // S₂ structure (minimal: the null-length chord at v_mid is
+    // γ-removed, leaving just one big arc per ∂C side and the matching
+    // chord between two regions).
     Submap S2;
     std::size_t r_loop    = S2.add_node(); // contains the curve arcs (above chord)
     std::size_t r_outside = S2.add_node(); // empty region below chord
@@ -749,9 +750,9 @@ static void test_startup_vertex_to_vertex_tie_break() {
 // arcs at the crossing — one above (from v_mid_L down to crossing)
 // and one below (from crossing down to v_end_L).
 //
-// (NLC at v_mid is conceptually present per §2.1 tex 72 but is not
-// modeled explicitly — the lambda processes only the matching chord
-// at junction's y_tag, so other chords don't enter the matching
+// (The null-length chord at v_mid is conceptually present per §2.1 tex 72
+// but is not modeled explicitly — the lambda processes only the matching
+// chord at junction's y_tag, so other chords don't enter the matching
 // branch.  This minimal S₂ exercises the count==2 path directly.)
 static void test_startup_mid_edge_tie_break() {
     auto C1 = make_C1();
@@ -765,9 +766,10 @@ static void test_startup_mid_edge_tie_break() {
     std::size_t r_above = S2.add_node();
     std::size_t r_below = S2.add_node();
 
-    // LEFT-side arc above the chord: from v_mid_L down edge 1 to
+    // LEFT-side arc above the chord: from v_mid_L down edge 1 to the
     // mid-edge crossing.  Single-edge on edge 1.  Starts at v_mid_L
-    // (NLC top companion conceptually), ends at the chord crossing.
+    // (the top companion of v_mid's null-length chord, conceptually),
+    // ends at the chord crossing.
     Arc a{};
     a.first_edge = 1; a.last_edge = 1;
     a.first_side = LEFT; a.last_side = LEFT;
@@ -862,7 +864,7 @@ int main() {
     test_shooting_direction_all_cases();
     test_local_shoot_tie_break();
     test_startup_d1_eq_d2_defaults_to_case1();
-    test_build_fusion_sequence_skips_nlcs();
+    test_build_fusion_sequence_skips_null_length_chords();
     test_startup_vertex_to_vertex_tie_break();
     test_startup_mid_edge_tie_break();
     std::printf("All §3.1 tests passed.\n");

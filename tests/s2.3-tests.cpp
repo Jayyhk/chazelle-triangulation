@@ -80,7 +80,7 @@ static Submap build_conformal_submap() {
     s.add_arc(a); // idx 5
 
     Chord c;
-    // c0: r0 — r1.  Horizontal at y=0.5 (vertex 2's y) — non-NLC chord
+    // c0: r0 — r1.  Horizontal exit chord at y=0.5 (vertex 2's y)
     // sourced at vertex 2 per §2.1 tex 70; tag identifies the source.
     c = {}; c.region[0] = 0; c.region[1] = 1;
     c.left_edge = 0; c.right_edge = 0; c.y = 0.5; c.y_tag = 2;
@@ -289,7 +289,7 @@ static void test_tree_decomposition() {
     const auto& td = s.tree_decomposition();
     assert(!td.empty());
 
-    // 3 regions + 2 chords = 5 TD nodes (2 internal + 3 leaves).
+    // 3 regions + 2 chords = 5 tree decomposition nodes (2 internal + 3 leaves).
     assert(td.size() == 5);
 
     // Root exists and is internal (a chord).

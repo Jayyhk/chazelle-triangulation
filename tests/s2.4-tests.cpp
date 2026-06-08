@@ -220,8 +220,8 @@ static void test_arc_sequence_ordering() {
 static void test_double_identify_worst_case() {
     Submap s;
     s.add_node(); // r0
-    s.add_node(); // r1 (LEFT NLC empty)
-    s.add_node(); // r2 (RIGHT NLC empty)
+    s.add_node(); // r1 (empty region inside LEFT null-length chord)
+    s.add_node(); // r2 (empty region inside RIGHT null-length chord)
 
     Arc a;
     // 3 LEFT arcs on edge 1.
@@ -327,7 +327,7 @@ static void test_check_invariants_polygon_positive() {
 static void test_check_invariants_polygon_size_3_run() {
     // [C91 §2.4 tex 144]: arcs sharing first_edge must be key_y
     // monotonic.  Build a 3-arc run on edge 1 (LEFT side) separated
-    // by 2 NLCs; SoS tags 2/5/6 give descending perturbed y in array
+    // by 2 null-length chords; SoS tags 2/5/6 give descending perturbed y in array
     // order.  check_invariants(polygon) infers descending and verifies
     // all consecutive pairs.
     auto poly = test_polygon();

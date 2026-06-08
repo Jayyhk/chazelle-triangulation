@@ -147,7 +147,8 @@ inline void assert_cut_postconditions(
                    "§3.0(ii)(3) tex 170: non-boundary piece requires its curve");
             // §2.4(iv) tex 139: conformal ⟹ tree decomposition available.
             assert(!p.submap->tree_decomposition().empty() &&
-                   "§2.4(iv) tex 139: normal-form conformal submap needs TD");
+                   "§2.4(iv) tex 139: normal-form conformal submap "
+                   "needs its tree decomposition");
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
             // Full normal-form / conformal / granular validation — O(m), gated
             // to keep cut() within its O(g(γᵢ)) paper budget.

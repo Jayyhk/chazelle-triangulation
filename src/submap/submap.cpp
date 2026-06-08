@@ -20,7 +20,7 @@ std::size_t SubmapNode::degree() const noexcept {
 std::size_t Submap::add_node() {
     std::size_t idx = nodes_.size();
     nodes_.push_back(SubmapNode{});
-    tree_decomp_dirty_ = true;     // [§2.4(iv)]: TD indexes nodes_.
+    tree_decomp_dirty_ = true;     // [§2.4(iv)]: tree decomposition indexes nodes_.
     return idx;
 }
 
@@ -33,7 +33,7 @@ std::size_t Submap::add_arc(Arc arc) {
 
     // [§2.4 tex 144]: double_identify's Phase 2 binary-searches on
     // symbolic key_y, so key_y_tag must carry a valid SoS tag (real arcs
-    // inherit the start vertex's tag; null-length arcs inherit the NLC's).
+    // inherit the start vertex's tag; null-length arcs inherit the null-length chord's).
     assert(arc.key_y_tag != SOS_NONE &&
            "§2.4 tex 144: arc.key_y_tag must carry a valid SoS tag");
 
@@ -105,15 +105,16 @@ std::size_t Submap::add_chord(Chord chord) {
     assert(chord.y_tag != SOS_NONE &&
            "§2 tex 47 (SoS): chord must carry the source vertex's SoS tag");
 
-    // [§2.1 tex 72 + §2.2 tex 108]: NLC arises at a y-extremum from the
-    // "inside" pair of duplicate vertices — both endpoints at the same
-    // ∂C point (same edge/side/symbolic y), one adj arc per ∂C side.
+    // [§2.1 tex 72 + §2.2 tex 108]: a null-length chord arises at a
+    // y-extremum from the "inside" pair of duplicate vertices — both
+    // endpoints at the same ∂C point (same edge/side/symbolic y), with
+    // one adj arc per ∂C side.
     if (chord.is_null_length) {
         assert(chord.left_edge == chord.right_edge &&
                chord.left_side == chord.right_side &&
-               "§2.1 tex 72: NLC endpoints must coincide (same edge + side)");
+               "§2.1 tex 72: null-length chord endpoints must coincide");
         assert(chord.left_adj.count == 1 && chord.right_adj.count == 1 &&
-               "§2.1 tex 72: NLC has exactly 1 adj arc per ∂C side");
+               "§2.1 tex 72: null-length chord has 1 adj arc per ∂C side");
     }
 
     chords_.push_back(chord);
@@ -223,11 +224,11 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
 
     if (is_null_length) {
         assert(c.left_adj.count == 1 && c.right_adj.count == 1 &&
-               "§2.2: NLC must have exactly 1 adj arc per side");
-        // [§2.1 tex 72]: NLC endpoints are y-extremum duplicate vertices
-        // — both polygon vertices by construction.
+               "§2.2: null-length chord must have 1 adj arc per side");
+        // [§2.1 tex 72]: null-length chord endpoints are y-extremum
+        // duplicate vertices — both polygon vertices by construction.
         assert(left_is_vertex && right_is_vertex &&
-               "§2.1 tex 72: NLC endpoints must both be polygon vertices");
+               "§2.1 tex 72: null-length chord endpoints are polygon vertices");
         // Vertex endpoints don't trigger merging (§2.2 tex 94).  The
         // null-length arc is absorbed into r0 by the reassignment below.
     } else {
@@ -448,7 +449,7 @@ void Submap::compact() {
     }
 
     compacted_ = true;          // [§2.4 tex 144]: no dead arcs remain.
-    tree_decomp_dirty_ = true;  // [§2.4(iv)]: TD indices were stale anyway.
+    tree_decomp_dirty_ = true;  // [§2.4(iv)]: tree decomposition indices were stale anyway.
 }
 
 // ── Live counts ─────────────────────────────────────────────────
@@ -626,7 +627,7 @@ void Submap::check_invariants(const Polygon& polygon) const {
     // must be monotonic — double_identify Phase 2 infers the direction
     // from the run's endpoints and binary-searches.  We check
     // monotonicity in the inferred direction (more permissive than strict
-    // canonical ascent/descent: at NLC duplicate-vertex pairs the SoS
+    // canonical ascent/descent: at a null-length chord's duplicate-vertex pair the SoS
     // tag direction may oppose geometric edge ascent, and Phase 2 only
     // needs SOME monotonic direction).
     {
@@ -681,8 +682,9 @@ void Submap::check_invariants(const Polygon& polygon) const {
     // it against polygon.count_nonnull_edges — a stale cache silently
     // miscomputes weights, breaking γ-granularity decisions.
     //
-    // §2.4 tex 133: null-length arcs encode a single ∂C point (NLC
-    // duplicate-vertex pair), not an edge span.  Under §2.1 every
+    // §2.4 tex 133: null-length arcs encode a single ∂C point (the
+    // null-length chord's duplicate-vertex pair), not an edge span.
+    // Under §2.1 every
     // polygon edge has nonzero length, so edge_count == 0 uniquely
     // identifies null-length arcs — skip the cache check for them.
     //
@@ -730,19 +732,20 @@ void Submap::check_invariants(const Polygon& polygon) const {
     for (std::size_t ci = 0; ci < chords_.size(); ++ci) {
         const auto& c = chords_[ci];
         if (c.dead) continue;
-        // NLCs use auxiliary SoS tags (beyond polygon-vertex indices) to
-        // disambiguate multiple NLCs at the same y-extremum; add_chord
-        // enforces their structural invariants separately.
+        // Null-length chords use auxiliary SoS tags (beyond polygon-vertex
+        // indices) to disambiguate multiple null-length chords at the
+        // same y-extremum; add_chord enforces their structural invariants
+        // separately.
         if (c.is_null_length) continue;
 
-        // [§2.1 tex 70]: a non-NLC chord is horizontal at its source
-        // vertex's y, with y_tag = that vertex's index.
+        // [§2.1 tex 70]: a non-null-length chord is horizontal at its
+        // source vertex's y, with y_tag = that vertex's index.
         assert(c.y_tag < polygon.num_vertices() &&
-               "§2.1 tex 70: non-NLC chord y_tag must be a polygon vertex index");
+               "§2.1 tex 70: exit chord y_tag must be a polygon vertex index");
         SymbolicY chord_y{c.y, c.y_tag};
         assert(symbolic_y_equal(chord_y,
                                 symbolic_y_of(polygon.vertex(c.y_tag))) &&
-               "§2.1 tex 70: non-NLC chord must be horizontal at its source vertex");
+               "§2.1 tex 70: exit chord must be horizontal at its source vertex");
 
         assert((c.left_adj.count == 1) == matches_an_endpoint(c.left_edge, chord_y) &&
                "§2.2 tex 94: LEFT endpoint count == 1 ⟺ endpoint is a polygon vertex");
@@ -911,7 +914,8 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
         // ylo = first arc past y; the arc containing y is at p = ylo-1.
         // If y exactly matches key_y[p], arc p-1 also passes through (its
         // range ends at that boundary); walk back through equal-key_y
-        // runs to pick up NLC duplicates.  Bounded by 6 (§2.4 tex 144).
+        // runs to pick up null-length chord duplicates.  Bounded by 6
+        // (§2.4 tex 144).
         if (ylo > blo) {
             std::size_t p = ylo - 1;
             result.push(p);
@@ -951,8 +955,8 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
         }
     };
 
-    // [§2.4 tex 144]: at most 3 arcs per ∂C half (= arc + NLC + arc at
-    // a y-extremum); total ≤ 6 across both halves.
+    // [§2.4 tex 144]: at most 3 arcs per ∂C half (= arc + null-length
+    // chord + arc at a y-extremum); total ≤ 6 across both halves.
     search_half(left_begin, left_end, /*ascending=*/true);
     assert(result.count <= 3 && "§2.4 tex 144: ≤ 3 arcs per ∂C half");
 
@@ -969,7 +973,7 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
 
 void Submap::build_tree_decomposition() {
     // build() clears any stale contents internally; deferred destruction
-    // from a previously-flagged stale TD is absorbed here.
+    // from a previously-flagged stale tree decomposition is absorbed here.
     tree_decomp_.build(*this);
     tree_decomp_dirty_ = false;
 }

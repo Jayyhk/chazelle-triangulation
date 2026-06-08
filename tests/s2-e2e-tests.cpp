@@ -877,11 +877,11 @@ static void test_tree_decomposition(std::mt19937& rng, int iters) {
         std::size_t internals = td_count_internal(td, td.root());
         std::size_t leaves = td_count_leaves(td, td.root());
         assert(internals == num_chords_live &&
-               "TD internal nodes must biject with chords");
+               "tree decomposition internals must biject with chords");
         assert(leaves == num_regions &&
-               "TD leaves must biject with regions");
+               "tree decomposition leaves must biject with regions");
 
-        // Total TD nodes = chords + regions.
+        // Total tree decomposition nodes = chords + regions.
         assert(td.size() == num_chords_live + num_regions);
 
         // Depth bound: O(log m).  Specifically ≤ ceil(log2(m+1)) * 2.
@@ -892,7 +892,7 @@ static void test_tree_decomposition(std::mt19937& rng, int iters) {
             double log_bound = 2.0 * std::ceil(std::log2(
                 static_cast<double>(num_regions) + 1.0)) + 2.0;
             assert(depth <= static_cast<std::size_t>(log_bound) &&
-                   "TD depth exceeds O(log m) bound");
+                   "tree decomposition depth exceeds O(log m) bound");
         }
 
         // Verify parent pointers.
@@ -911,7 +911,7 @@ static void test_tree_decomposition(std::mt19937& rng, int iters) {
             if (td.node(i).is_leaf()) {
                 assert(td.node(i).region_idx < s.num_nodes());
                 assert(leaf_regions.insert(td.node(i).region_idx).second &&
-                       "duplicate region in TD leaves");
+                       "duplicate region in tree decomposition leaves");
             }
         }
         assert(leaf_regions.size() == num_regions);
@@ -922,7 +922,7 @@ static void test_tree_decomposition(std::mt19937& rng, int iters) {
             if (td.node(i).is_internal()) {
                 assert(td.node(i).chord_idx < s.num_chords());
                 assert(internal_chords.insert(td.node(i).chord_idx).second &&
-                       "duplicate chord in TD internals");
+                       "duplicate chord in tree decomposition internals");
             }
         }
         assert(internal_chords.size() == num_chords_live);
@@ -1011,7 +1011,7 @@ static void test_simulated_contraction_nonvertex(std::mt19937& rng,
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Test 11: Full pipeline — build, remove some, compact, TD, verify
+//  Test 11: Full pipeline — build, remove some, compact, tree decomposition, verify
 // ════════════════════════════════════════════════════════════════════
 
 static void test_full_pipeline(std::mt19937& rng, int iters) {
@@ -1198,7 +1198,7 @@ static void test_stress(std::mt19937& rng, int iters) {
         s.compact();
         s.check_invariants();
 
-        // Build TD on single-region.
+        // Build tree decomposition on single-region.
         s.build_tree_decomposition();
         assert(s.tree_decomposition().size() == 1);
     }
@@ -1206,7 +1206,7 @@ static void test_stress(std::mt19937& rng, int iters) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Test 14: Null-length chord (NLC) at y-extremum
+//  Test 14: Null-length chord at y-extremum
 // ════════════════════════════════════════════════════════════════════
 
 static void test_null_length_chord(std::mt19937& rng, int iters) {
@@ -1224,16 +1224,17 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         }
         if (extrema.empty()) continue;
 
-        // Pick one extremum and build a submap with an NLC there.
+        // Pick one extremum and build a submap with a null-length chord there.
         std::size_t ext_v = extrema[std::uniform_int_distribution<std::size_t>(
             0, extrema.size() - 1)(rng)];
 
         Submap s;
         std::size_t r0 = s.add_node(); // main region
-        std::size_t r1 = s.add_node(); // NLC empty region
+        std::size_t r1 = s.add_node(); // empty region inside the null-length chord
 
-        // Two LEFT arcs: before NLC, NLC (zero-length), after NLC.
-        // NLC is on the LEFT side at the extremum vertex.
+        // Three LEFT arcs: before the null-length chord, the zero-length
+        // arc inside it, and after.  Null-length chord on the LEFT side
+        // at the extremum vertex.
         Arc a{};
         // a0: r0, LEFT, edges [0, ext_v-1]
         a.first_edge = 0; a.last_edge = ext_v - 1;
@@ -1273,7 +1274,7 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         a.key_y = poly.vertex(n - 1).y; a.key_y_tag = n - 1;
         [[maybe_unused]] std::size_t ai3 = s.add_arc(a);
 
-        // NLC chord.
+        // Null-length chord.
         Chord c{};
         c.region[0] = r0; c.region[1] = r1;
         c.left_edge = ext_v - 1; c.right_edge = ext_v - 1;
@@ -1289,15 +1290,15 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
 
         // Invariants.
         s.assert_tree_property();
-        assert(s.region_weight(r1) == 0); // NLC empty region
+        assert(s.region_weight(r1) == 0); // empty region inside null-length chord
         // TODO: (§3.3) region_weight(r0) undercounts here because a3
-        // (the RIGHT arc) isn't in the NLC chord's adj list — it's
-        // only reachable via a full arc scan.  After normalize() is
+        // (the RIGHT arc) isn't in the null-length chord's adj list —
+        // it's only reachable via a full arc scan.  After normalize() is
         // implemented, assert region_weight(r0) == brute_region_weight.
         assert(brute_region_weight(s, r0) > 0);
         assert(s.is_conformal());
 
-        // Remove NLC → single region.
+        // Remove the null-length chord → single region.
         s.remove_chord(0, poly);
         s.assert_tree_property();
         assert(s.num_live_nodes() == 1);

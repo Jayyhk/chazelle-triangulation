@@ -635,10 +635,10 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     for (std::size_t ci = 0; ci < S.num_chords(); ++ci) {
         assert(!S.chord(ci).dead && "§2.4: normal-form submap has no dead chords");
         const auto& c = S.chord(ci);
-        // [§3.1 tex 179]: only EXIT chords enter the enumeration.  NLCs
-        // (§2.2 tex 96) are carried over to the fused submap directly
-        // (tex 224); including them would blow Lemma 3.1's O(n/γ + 1)
-        // bound (tex 209–210).
+        // [§3.1 tex 179]: only EXIT chords enter the enumeration.
+        // Null-length chords (§2.2 tex 96) are carried over to the fused
+        // submap directly (tex 224); including them would blow Lemma 3.1's
+        // O(n/γ + 1) bound (tex 209–210).
         if (c.is_null_length) continue;
         SymbolicY cy = c.symbolic_y();
 

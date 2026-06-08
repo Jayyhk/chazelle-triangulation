@@ -79,7 +79,7 @@ inline int point_y_order(const Point& a, const Point& b) noexcept {
 //
 // [C91 §2.1] Fig 2.2: a vertex falls into one of three cases —
 //   1. non-extremum     → 2 ∂C companions
-//   2. extremum non-endpoint → 4 ∂C companions + NLC
+//   2. extremum non-endpoint → 4 ∂C companions + null-length chord
 //   3. endpoint         → 2 ∂C companions (duplicates)
 
 inline bool is_local_y_minimum(const Point& prev, const Point& curr,

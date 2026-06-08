@@ -153,7 +153,7 @@ static void test_fig22_cases() {
     assert(curve.is_endpoint(0) && !curve.is_y_extremum(0));
     assert(curve.is_endpoint(4) && !curve.is_y_extremum(4));
 
-    // Case 2 (Fig 2.2.2): y-extremum, non-endpoint → 4 ∂C vertices + NLC
+    // Case 2 (Fig 2.2.2): y-extremum, non-endpoint → 4 ∂C vertices + null-length chord
     assert(!curve.is_endpoint(2) && curve.is_y_extremum(2));
 
     // Case 1 (Fig 2.2.1): non-extremum, non-endpoint → 2 ∂C vertices
