@@ -102,8 +102,9 @@ static Submap make_single_region_submap(const Polygon& poly) {
     a.key_y_tag = poly.num_vertices() - 1;
     std::size_t ai1 = s.add_arc(a);
 
+    // §2.4 tex 144: end_arc = last LEFT arc (left_right_boundary_ - 1).
     s.start_arc = ai0;
-    s.end_arc = ai1;
+    s.end_arc = ai0;
     s.start_vertex = 0;
     s.end_vertex = poly.num_vertices() - 1;
     s.build_tree_decomposition();

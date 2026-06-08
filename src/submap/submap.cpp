@@ -667,6 +667,25 @@ void Submap::check_invariants() const {
                !arc_sequence_[end_arc].dead &&
                "§2.4(iii): end_arc out of range or dead");
 
+        // [C91 §2.4(iii) tex 138] + [§2.4 tex 144]: the canonical
+        // arc-sequence has LEFT arcs first (ascending first_edge), then
+        // RIGHT arcs (descending).  Endpoint arcs sit at the LEFT-half
+        // boundaries: start_arc = first LEFT arc (index 0), end_arc =
+        // last LEFT arc (left_right_boundary_ - 1).  This canonical
+        // layout is what double_identify's two-linear-sequence binary
+        // search (tex 144) relies on.  O(1) checks.
+        assert(arc_sequence_[start_arc].first_side == LEFT &&
+               "§2.4(iii) tex 138: start_arc must be a LEFT-side arc");
+        assert(arc_sequence_[end_arc].first_side == LEFT &&
+               "§2.4(iii) tex 138: end_arc must be a LEFT-side arc");
+        assert(start_arc == 0 &&
+               "§2.4(iii) tex 138: start_arc must be the first arc in "
+               "canonical ∂C order (index 0)");
+        assert(end_arc + 1 == left_right_boundary_ &&
+               "§2.4 tex 144: end_arc must be the last LEFT arc "
+               "(left_right_boundary_ - 1) for the two-linear-sequence "
+               "split required by double_identify");
+
         assert(start_vertex != NONE &&
                "§2.4(iii): start_vertex must be set when arcs exist");
         {
