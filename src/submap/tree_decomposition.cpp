@@ -58,14 +58,14 @@ std::size_t TreeDecomposition::decompose(
         const Submap& submap,
         const std::vector<std::size_t>& chords,
         const std::vector<std::size_t>& regions,
-        std::size_t parent_td,
+        std::size_t parent_idx,
         std::vector<std::size_t>& region_local) {
 
     if (chords.empty()) {
         assert(regions.size() == 1 && "[C91 §2.3]: leaf is a single region");
         TDNode leaf;
         leaf.region_idx = regions[0];
-        leaf.parent = parent_td;
+        leaf.parent = parent_idx;
         std::size_t idx = nodes_.size();
         nodes_.push_back(leaf);
         return idx;
@@ -144,8 +144,8 @@ std::size_t TreeDecomposition::decompose(
     std::size_t chosen_chord = chords[best_chord_local];
     TDNode internal;
     internal.chord_idx = chosen_chord;
-    internal.parent = parent_td;
-    std::size_t td_idx = nodes_.size();
+    internal.parent = parent_idx;
+    std::size_t new_idx = nodes_.size();
     nodes_.push_back(internal);
 
     // BFS from one chord side, not crossing the chosen chord.
@@ -187,14 +187,14 @@ std::size_t TreeDecomposition::decompose(
             right_chords.push_back(chords[ci]);
     }
 
-    std::size_t left_td = decompose(submap, left_chords, left_regions, td_idx, region_local);
-    std::size_t right_td = decompose(submap, right_chords, right_regions, td_idx, region_local);
-    nodes_[td_idx].left_child  = left_td;
-    nodes_[td_idx].right_child = right_td;
+    std::size_t left_idx = decompose(submap, left_chords, left_regions, new_idx, region_local);
+    std::size_t right_idx = decompose(submap, right_chords, right_regions, new_idx, region_local);
+    nodes_[new_idx].left_child  = left_idx;
+    nodes_[new_idx].right_child = right_idx;
 
     // No cleanup of region_local: each recursive call rewrites entries
     // for its own regions before reading, so stale values are never seen.
-    return td_idx;
+    return new_idx;
 }
 
 } // namespace chazelle

@@ -53,7 +53,7 @@ private:
         const class Submap& submap,
         const std::vector<std::size_t>& chords_in_subtree,
         const std::vector<std::size_t>& regions_in_subtree,
-        std::size_t parent_td,
+        std::size_t parent_idx,
         std::vector<std::size_t>& region_local_buf);
 };
 

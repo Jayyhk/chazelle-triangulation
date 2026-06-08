@@ -333,7 +333,7 @@ static void test_startup_case1() {
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
-    std::size_t ai1 = S2.add_arc(a);
+    S2.add_arc(a);
     // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
@@ -381,7 +381,7 @@ static void test_startup_case2() {
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
-    std::size_t ai1 = S2.add_arc(a);
+    S2.add_arc(a);
     // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
@@ -396,8 +396,7 @@ static void test_startup_case2() {
     FusionState state;
     build_fusion_sequence(state, S1, C1);
 
-    std::size_t start = fusion_startup(state, S1, C1, S2, C2,
-                                        oracle1, oracle2);
+    fusion_startup(state, S1, C1, S2, C2, oracle1, oracle2);
 
     // Case 2: s2_region set, chord recorded.
     assert(state.s2_region != NONE);
@@ -737,13 +736,13 @@ static void test_startup_vertex_to_vertex_tie_break() {
 //  14. fusion_startup — mid-edge matching chord tie-break
 // ════════════════════════════════════════════════════════════════
 //
-// Exercises the count==2 branch of resolve_s2_region.  Under SoS this
+// Exercises the mid-edge branch of resolve_s2_region.  Under SoS this
 // is the typical case: the junction's horizontal ray crosses an edge
-// of ∂C₂ mid-edge (not at a vertex), so the matching chord has
-// count==1 at the junction (curve-endpoint) and count==2 at the
-// mid-edge other endpoint.  The two adj arcs at the count==2 endpoint
-// lie on opposite sides of the chord; the lambda must classify them
-// correctly via the structural check + adjacent vertex SoS comparison.
+// of ∂C₂ mid-edge (not at a vertex), so the matching chord has a
+// vertex endpoint at the junction and a mid-edge endpoint at the
+// crossing.  The two adj arcs at the mid-edge endpoint lie on opposite
+// sides of the chord; the lambda must classify them correctly via the
+// structural check + adjacent vertex SoS comparison.
 //
 // Setup: C₂'s curve goes UP from junction (y=3) to v_mid (y=5) and
 // back DOWN past y=3 to v_end (y=1).  The horizontal ray from junction
@@ -754,7 +753,7 @@ static void test_startup_vertex_to_vertex_tie_break() {
 // (The null-length chord at v_mid is conceptually present per [C91 §2.1 tex 72]
 // but is not modeled explicitly — the lambda processes only the matching
 // chord at junction's y_tag, so other chords don't enter the matching
-// branch.  This minimal S₂ exercises the count==2 path directly.)
+// branch.  This minimal S₂ exercises the mid-edge path directly.)
 static void test_startup_mid_edge_tie_break() {
     auto C1 = make_C1();
     auto S1 = make_S1(C1);
@@ -791,7 +790,7 @@ static void test_startup_mid_edge_tie_break() {
     a.key_y_tag = 4;           // chord's y_tag (junction's tag)
     std::size_t ai_below_L = S2.add_arc(a);
 
-    // RIGHT-side arc at v_junction_R (count==1 endpoint at the junction).
+    // RIGHT-side arc at v_junction_R (vertex endpoint at the junction).
     // Single-edge on edge 0.  RIGHT-side traversal starts at v_mid_R
     // and descends edge 0 to v_junction_R.
     a = {};
@@ -804,8 +803,8 @@ static void test_startup_mid_edge_tie_break() {
     std::size_t ai_right_at_junction = S2.add_arc(a);
 
     // Matching chord at y=3, y_tag=4 (junction's tag).
-    // Left slot: mid-edge crossing on edge 1 (count==2).
-    // Right slot: v_junction_R on edge 0 (count==1).
+    // Left slot: mid-edge crossing on edge 1 (two adj arcs).
+    // Right slot: v_junction_R on edge 0 (one adj arc).
     Chord c{};
     c.region[0] = r_above;
     c.region[1] = r_below;
@@ -831,7 +830,7 @@ static void test_startup_mid_edge_tie_break() {
     assert(start == 1);
     // Tie-break: leaving_downward=true → elect region BELOW chord.
     //
-    // Trace through resolve_s2_region's count==2 branch:
+    // Trace through resolve_s2_region's mid-edge branch:
     //   - ai_above_L: single-edge on chord's edge.  key_y_tag=5 ≠
     //     chord.y_tag=4 → ENDS at chord.  Previous vertex (LEFT,
     //     last_edge=1) = C₂.edge(1).start_idx = v_mid (y=5 > 3) →

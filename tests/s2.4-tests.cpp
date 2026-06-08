@@ -291,7 +291,7 @@ static void test_double_identify_miss() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_check_invariants_polygon_positive() {
-    // [C91 §2.4 (i)–(iii) + [C91 §2.2]]: Polygon-aware overload accepts a
+    // [C91 §2.4(i)–(iii) + §2.2]: Polygon-aware overload accepts a
     // well-formed normal-form submap (key_y monotonic + edge_count
     // cache consistent with polygon).
     auto poly = test_polygon();

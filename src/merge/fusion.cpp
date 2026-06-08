@@ -2,8 +2,6 @@
 
 #include "fusion.h"
 
-#include <cmath>
-
 namespace chazelle {
 
 // ── collect_region_arcs ─────────────────────────────────────────
@@ -279,9 +277,10 @@ std::size_t fusion_startup(FusionState& state,
             // For each adj arc at the chord endpoint, look at the polygon
             // vertex adjacent to the chord along the arc's traversal; its
             // SoS y vs chord.symbolic_y tells us which side the arc's
-            // region is on.  Prefer the count==2 endpoint (its two arcs
-            // straddle the chord per [C91 §2.2 tex 96]).  Vertex-to-vertex
-            // count==1+1 uses the single arc on each side.
+            // region is on.  Prefer a mid-edge endpoint (its two adj arcs
+            // straddle the chord per [C91 §2.2 tex 96]).  If both endpoints
+            // are polygon vertices, fall through to the single-arc-per-side
+            // case below.
             const Chord::AdjArcs* adj = nullptr;
             std::size_t ch_edge_at_endpoint = NONE;
             Side ch_side_at_endpoint = LEFT;
@@ -342,14 +341,14 @@ std::size_t fusion_startup(FusionState& state,
             };
 
             if (adj) {
-                // count==2 endpoint: the two adj arcs are on OPPOSITE
+                // Mid-edge endpoint: the two adj arcs are on OPPOSITE
                 // sides of the chord (one above, one below per
                 // [C91 §2.2 tex 96]).  Classify each via the helper.
                 bool arc0_above = arc_region_above_chord(S2.arc(adj->arcs[0]));
                 bool arc1_above = arc_region_above_chord(S2.arc(adj->arcs[1]));
                 assert(arc0_above != arc1_above &&
-                       "[C91 §2.2 tex 96]: the two adj arcs at a count==2 chord "
-                       "endpoint must lie on opposite sides of the chord");
+                       "[C91 §2.2 tex 96]: the two adj arcs at a mid-edge "
+                       "chord endpoint must lie on opposite sides of the chord");
                 std::size_t r0 = S2.arc(adj->arcs[0]).region_node;
                 std::size_t r1 = S2.arc(adj->arcs[1]).region_node;
                 std::size_t above_r = arc0_above ? r0 : r1;
@@ -357,7 +356,7 @@ std::size_t fusion_startup(FusionState& state,
                 return leaving_downward ? below_r : above_r;
             }
 
-            // Vertex-to-vertex case: both endpoints have count==1
+            // Vertex-to-vertex case: both endpoints are polygon vertices
             // (e.g., endpoint companion chord at the junction per
             // [C91 §2.1 tex 72]).  Each endpoint has one adj arc; classify it
             // using the same helper with the appropriate endpoint slot.
@@ -588,8 +587,8 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     // ∂C order (LEFT ascending, then RIGHT descending).  cw ∂C₁ from a₀
     // is RIGHT then LEFT; we counting-sort endpoints by cw-arc position
     // in O(m).  Each endpoint is associated with one arc via adj_arcs:
-    // count==1 ⟹ the single arc; count==2 ⟹ the "starting" arc whose
-    // key_y == chord.y.
+    // vertex endpoint ⟹ the single adj arc; mid-edge endpoint ⟹ the
+    // "starting" adj arc whose key_y == chord.y.
 
     std::size_t num_arcs = S.num_arcs();
     std::size_t lrb = S.left_right_boundary();
@@ -621,7 +620,8 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
         return fv;
     };
 
-    // count==2 endpoint: exactly one adj arc starts there (key_y matches).
+    // Mid-edge endpoint: of the two adj arcs, exactly one starts at the
+    // chord (its key_y matches the chord's y).
     auto starting_arc = [&](const Chord::AdjArcs& adj,
                              SymbolicY chord_y) -> std::size_t {
         assert(adj.count == 2);

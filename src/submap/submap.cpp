@@ -67,8 +67,8 @@ std::size_t Submap::add_chord(Chord chord) {
     std::size_t idx = chords_.size();
 
     // [C91 §2.4(ii) tex 137]: per-endpoint adj-arc count ∈ {1, 2}, total
-    // across both endpoints ∈ {2, 3, 4}.  count==1 at polygon-vertex
-    // endpoints; count==2 at non-vertex endpoints ([C91 §2.2 tex 94]).
+    // across both endpoints ∈ {2, 3, 4}.  Polygon-vertex endpoints have
+    // one adj arc; non-vertex (mid-edge) endpoints have two ([C91 §2.2 tex 94]).
     assert(chord.left_adj.count >= 1 && chord.left_adj.count <= 2 &&
            "[C91 §2.4(ii)]: LEFT endpoint adj count ∈ [1,2]");
     assert(chord.right_adj.count >= 1 && chord.right_adj.count <= 2 &&
@@ -98,14 +98,14 @@ std::size_t Submap::add_chord(Chord chord) {
     assert(chord.region[0] != chord.region[1] &&
            "[C91 §2.2 tex 102]: chord must connect two distinct regions");
 
-    // [C91 §2 tex 47 + [C91 §2.1 tex 70]]: every chord is horizontal at a polygon
+    // [C91 §2 tex 47 + §2.1 tex 70]: every chord is horizontal at a polygon
     // vertex's y, so it must carry that vertex's SoS tag — otherwise
     // endpoint_is_polygon_vertex() and double_identify's y-disambiguation
     // silently misclassify.
     assert(chord.y_tag != SOS_NONE &&
            "[C91 §2 tex 47 (SoS)]: chord must carry the source vertex's SoS tag");
 
-    // [C91 §2.1 tex 72 + [C91 §2.2 tex 108]]: a null-length chord arises at a
+    // [C91 §2.1 tex 72 + §2.2 tex 108]: a null-length chord arises at a
     // y-extremum from the "inside" pair of duplicate vertices — both
     // endpoints at the same ∂C point (same edge/side/symbolic y), with
     // one adj arc per ∂C side.
@@ -717,11 +717,11 @@ void Submap::check_invariants(const Polygon& polygon) const {
 
     // [C91 §2.2 tex 94] consistency: remove_chord and simulated_contraction_
     // weight classify a chord endpoint as a polygon vertex iff its
-    // symbolic y matches one of the underlying edge's vertices.
-    // count==1 ⟺ vertex endpoint (no glueing); count==2 ⟺ non-vertex
-    // (glue).  A tag/count mismatch silently breaks both directions:
-    //   count==1 with no match → contraction skips a needed merge.
-    //   count==2 with a match  → contraction merges arcs at a vertex.
+    // symbolic y matches one of the underlying edge's vertices.  Vertex
+    // endpoints have one adj arc (no glueing); non-vertex endpoints have
+    // two (glued).  A tag/count mismatch silently breaks both directions:
+    //   one adj arc with no vertex match → contraction skips a needed merge.
+    //   two adj arcs with a vertex match → contraction merges arcs at a vertex.
     auto matches_an_endpoint = [&](std::size_t edge_idx,
                                     SymbolicY chord_y) -> bool {
         assert(edge_idx < polygon.num_edges());
@@ -1063,7 +1063,7 @@ std::size_t Submap::simulated_contraction_weight(
            c.region[0] != c.region[1] &&
            "[C91 §2.4(i)/§2.2 tex 102]: chord regions valid + distinct (tree)");
 
-    // [C91 §2.3 tex 121 + [C91 §2.2 tex 94]]: merged region's weight = max over
+    // [C91 §2.3 tex 121 + §2.2 tex 94]: merged region's weight = max over
     // both regions' arcs, plus merged pairs at non-vertex endpoints only.
     std::size_t max_count = std::max(region_weight(c.region[0]),
                                       region_weight(c.region[1]));
