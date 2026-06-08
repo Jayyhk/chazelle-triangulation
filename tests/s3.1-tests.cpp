@@ -1,4 +1,4 @@
-/// tests/s3.1-tests.cpp — Tests for §3.1: Fusion of two submaps.
+// tests/s3.1-tests.cpp — Tests for §3.1: Fusion of two submaps.
 
 #include "merge/fusion.h"
 #include "polygon/polygon.h"
@@ -13,12 +13,12 @@ using namespace chazelle;
 //  Helpers
 // ════════════════════════════════════════════════════════════════
 
-/// C₁ = 5 vertices (edges 0–3), with one chord at vertex 2.
+// C₁ = 5 vertices (edges 0–3), with one chord at vertex 2.
 static Polygon make_C1() {
     return Polygon({{0,0,0}, {1,2,1}, {2,4,2}, {3,1,3}, {4,3,4}});
 }
 
-/// Build a 2-region submap of C₁ with one chord at vertex 2.
+// Build a 2-region submap of C₁ with one chord at vertex 2.
 static Submap make_S1(const Polygon& C) {
     Submap s;
     s.add_node(); // r0
@@ -211,7 +211,7 @@ static void test_collect_region_arcs() {
 //  6. local_shoot with stub oracle
 // ════════════════════════════════════════════════════════════════
 
-/// Oracle that returns a fixed hit for any subarc on the RIGHT side.
+// Oracle that returns a fixed hit for any subarc on the RIGHT side.
 struct FixedRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side /*direction*/,
                  std::size_t /*arc_idx*/,
@@ -249,7 +249,7 @@ static void test_local_shoot() {
 //  7. local_shoot — nearest hit selection
 // ════════════════════════════════════════════════════════════════
 
-/// Oracle that returns different x values per subarc side.
+// Oracle that returns different x values per subarc side.
 struct DistanceRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side /*direction*/,
                  std::size_t /*arc_idx*/,
@@ -292,7 +292,7 @@ static void test_local_shoot_nearest() {
 //  8. fusion_startup — Case 1 (c₀ on ∂C₂)
 // ════════════════════════════════════════════════════════════════
 
-/// Oracle that always hits at a fixed x on the target's side.
+// Oracle that always hits at a fixed x on the target's side.
 struct StartupOracle : RayShootingOracle {
     double hit_x;
     explicit StartupOracle(double x) : hit_x(x) {}
@@ -445,10 +445,10 @@ static void test_shooting_direction_all_cases() {
 //  11. local_shoot — §2.1 double-boundary tie-break at same distance
 // ════════════════════════════════════════════════════════════════
 
-/// Oracle returning two arcs at the *same* x but different sides.
+// Oracle returning two arcs at the *same* x but different sides.
 struct TieBreakRayShooter : RayShootingOracle {
-    Side first_arc_side;                        ///< side of arc 0 hit
-    Side second_arc_side;                       ///< side of arc 1 hit
+    Side first_arc_side;                        //< side of arc 0 hit
+    Side second_arc_side;                       //< side of arc 1 hit
     TieBreakRayShooter(Side s0, Side s1)
         : first_arc_side(s0), second_arc_side(s1) {}
     RayHit shoot(Point p, Side /*dir*/,

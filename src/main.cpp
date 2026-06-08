@@ -1,4 +1,4 @@
-/// src/main.cpp
+// src/main.cpp
 
 #include "polygon/polygon.h"
 

@@ -1,4 +1,4 @@
-/// tests/2.4-tests.cpp — Tests for §2.4: representation, double identification.
+// tests/2.4-tests.cpp — Tests for §2.4: representation, double identification.
 
 #include "submap/submap.h"
 #include "polygon/polygon.h"

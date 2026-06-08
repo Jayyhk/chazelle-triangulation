@@ -1,11 +1,8 @@
 #pragma once
 
-/// [C91 §2.4]: Normal-form submap representation.
-///
-/// (i)   Tree in standard edge/node adjacency fashion.
-/// (ii)  Chords → adj arcs; arcs → region node.
-/// (iii) Arc-sequence table in ∂C traversal order.
-/// (iv)  Tree decomposition if conformal.
+// [C91 §2.4]: Normal-form submap.
+// (i) tree (regions + chords), (ii) chord↔arc adjacency, (iii) arc-sequence
+// in ∂C traversal order, (iv) tree decomposition if conformal.
 
 #include "chord.h"
 #include "arc.h"
@@ -19,70 +16,49 @@
 
 namespace chazelle {
 
-/// [C91 §2.4(i)]: A node (region) of the submap tree.
+// [§2.4(i)]: Tree node (region).
 struct SubmapNode {
-    /// Indices of incident chords in the Submap's chord table.
-    /// [C91 §2.3]: conformal ⟹ degree ≤ 4.
+    // Incident chord indices.  [§2.3]: conformal ⟹ degree ≤ 4.
     std::vector<std::size_t> incident_chords;
 
-    /// Degree = number of live (non-dead) incident chords.
+    // Number of live (non-dead) incident chords.
     std::size_t degree() const noexcept;
 
-    /// Tombstone flag for O(1) removal (§3.3).
-    bool dead = false;
+    bool dead = false;          // [§3.3]: tombstone for O(1) removal.
 };
 
 class Submap {
 public:
     // ── Construction ────────────────────────────────────────────
 
-    /// Add a region node.  Returns its index.
     std::size_t add_node();
-
-    /// Add an arc to the arc-sequence table.  Returns its index.
     std::size_t add_arc(Arc arc);
-
-    /// Add a chord connecting two regions.  Returns its index.
-    /// Updates both regions' incident_chords lists.
     std::size_t add_chord(Chord chord);
 
-    /// [C91 §2.2]: Remove a chord.  "The removal of a chord entails
-    /// removing not only the chord itself but also those endpoints
-    /// that are not vertices of C, and glueing back ∂C at those
-    /// points."  Only merges arcs at non-vertex endpoints.
-    /// Returns the surviving region index.
-    ///
-    /// @param polygon  The input polygon — needed to determine which
-    ///                 chord endpoints are polygon vertices (and thus
-    ///                 should NOT be cleaned up).
+    // [§2.2 tex 94]: Remove a chord — "remove the chord and those
+    // endpoints that are not vertices of C, gluing back ∂C at those
+    // points."  Arcs are merged only at non-vertex endpoints.
+    // @param polygon  needed to detect which endpoints are polygon vertices.
+    // @return surviving region index.
     std::size_t remove_chord(std::size_t chord_idx,
                               const class Polygon& polygon);
 
-    // ── Invariant checks ────────────────────────────────────────
+    // ── Invariants ──────────────────────────────────────────────
 
-    /// [C91 §2.2]: "the dual graph of a submap is itself a tree."
-    /// num_live_regions == num_live_chords + 1.
+    // [§2.2]: "the dual graph of a submap is itself a tree" —
+    // num_live_regions == num_live_chords + 1.
     void assert_tree_property() const;
 
-    /// [C91 §2.2]: Check all structural invariants.
-    ///   - Tree property
-    ///   - Every live chord's regions are live nodes
-    ///   - Every live arc's region_node is a live node
-    ///   - Arc-sequence ∂C ordering (LEFT before RIGHT, ascending /
-    ///     descending first_edge per side)
-    ///   - start_arc / end_arc validity
+    // Structural invariants: tree property; live chord regions / arc
+    // region_nodes; arc-sequence order (LEFT first / ascending, RIGHT /
+    // descending); start_arc / end_arc validity.
     void check_invariants() const;
 
-    /// [C91 §2.2 + §2.4]: Polygon-dependent invariants on top of
-    /// `check_invariants()`:
-    ///   - §2.4(iii) tex 138 + §2.4 tex 144: arcs sharing the same
-    ///     `first_edge` are key_y-monotonic in canonical traversal
-    ///     direction (required by `double_identify` Phase 2 binary
-    ///     search).
-    ///   - §2.2 tex 106: every live arc's `edge_count` cache matches
-    ///     `polygon.count_nonnull_edges` over its underlying edge
-    ///     range (required for correct `region_weight` and granularity
-    ///     decisions).
+    // Polygon-dependent invariants on top of `check_invariants()`:
+    //   §2.4(iii) tex 138 + tex 144: arcs sharing first_edge are
+    //     key_y-monotonic (required by double_identify Phase 2 bsearch).
+    //   §2.2 tex 106: every live arc's `edge_count` cache matches
+    //     `polygon.count_nonnull_edges` over its underlying edge range.
     void check_invariants(const class Polygon& polygon) const;
 
     // ── Accessors ───────────────────────────────────────────────
@@ -118,31 +94,26 @@ public:
         return arc_sequence_[i];
     }
 
-    // ── §2.4(iii): Endpoint pointers ────────────────────────────
+    // ── §2.4(iii): C endpoints ──────────────────────────────────
 
-    /// [C91 §2.4(iii)]: "the endpoints of C are identified by
-    /// appropriate pointers into the input table as well as by
-    /// pointers to the arc-structures whose corresponding arcs
-    /// pass through the endpoints."
-    std::size_t start_vertex = NONE; ///< Input table: first vertex of C.
-    std::size_t end_vertex   = NONE; ///< Input table: last vertex of C.
-    std::size_t start_arc    = NONE; ///< Arc-sequence: arc at C's start.
-    std::size_t end_arc      = NONE; ///< Arc-sequence: arc at C's end.
+    // [§2.4(iii)]: input-table indices of C's endpoints + pointers to
+    // the arc-structures passing through them.
+    std::size_t start_vertex = NONE;
+    std::size_t end_vertex   = NONE;
+    std::size_t start_arc    = NONE;
+    std::size_t end_arc      = NONE;
 
-    /// [C91 §2.4]: Index of first RIGHT arc in the arc-sequence table.
-    /// LEFT arcs are at [0, left_right_boundary()), RIGHT arcs at
-    /// [left_right_boundary(), num_arcs()).
+    // [§2.4]: First RIGHT arc in arc-sequence.  LEFT = [0, boundary),
+    // RIGHT = [boundary, num_arcs).
     std::size_t left_right_boundary() const noexcept {
         return left_right_boundary_;
     }
 
-    // ── §2.4: Double identification ───────────────────────────────
+    // ── §2.4: Double identification ────────────────────────────
 
-    /// [C91 §2.4]: "we call it the double identification of a point
-    /// of ∂C."  Given an edge and a symbolic y-coordinate, find all
-    /// arcs passing through that point.  O(log m).
-    /// Returns at most 6 arcs (worst case: y-extremum vertex with
-    /// chords on both sides).
+    // [§2.4 tex 144]: "double identification of a point of ∂C" — all
+    // arcs passing through (edge, symbolic_y).  O(log m).
+    // At most 6 arcs (worst case: y-extremum with chords on both sides).
     struct DoubleIdentifyResult {
         static constexpr std::size_t MAX = 6;
         std::array<std::size_t, MAX> arcs = {};
@@ -159,93 +130,71 @@ public:
                                           SymbolicY y,
                                           const class Polygon& polygon) const;
 
-    // ── §2.2 / §2.3: Submap properties ─────────────────────────
+    // ── §2.2 / §2.3: Properties ────────────────────────────────
 
-    /// [C91 §2.2]: Weight of a region = max nonnull edge count
-    /// over its arcs.  Returns 0 for empty regions.
+    // [§2.2]: Region weight = max nonnull-edge count over its arcs;
+    // 0 for empty regions.
     std::size_t region_weight(std::size_t node_idx) const noexcept;
 
-    /// [C91 §2.3]: "conformal submaps [are] those with node-degree
-    /// at most 4."
+    // [§2.3]: conformal = node-degree ≤ 4 everywhere.
     bool is_conformal() const noexcept;
 
-    /// [C91 §2.3]: "If only condition (i) holds, then the submap is
-    /// γ-semigranular."  Every region weight ≤ γ.
+    // [§2.3]: γ-semigranular = every region weight ≤ γ.
     bool is_semigranular(std::size_t gamma) const noexcept;
 
-    /// [C91 §2.3]: γ-granular = (i) all weights ≤ γ AND (ii)
-    /// "contracting any edge incident upon at least one node of
-    /// degree less than 3 produces a new node whose weight exceeds γ."
-    /// "By default, if (i) holds but the submap has no exit chord,
-    /// it is still said to be γ-granular."
+    // [§2.3]: γ-granular = (i) all weights ≤ γ AND (ii) contracting
+    // any edge incident on a < 3-degree node yields a region of weight
+    // > γ.  By default, (i)-only with no exit chord is still γ-granular.
     bool is_granular(std::size_t gamma,
                       const class Polygon& polygon) const noexcept;
 
-    /// [C91 §2.3]: Simulate contracting a chord — compute what the
-    /// merged region's weight would be.  The weight may be less than
-    /// the sum because "one or both endpoints of the chord might not
-    /// be vertices of ∂C and might thus disappear."
-    /// Requires Polygon to determine which endpoints are vertices
-    /// (§2.2 tex 94: only non-vertex endpoints merge).
+    // [§2.3]: Weight of the merged region if `chord_idx` were contracted.
+    // May be less than the sum: non-vertex chord endpoints disappear
+    // (§2.2 tex 94).
     std::size_t simulated_contraction_weight(
         std::size_t chord_idx,
         const class Polygon& polygon) const noexcept;
 
-    // ── Tombstone compaction ────────────────────────────────────
+    // ── Compaction ──────────────────────────────────────────────
 
-    /// Strip all dead arcs, chords, and nodes.  Rebuilds index
-    /// mappings in O(m).  Called once before putting S in normal
-    /// form (§3.3: "We can now put S in normal form").
+    // Strip dead arcs/chords/nodes; rebuild index mappings.  O(m).
+    // Called once before putting S in normal form (§3.3).
     void compact();
 
-    /// Count of live (non-dead) nodes, chords, arcs.
     std::size_t num_live_nodes()  const noexcept;
     std::size_t num_live_chords() const noexcept;
     std::size_t num_live_arcs()   const noexcept;
 
     // ── §2.4(iv): Tree decomposition ────────────────────────────
 
-    /// [C91 §2.4(iv)]: "If the submap is conformal, then its tree
-    /// decomposition should be available."
+    // [§2.4(iv)]: conformal ⟹ tree decomposition available.
     void build_tree_decomposition();
     const TreeDecomposition& tree_decomposition() const noexcept {
-        // [C91 §3.3] (tex 277): "linear in the size of the submap tree."
-        // Mutators are O(1); they flag the cached TD stale instead of
-        // destroying it.  Stale TD reads as empty so consumers fail fast
-        // (e.g. merge.h's !tree_decomposition().empty() precondition).
-        // Static empty constant — no destruction work in the getter, so
-        // both this call and every mutator are strictly O(1).
+        // §3.3 tex 277 needs mutators O(1).  Mutators flag dirty rather
+        // than rebuilding; stale TD reads as empty so consumers fail
+        // fast (e.g. merge.h's !tree_decomposition().empty() precondition).
         static const TreeDecomposition empty_;
         return tree_decomp_dirty_ ? empty_ : tree_decomp_;
     }
 
 private:
     TreeDecomposition tree_decomp_;
-    /// [C91 §2.4(iv)]: set by every mutator (add_node / add_arc / add_chord
-    /// / remove_chord / compact) so the next consumer of `tree_decomposition()`
-    /// sees an empty TD and rebuilds.  Cleared by `build_tree_decomposition`.
-    /// O(1) set; the deferred destruction of the stale tree_decomp_ is
-    /// absorbed by the next `build()` (which clears internally) or the
-    /// Submap destructor.
+    // Set by every mutator; cleared by build_tree_decomposition().
+    // Stale tree_decomp_ destruction is absorbed by the next build()
+    // (which clears internally) or the Submap destructor.
     bool tree_decomp_dirty_ = false;
-    /// [C91 §2.4(i)]: Nodes (regions) of the submap tree.
-    std::vector<SubmapNode> nodes_;
 
-    /// [C91 §2.4(ii)]: Chords (edges of the submap tree).
-    std::vector<Chord> chords_;
-
-    /// [C91 §2.4(iii)]: "The arc-structures are stored in a table
-    /// in the order corresponding to a canonical traversal of ∂C."
+    std::vector<SubmapNode> nodes_;     // [§2.4(i)]: tree nodes.
+    std::vector<Chord> chords_;         // [§2.4(ii)]: tree edges.
+    // [§2.4(iii)]: arc-structures in canonical ∂C traversal order.
     std::vector<Arc> arc_sequence_;
 
-    /// [C91 §2.4]: Cached index of first RIGHT arc in arc_sequence_.
-    /// Enables O(1) LEFT/RIGHT split for double_identify (§2.4 tex 144:
-    /// "logarithmic in the number of arcs").
+    // [§2.4]: First RIGHT arc index — enables O(1) LEFT/RIGHT split
+    // for double_identify's O(log m) bound (tex 144).
     std::size_t left_right_boundary_ = 0;
 
-    /// [C91 §2.4] (tex 144): double_identify requires a compacted
-    /// arc-sequence (no dead arcs).  Maintained as O(1) flag instead
-    /// of O(m) scan per call to preserve the paper's O(log m) bound.
+    // [§2.4 tex 144]: double_identify needs a compacted arc-sequence;
+    // tracked as O(1) flag rather than O(m) per-call scan.
     bool compacted_ = true;
 };
 

@@ -1,18 +1,15 @@
 #pragma once
 
-/// [C91 §2.1]: Vertex of a simple polygonal curve and ∂C side marker.
+// [C91 §2.1]: Vertex of a simple polygonal curve + ∂C side marker.
 
 #include <cstddef>
 
 namespace chazelle {
 
-/// [C91 §2.1]: "the left and right sides of a snake."
-/// Which side of the double boundary ∂C a point lies on.
+// [§2.1]: "left and right sides of a snake" — which side of ∂C a point is on.
 enum Side : unsigned char { LEFT, RIGHT };
 
-/// A 2D vertex with an index used as the SoS tie-break tag.
-/// [C91 §2]: "no two distinct vertices have the same y-coordinate"
-/// — enforced symbolically via Edelsbrunner [10] / Yap [31].
+// 2D vertex; `index` is the SoS tie-break tag (§2 tex 47, [10]/[31]).
 struct Point {
     double x = 0.0;
     double y = 0.0;

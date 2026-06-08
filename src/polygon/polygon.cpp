@@ -1,4 +1,4 @@
-/// src/polygon/polygon.cpp
+// src/polygon/polygon.cpp
 
 #include "polygon.h"
 
@@ -8,21 +8,16 @@
 namespace chazelle {
 
 Polygon::Polygon(std::vector<Point> vertices) {
-    assert(vertices.size() >= 2 &&
-           "§2.1: a polygonal curve must have at least 2 vertices");
+    assert(vertices.size() >= 2 && "§2.1: curve needs ≥ 2 vertices");
 
-    // [C91 §2.1]: "simple (nonclosed) polygonal curve."  Under SoS,
-    // "nonclosed" means front and back are distinct vertices, which
-    // is implied by the distinct-index check below (front.index !=
-    // back.index ⟹ symbolically distinct vertices, regardless of
-    // whether they share geometric coordinates).
-    //
-    // [C91 §2] / [10]: SoS requires distinct vertex indices.
+    // [§2 SoS / Edelsbrunner [10]]: vertex indices must be distinct.
+    // This also implies "nonclosed" (§2.1): front.index != back.index
+    // ⟹ symbolically distinct, regardless of geometric coords.
     {
         std::unordered_set<std::size_t> seen;
         for (const auto& v : vertices) {
             assert(seen.insert(v.index).second &&
-                   "§2 (SoS): all vertex indices must be distinct");
+                   "§2 (SoS): vertex indices must be distinct");
         }
     }
 
@@ -44,9 +39,8 @@ void Polygon::build_edges() {
 }
 
 void Polygon::build_nonnull_prefix() {
-    // [C91 §2.2]: "the maximum number of nonnull length edges."
-    // An edge has nonzero geometric length iff its two endpoints
-    // differ in at least one coordinate.
+    // [§2.2]: an edge has nonzero length iff its endpoints differ in
+    // at least one coordinate.
     const std::size_t m = edges_.size();
     nonnull_prefix_.resize(m + 1, 0);
     for (std::size_t i = 0; i < m; ++i) {

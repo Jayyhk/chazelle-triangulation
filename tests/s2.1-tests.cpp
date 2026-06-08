@@ -1,4 +1,4 @@
-/// tests/2.1-tests.cpp — Tests for §2.1: double boundary ∂C classification.
+// tests/2.1-tests.cpp — Tests for §2.1: double boundary ∂C classification.
 
 #include "polygon/polygon.h"
 #include "polygon/perturbation.h"

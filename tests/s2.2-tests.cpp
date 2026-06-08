@@ -1,4 +1,4 @@
-/// tests/2.2-tests.cpp — Tests for §2.2: submaps, weight, chord removal.
+// tests/2.2-tests.cpp — Tests for §2.2: submaps, weight, chord removal.
 
 #include "polygon/polygon.h"
 #include "submap/submap.h"

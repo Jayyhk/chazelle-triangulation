@@ -1,4 +1,4 @@
-/// tests/s2.5-tests.cpp — Tests for §2.5: Shielding (Lemma 2.4).
+// tests/s2.5-tests.cpp — Tests for §2.5: Shielding (Lemma 2.4).
 
 #include "submap/shielding.h"
 

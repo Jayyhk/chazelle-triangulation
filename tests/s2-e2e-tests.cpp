@@ -1,9 +1,9 @@
-/// tests/s2-e2e-tests.cpp — Exhaustive property-based tests for §2.0–2.4.
-///
-/// Strategy: generate random polygonal curves, build submaps with
-/// visibility chords, then verify every operation against brute-force
-/// reference implementations.  Runs thousands of iterations to shake
-/// out corner cases.
+// tests/s2-e2e-tests.cpp — Exhaustive property-based tests for §2.0–2.4.
+//
+// Strategy: generate random polygonal curves, build submaps with
+// visibility chords, then verify every operation against brute-force
+// reference implementations.  Runs thousands of iterations to shake
+// out corner cases.
 
 #include "polygon/polygon.h"
 #include "polygon/perturbation.h"
@@ -26,9 +26,9 @@ using namespace chazelle;
 //  §0. Random polygon generator
 // ════════════════════════════════════════════════════════════════════
 
-/// Generate a random nonclosed polygonal curve with n vertices.
-/// All y-coordinates are distinct (SoS-safe).  x-coordinates random.
-/// Vertex indices are 0..n-1.
+// Generate a random nonclosed polygonal curve with n vertices.
+// All y-coordinates are distinct (SoS-safe).  x-coordinates random.
+// Vertex indices are 0..n-1.
 static Polygon random_polygon(std::mt19937& rng, std::size_t n) {
     assert(n >= 2);
     std::vector<double> ys(n);
@@ -53,9 +53,9 @@ static Polygon random_polygon(std::mt19937& rng, std::size_t n) {
 //  §0b. Brute-force helpers
 // ════════════════════════════════════════════════════════════════════
 
-/// Compute the x-coordinate where horizontal line y=qy intersects edge e.
-/// Returns false if the edge is horizontal or y is outside the edge's
-/// y-range (strict).
+// Compute the x-coordinate where horizontal line y=qy intersects edge e.
+// Returns false if the edge is horizontal or y is outside the edge's
+// y-range (strict).
 [[maybe_unused]]
 static bool edge_x_at_y(const Polygon& poly, std::size_t edge_idx,
                          double qy, double& out_x) {
@@ -72,8 +72,8 @@ static bool edge_x_at_y(const Polygon& poly, std::size_t edge_idx,
     return true;
 }
 
-/// Brute-force: find all arcs that contain a given (edge_idx, y) point.
-/// Linear scan of all arcs — O(m).
+// Brute-force: find all arcs that contain a given (edge_idx, y) point.
+// Linear scan of all arcs — O(m).
 [[maybe_unused]]
 static std::vector<std::size_t> brute_double_identify(
         const Submap& s, std::size_t edge_idx, SymbolicY /*y*/,
@@ -135,7 +135,7 @@ static std::vector<std::size_t> brute_double_identify(
     return result;
 }
 
-/// Brute-force region weight: linear scan of all arcs for a given region.
+// Brute-force region weight: linear scan of all arcs for a given region.
 static std::size_t brute_region_weight(const Submap& s,
                                         std::size_t node_idx) {
     std::size_t max_ec = 0;
@@ -148,7 +148,7 @@ static std::size_t brute_region_weight(const Submap& s,
     return max_ec;
 }
 
-/// Brute-force is_conformal: check all node degrees.
+// Brute-force is_conformal: check all node degrees.
 static bool brute_is_conformal(const Submap& s) {
     for (std::size_t i = 0; i < s.num_nodes(); ++i) {
         if (s.node(i).dead) continue;
@@ -157,7 +157,7 @@ static bool brute_is_conformal(const Submap& s) {
     return true;
 }
 
-/// Brute-force is_semigranular.
+// Brute-force is_semigranular.
 static bool brute_is_semigranular(const Submap& s, std::size_t gamma) {
     for (std::size_t i = 0; i < s.num_nodes(); ++i) {
         if (s.node(i).dead) continue;
@@ -172,7 +172,7 @@ static bool brute_is_semigranular(const Submap& s, std::size_t gamma) {
 //       non-extrema) to create a multi-region submap.
 // ════════════════════════════════════════════════════════════════════
 
-/// Information about a chord to be placed.
+// Information about a chord to be placed.
 struct ChordSpec {
     double y;
     std::size_t y_tag;
@@ -183,11 +183,11 @@ struct ChordSpec {
     bool is_null_length;
 };
 
-/// Find the edge containing vertex v on a given side.
-/// For LEFT side: edge v-1 ends at v, edge v starts at v.
-/// Convention: the edge "before" v in ∂C traversal direction.
-///   LEFT (ascending): edge v-1 (the edge ending at v).
-///   RIGHT (descending): edge v (the edge starting at v).
+// Find the edge containing vertex v on a given side.
+// For LEFT side: edge v-1 ends at v, edge v starts at v.
+// Convention: the edge "before" v in ∂C traversal direction.
+//   LEFT (ascending): edge v-1 (the edge ending at v).
+//   RIGHT (descending): edge v (the edge starting at v).
 [[maybe_unused]]
 static std::size_t edge_before_vertex(std::size_t v, Side side,
                                        std::size_t num_edges) {
@@ -202,16 +202,16 @@ static std::size_t edge_before_vertex(std::size_t v, Side side,
     }
 }
 
-/// Build a submap by placing horizontal chords at every interior
-/// vertex of the polygon.  This creates a visibility-map-like
-/// structure.  Each interior vertex v gets a chord at y=v.y
-/// connecting the LEFT side (edge v-1) to the RIGHT side (edge v
-/// or wherever the horizontal ray hits).
-///
-/// For simplicity, we place chords only at polygon vertices (not at
-/// arbitrary y-coordinates).  This means both chord endpoints are
-/// always polygon vertices, so remove_chord won't merge arcs (the
-/// paper's non-vertex endpoint case).  We test that case separately.
+// Build a submap by placing horizontal chords at every interior
+// vertex of the polygon.  This creates a visibility-map-like
+// structure.  Each interior vertex v gets a chord at y=v.y
+// connecting the LEFT side (edge v-1) to the RIGHT side (edge v
+// or wherever the horizontal ray hits).
+//
+// For simplicity, we place chords only at polygon vertices (not at
+// arbitrary y-coordinates).  This means both chord endpoints are
+// always polygon vertices, so remove_chord won't merge arcs (the
+// paper's non-vertex endpoint case).  We test that case separately.
 static Submap build_vertex_chord_submap(const Polygon& poly,
                                          std::size_t num_chords_max,
                                          std::mt19937& rng) {
@@ -352,8 +352,8 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
     return s;
 }
 
-/// Build a simpler 2-region submap with a non-vertex chord for testing
-/// arc merging in remove_chord.
+// Build a simpler 2-region submap with a non-vertex chord for testing
+// arc merging in remove_chord.
 static Submap build_nonvertex_chord_submap(const Polygon& poly,
                                             std::mt19937& rng) {
     std::size_t ne = poly.num_edges();

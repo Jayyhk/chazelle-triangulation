@@ -1,4 +1,4 @@
-/// tests/test_section2_0.cpp — Tests for §2.0: SoS y-perturbation.
+// tests/test_section2_0.cpp — Tests for §2.0: SoS y-perturbation.
 
 #include "polygon/point.h"
 #include "polygon/perturbation.h"

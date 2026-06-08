@@ -1,4 +1,4 @@
-/// tests/2.3-tests.cpp — Tests for §2.3: conformality, granularity, tree decomposition.
+// tests/2.3-tests.cpp — Tests for §2.3: conformality, granularity, tree decomposition.
 
 #include "submap/submap.h"
 #include "polygon/polygon.h"

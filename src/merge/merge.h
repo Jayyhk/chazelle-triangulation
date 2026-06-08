@@ -1,15 +1,8 @@
 #pragma once
 
-/// [C91 §3]: Merging two conformal submaps.
-///
-/// "Let C₁ and C₂ be two polygonal curves of n₁ and n₂ vertices
-/// respectively, whose union C forms a connected vertex-to-vertex
-/// piece of the input (simple and nonclosed) polygonal curve P;
-/// we assume that C₁ ∩ C₂ is a vertex of P.  Let Sᵢ (i=1,2) be
-/// a γᵢ-granular conformal submap of V(Cᵢ), with γ₁ ≤ γ₂.
-/// Given any integer γ ≥ γ₂, to merge S₁ and S₂ (where γ is
-/// understood) means to compute a normal-form γ-granular conformal
-/// submap of V(C)."
+// [C91 §3]: Merge two conformal γᵢ-granular submaps S₁, S₂ of V(C₁), V(C₂)
+// (γ₁ ≤ γ₂; C₁ ∩ C₂ a single vertex of P) into a normal-form γ-granular
+// conformal submap of V(C), with γ ≥ γ₂.
 
 #include "../polygon/polygon.h"
 #include "../submap/submap.h"
@@ -20,137 +13,83 @@
 
 namespace chazelle {
 
-/// [C91 §3]: Input to the merge operation.
 struct MergeInput {
-    /// The two polygonal curves.  C₁ ∩ C₂ must be a single vertex
-    /// of P (the last vertex of C₁ = the first vertex of C₂).
+    // C₁ ∩ C₂ must be a single vertex of P (last of C₁ = first of C₂).
     const Polygon* C1 = nullptr;
     const Polygon* C2 = nullptr;
 
-    /// Normal-form γᵢ-granular conformal submaps of V(Cᵢ).
-    /// [C91 §3]: Sᵢ are *inputs* to the merge — read by the three stages
-    /// but never written.  Mirrors the const-ness of `C1`/`C2` above.
+    // [§3]: Sᵢ are merge INPUTS — read by all stages, never written.
     const Submap* S1 = nullptr;
     const Submap* S2 = nullptr;
 
-    /// Granularities.  γ₁ ≤ γ₂.
-    std::size_t gamma1 = 0;
+    std::size_t gamma1 = 0;     // γ₁ ≤ γ₂.
     std::size_t gamma2 = 0;
+    std::size_t gamma  = 0;     // Target γ ≥ γ₂.
 
-    /// Target granularity.  γ ≥ γ₂.
-    std::size_t gamma = 0;
-
-    /// [C91 §3.0 tex 166–170]: Oracle primitives (provided by §3.4 / §4).
-    ///
-    /// Two kinds of oracle, each instantiated per submap:
-    ///   - tex 181: "the appropriate ray-shooters" (plural)
-    ///   - tex 220: f(γ₁) for S₁ arcs, f(γ₂) for S₂ arcs (separate costs)
-    ///   - §3.4 Lemma 3.6: builds ray-shooting for one submap S
-    const RayShootingOracle* ray_shooter_1 = nullptr;  ///< For S₁ arcs.
-    const RayShootingOracle* ray_shooter_2 = nullptr;  ///< For S₂ arcs.
-    const ArcCuttingOracle*  arc_cutter_1  = nullptr;  ///< For S₁ arcs.
-    const ArcCuttingOracle*  arc_cutter_2  = nullptr;  ///< For S₂ arcs.
+    // [§3.0 tex 166–170]: Per-submap oracles (§3.4 Lemma 3.6 builds
+    // ray-shooting per S).  tex 220: f(γ₁) for S₁ arcs, f(γ₂) for S₂.
+    const RayShootingOracle* ray_shooter_1 = nullptr;
+    const RayShootingOracle* ray_shooter_2 = nullptr;
+    const ArcCuttingOracle*  arc_cutter_1  = nullptr;
+    const ArcCuttingOracle*  arc_cutter_2  = nullptr;
 };
 
-/// [C91 §3]: Result of the merge operation.
 struct MergeResult {
-    /// The merged curve C = C₁ ∪ C₂.
-    Polygon C;
-
-    /// Normal-form γ-granular conformal submap of V(C).
-    Submap S;
-
+    Polygon C;                  // Merged curve C = C₁ ∪ C₂.
+    Submap S;                   // Normal-form γ-granular conformal V(C).
     explicit MergeResult(Polygon c) : C(std::move(c)) {}
 };
 
-/// [C91 §3]: Validate merge preconditions.
-///
-/// Asserts all invariants from the paper's §3 preamble:
-///   - C₁, C₂ are valid polygonal curves
-///   - C₁ ∩ C₂ is a vertex (last of C₁ = first of C₂)
-///   - S₁ is conformal
-///   - S₂ is conformal
-///   - γ₁ ≤ γ₂
-///   - γ ≥ γ₂
+// [C91 §3]: Validate every §3-preamble precondition.
 inline void assert_merge_preconditions(const MergeInput& in) {
     assert(in.C1 != nullptr && in.C2 != nullptr &&
            "§3: merge requires two polygonal curves");
     assert(in.S1 != nullptr && in.S2 != nullptr &&
            "§3: merge requires two submaps");
 
-    // [C91 §3]: "whose union C forms a connected vertex-to-vertex
-    // piece of the input polygonal curve P; we assume that
-    // C₁ ∩ C₂ is a vertex of P."
-    // The last vertex of C₁ must equal the first vertex of C₂.
-    assert(in.C1->num_vertices() >= 2 &&
-           "§3: C₁ must have at least 2 vertices");
-    assert(in.C2->num_vertices() >= 2 &&
-           "§3: C₂ must have at least 2 vertices");
+    assert(in.C1->num_vertices() >= 2 && "§3: C₁ must have ≥ 2 vertices");
+    assert(in.C2->num_vertices() >= 2 && "§3: C₂ must have ≥ 2 vertices");
+
+    // [§3 tex 160]: "C₁ ∩ C₂ is a vertex of P."  Vertex identity under SoS
+    // is the .index field alone (perturbation.h:34–47; polygon.cpp:21–25
+    // asserts uniqueness).  Adding .x/.y equality would over-specify.
     {
         const auto& c1_last = in.C1->vertex(in.C1->num_vertices() - 1);
         const auto& c2_first = in.C2->vertex(0);
-        // [C91 §3] (tex 160): "C₁ ∩ C₂ is a vertex of P".  Vertex identity
-        // under the paper's SoS model (§2 tex 47, perturbation.h:34–47) is
-        // determined by the .index field alone — it is the canonical, unique
-        // tag for a vertex of P (polygon.cpp:21–25 asserts uniqueness).
-        // Adding .x/.y equality would over-specify beyond the paper.
         assert(c1_last.index == c2_first.index &&
                "§3 tex 160: C₁ ∩ C₂ must be a vertex of P "
-               "(last vertex of C₁ = first vertex of C₂; SoS .index "
-               "is the canonical vertex identifier)");
+               "(last of C₁ = first of C₂ by SoS .index)");
     }
 
-    // [C91 §3] (tex 166): "We assume that each Sᵢ is given in
-    // normal form."  check_invariants(polygon) verifies §2.4(i)–(iii)
-    // — tree property, chord/arc adjacency, arc-sequence ordering,
-    // and start_arc/end_arc validity — plus the polygon-dependent
-    // §2.4 tex 144 key_y monotonicity required by double_identify
-    // and the §2.2 tex 106 arc.edge_count cache consistency.
+    // [§3 tex 166]: "each Sᵢ is given in normal form."  check_invariants
+    // verifies §2.4(i)–(iii) + key_y monotonicity (tex 144) + edge_count
+    // cache (tex 106).
     in.S1->check_invariants(*in.C1);
     in.S2->check_invariants(*in.C2);
 
-    // [C91 §3]: "Sᵢ be a γᵢ-granular conformal submap of V(Cᵢ)."
-    assert(in.S1->is_conformal() &&
-           "§3: S₁ must be conformal");
+    // [§3]: "Sᵢ a γᵢ-granular conformal submap of V(Cᵢ)."
+    assert(in.S1->is_conformal() && "§3: S₁ must be conformal");
     assert(!in.S1->tree_decomposition().empty() &&
-           "§2.4(iv): S₁'s tree decomposition must be available (normal form + conformal)");
-    assert(in.S2->is_conformal() &&
-           "§3: S₂ must be conformal");
+           "§2.4(iv): S₁ TD must be available");
+    assert(in.S2->is_conformal() && "§3: S₂ must be conformal");
     assert(!in.S2->tree_decomposition().empty() &&
-           "§2.4(iv): S₂'s tree decomposition must be available (normal form + conformal)");
+           "§2.4(iv): S₂ TD must be available");
     assert(in.S1->is_granular(in.gamma1, *in.C1) &&
            "§3: S₁ must be γ₁-granular");
     assert(in.S2->is_granular(in.gamma2, *in.C2) &&
            "§3: S₂ must be γ₂-granular");
 
-    // [C91 §3.0 tex 166–170]: per-submap oracles (§3.4 Lemma 3.6).
-    assert(in.ray_shooter_1 != nullptr &&
-           "§3.0: merge requires a ray-shooting oracle for S₁");
-    assert(in.ray_shooter_2 != nullptr &&
-           "§3.0: merge requires a ray-shooting oracle for S₂");
-    assert(in.arc_cutter_1 != nullptr &&
-           "§3.0: merge requires an arc-cutting oracle for S₁");
-    assert(in.arc_cutter_2 != nullptr &&
-           "§3.0: merge requires an arc-cutting oracle for S₂");
+    assert(in.ray_shooter_1 && in.ray_shooter_2 &&
+           in.arc_cutter_1 && in.arc_cutter_2 &&
+           "§3.0 tex 166–170: all four per-submap oracles required");
 
-    // [C91 §3]: "with γ₁ ≤ γ₂."
-    assert(in.gamma1 <= in.gamma2 &&
-           "§3: γ₁ must be ≤ γ₂");
-
-    // [C91 §3]: "Given any integer γ ≥ γ₂."
-    assert(in.gamma >= in.gamma2 &&
-           "§3: target γ must be ≥ γ₂");
+    assert(in.gamma1 <= in.gamma2 && "§3: γ₁ ≤ γ₂");
+    assert(in.gamma  >= in.gamma2 && "§3: target γ ≥ γ₂");
 }
 
-/// [C91 §3]: Merge S₁ and S₂ to produce a normal-form γ-granular
-/// conformal submap of V(C).
-///
-/// The merge proceeds in three stages (§3.1–§3.3):
-///   1. Fusion: discover new chords, create submap S of V(C).
-///   2. Conformality: add chords to ensure degree ≤ 4.
-///   3. Granularity: remove chords to enforce γ-granularity.
-///
-/// TODO: (§3.1–§3.3) implement the three stages.
+// [C91 §3]: Three-stage merge: (§3.1) fuse via discovered chords,
+// (§3.2) restore conformality, (§3.3) enforce γ-granularity.
+// TODO: implement.
 MergeResult merge(const MergeInput& in);
 
 } // namespace chazelle

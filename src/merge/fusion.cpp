@@ -1,4 +1,4 @@
-/// src/merge/fusion.cpp
+// src/merge/fusion.cpp
 
 #include "fusion.h"
 
@@ -12,9 +12,7 @@ RegionArcs collect_region_arcs(const Submap& S, std::size_t region) {
     assert(region < S.num_nodes() && !S.node(region).dead);
 
     RegionArcs out;
-    // [C91 §3.1] (tex 181): "The claim on the time follows from the
-    // conformality of Sᵢ."  Assert local conformality before iteration
-    // to strictly enforce O(1) evaluation bound.
+    // [§3.1 tex 181]: conformality bounds the iteration to O(1).
     assert(S.node(region).degree() <= 4 &&
            "§2.3: conformal regions MUST have degree ≤ 4");
     auto check_adj = [&](const Chord::AdjArcs& adj) {
@@ -40,10 +38,7 @@ RegionArcs collect_region_arcs(const Submap& S, std::size_t region) {
         check_adj(S.chord(ci).right_adj);
     }
 
-    // [C91 §2.4(iii)] (tex 138): "the endpoints of C are identified
-    // by... pointers to the arc-structures whose corresponding arcs
-    // pass through the endpoints."  Normal-form submaps must have
-    // start_arc and end_arc set.  Assert instead of silently skipping.
+    // [§2.4(iii) tex 138]: normal-form ⟹ start_arc/end_arc are set.
     auto check_endpoint_arc = [&](std::size_t arc_idx) {
         assert(arc_idx != NONE && arc_idx < S.num_arcs() &&
                "§2.4(iii): endpoint arc must be set for normal-form submaps");
@@ -58,11 +53,9 @@ RegionArcs collect_region_arcs(const Submap& S, std::size_t region) {
     check_endpoint_arc(S.start_arc);
     check_endpoint_arc(S.end_arc);
 
-    // [C91 §3.1] (tex 181): "the conformality of Sᵢ, which ensures that
-    // at most four arcs need to be checked."  A degree-d region has exactly
-    // one arc per chord-gap around its boundary, so degree ≤ 4 ⟹ ≤ 4 arcs.
+    // [§3.1 tex 181]: degree ≤ 4 ⟹ at most 4 arcs (one per chord-gap).
     assert(out.count <= 4 &&
-           "§3.1 (tex 181): conformal region has at most 4 arcs (degree ≤ 4)");
+           "§3.1 tex 181: conformal region has at most 4 arcs (degree ≤ 4)");
 
     return out;
 }
@@ -73,10 +66,8 @@ RayHit local_shoot(Point p, Side direction,
                     std::size_t region,
                     const Submap& S, const Polygon& C,
                     const RayShootingOracle& oracle) {
-    // [C91 §3.1]: "Using the appropriate ray-shooters, we can find
-    // that point by checking each arc in turn and finding the nearest
-    // hit.  The claim on the time follows from the conformality of Sᵢ,
-    // which ensures that at most four arcs need to be checked."
+    // [§3.1 tex 181]: check each region arc, take the nearest hit.
+    // Conformality bounds the loop to ≤ 4 arcs.
     RegionArcs arcs = collect_region_arcs(S, region);
 
     RayHit best;
@@ -92,25 +83,18 @@ RayHit local_shoot(Point p, Side direction,
         sub.last_edge = a.last_edge;
         sub.last_side = a.last_side;
 
-        // [C91 §3.0] (tex 166): "for each region arc α of Sᵢ
-        // specified by a pointer to its arc-structure."
         RayHit hit = oracle.shoot(p, direction, ai, sub);
         if (!hit.hit) continue;
 
-        // [C91 §3.0(i) tex 169]: "reports the single point of α' (if any)
-        // that a ray of light shot from p in the given direction would hit."
-        // Oracle contract is forward-only: hit.x must lie at or past p.x
-        // along the shooting direction.  A backward hit would have negative
-        // signed distance and "beat" every legitimate forward hit, silently
-        // corrupting best-of-nearest selection.
+        // [§3.0(i) tex 169]: oracle reports forward hits only.  A backward
+        // hit (negative signed distance) would beat every legitimate hit
+        // and silently corrupt the nearest-of selection.
         double hit_signed_dist = (direction == LEFT)
             ? (p.x - hit.x) : (hit.x - p.x);
         assert(hit_signed_dist >= 0.0 &&
-               "§3.0(i) tex 169: ray-shooting oracle must report a forward "
-               "hit (hit_signed_dist >= 0 in the shooting direction)");
+               "§3.0(i) tex 169: oracle must report a forward hit");
 
-        // [C91 §3.1]: Track the explicit arc index to propagate O(1) context
-        hit.hit_arc_idx = ai;
+        hit.hit_arc_idx = ai;  // propagate O(1) context
 
         if (!best.hit) {
             best = hit;
@@ -126,15 +110,10 @@ RayHit local_shoot(Point p, Side direction,
             if (hit_dist < best_dist) {
                 best = hit;
             } else if (hit_dist == best_dist) {
-                // [C91 §2.1] (tex 72): Double boundary disambiguation.
-                // "We give each edge of C an infinitesimal width so as to make
-                // the curve C into a very thin simple polygon… we refer to the
-                // two sides of the double boundary as one would speak of the
-                // left and right sides of a snake."  The two sides of the same
-                // edge sit at the same geometric location but are topologically
-                // distinct ∂C points; ray-shooting must select the side struck
-                // first by the (infinitesimally thick) ray.  See also §2.4
-                // (tex 142) on double-backing detection.
+                // [§2.1 tex 72]: Double-boundary disambiguation.  ∂C's two
+                // sides share geometric location but are topologically
+                // distinct; the ray hits the "first face" depending on its
+                // travel direction and the edge's orientation.
                 assert(hit.edge < C.num_edges());
                 const auto& e = C.edge(hit.edge);
                 bool edge_ascending = symbolic_y_less(
@@ -164,12 +143,10 @@ RayHit local_shoot(Point p, Side direction,
         }
     }
 
-    // [C91 §3.1] (tex 181): "the point of ∂Cᵢ that it sees lies on
-    // one of the region's arcs.  This is because regions are closed
-    // under visibility, which is a corollary of Lemma 2.1."
+    // [§3.1 tex 181]: regions are closed under visibility (Lemma 2.1
+    // corollary) ⟹ shooting from inside a region always hits.
     assert(best.hit &&
-           "§3.1: local shooting inside a region must always hit "
-           "one of the region's arcs (corollary of Lemma 2.1)");
+           "§3.1 tex 181: local shoot inside a region must hit (Lemma 2.1)");
     return best;
 }
 
@@ -177,15 +154,10 @@ RayHit local_shoot(Point p, Side direction,
 
 Side shooting_direction(std::size_t edge, Side side,
                          const Polygon& C) {
-    // [C91 §3.1]: "because of the double boundary the shooting
-    // direction is always uniquely defined."
-    //
-    // A point on the LEFT side of edge e sees across C to the RIGHT.
-    // The horizontal direction depends on the edge's slope:
-    //   Edge going up (start.y < end.y): LEFT side is to the left
-    //     of the upward direction → shoot RIGHT.
-    //   Edge going down: LEFT side is to the right → shoot LEFT.
-    // For RIGHT side, the direction is reversed.
+    // [§3.1]: "because of the double boundary the shooting direction is
+    // always uniquely defined."  Edge going up (start.y < end.y): LEFT
+    // side is on the west, shoots east (RIGHT).  Edge going down: LEFT
+    // shoots west (LEFT).  RIGHT side is the reverse.
     assert(edge < C.num_edges());
     const auto& e = C.edge(edge);
     SymbolicY start_y = symbolic_y_of(C.vertex(e.start_idx));
@@ -205,71 +177,48 @@ std::size_t fusion_startup(FusionState& state,
                             const Submap& S2, const Polygon& C2,
                             const RayShootingOracle& oracle1,
                             const RayShootingOracle& oracle2) {
-    // [C91 §3.1]: The fusion sequence always contains at least a₀ and
-    // a_{m+1} (the two companion vertices at the junction).
+    // [§3.1 tex 179]: sequence starts at a₀ (RIGHT companion of junction)
+    // and ends at a_{m+1} (LEFT companion) — the cw tour of ∂C₁.
     assert(state.sequence.size() >= 2 &&
-           "§3.1: fusion sequence must have at least a₀ and a_{m+1}");
+           "§3.1: fusion sequence needs at least a₀ and a_{m+1}");
     const auto& a0 = state.sequence[0];
     assert(a0.is_companion && a0.side == RIGHT &&
-           "§3.1 tex 179: sequence[0] = a₀, the RIGHT companion at the "
-           "junction (start of clockwise tour of ∂C₁)");
-    // [C91 §3.1 tex 179]: a_{m+1} is the LEFT companion at the junction,
-    // end of the clockwise tour around ∂C₁.  Symmetric to a₀.
+           "§3.1 tex 179: sequence[0] = a₀ (RIGHT companion at junction)");
     const auto& a_m1 = state.sequence.back();
     assert(a_m1.is_companion && a_m1.side == LEFT &&
-           "§3.1 tex 179: sequence.back() must be the a_{m+1} LEFT companion");
+           "§3.1 tex 179: sequence.back() = a_{m+1} (LEFT companion)");
 
-    // [C91 §3.1]: "Using local shooting, we find the point of ∂C₁
-    // that a₀ sees with respect to C₁."
-    //
-    // a₀ is at c_end of C₁, RIGHT side.  The region in S₁ is the
-    // one containing the end_arc (or its RIGHT-side neighbor).
-    // [C91 §2.4(iii)]: end_arc must be set for normal-form submaps.
+    // [§3.1]: "Using local shooting, we find the point of ∂C₁ that a₀
+    // sees with respect to C₁."  a₀ is at c_end of C₁, RIGHT side.
     assert(S1.end_arc != NONE &&
            "§2.4(iii): S₁ must have end_arc set (normal form)");
     std::size_t a0_region_s1 = S1.arc(S1.end_arc).region_node;
     Side a0_dir = shooting_direction(a0.edge, a0.side, C1);
 
-    // a₀ IS the junction vertex (last vertex of C₁).  Use its
-    // coordinates directly — no interpolation needed.
+    // a₀ is the junction vertex; use its coords directly.
     std::size_t junction_v = C1.num_vertices() - 1;
     Point a0_point = C1.vertex(junction_v);
 
     RayHit hit_c1 = local_shoot(a0_point, a0_dir, a0_region_s1,
                                  S1, C1, oracle1);
 
-    // [C91 §3.1]: "it is not quite true that a₀ is always a point
-    // of ∂C₂.  It coincides with one most often, but when it sits at
-    // a local extremum (in the y-direction) it is not one because of
-    // duplication."  SoS perturbation (§2.0) handles this: distinct
-    // symbolic y-coordinates prevent exact coincidence at extrema,
-    // so the visibility relation is always well-defined.
-
-    // [C91 §3.1]: "using the information about the endpoints of C₂
-    // encoded in the normal-form representation of S₂ (namely,
-    // pointers to incident arcs), we can find, in constant time, in
-    // which region of S₂ the point a₀ lies."
+    // [§3.1]: a₀ "most often" coincides with a ∂C₂ point but not at
+    // y-extrema due to duplication.  SoS (§2 tex 47) gives every vertex
+    // a unique symbolic y, so visibility is well-defined either way.
     //
-    // a₀ corresponds to C₂'s start vertex → S₂.start_arc's region.
+    // [§3.1]: "the normal-form representation of S₂ ... lets us find,
+    // in constant time, in which region of S₂ the point a₀ lies."
     assert(S2.start_arc != NONE &&
            "§2.4(iii) tex 138: S₂ must have start_arc set (normal form)");
     std::size_t a0_region_s2 = S2.arc(S2.start_arc).region_node;
 
-    // [C91 §3.1]: "This allows us to do local shooting and find the
-    // point of ∂C₂ that a₀ sees with respect to C₂."
     RayHit hit_c2 = local_shoot(a0_point, a0_dir, a0_region_s2,
                                  S2, C2, oracle2);
 
-    // [C91 §3.1]: "These two pieces of information combine to give us
-    // the unique point c₀ of ∂C that a₀ sees with respect to C."
-    //
-    // [C91 §3.1] (tex 185): Both local_shoot calls are guaranteed to
-    // hit (Lemma 2.1 corollary — regions are closed under visibility).
-    // c₀ is the nearer of hit_c1 and hit_c2 in the shooting direction.
-    assert(hit_c1.hit &&
-           "§3.1: a₀ must see a point on ∂C₁ (Lemma 2.1)");
-    assert(hit_c2.hit &&
-           "§3.1: a₀ must see a point on ∂C₂ (Lemma 2.1)");
+    // [§3.1 tex 185]: c₀ = the closer of hit_c1 and hit_c2.  Both are
+    // guaranteed to hit (Lemma 2.1).
+    assert(hit_c1.hit && "§3.1: a₀ must see ∂C₁ (Lemma 2.1)");
+    assert(hit_c2.hit && "§3.1: a₀ must see ∂C₂ (Lemma 2.1)");
     bool c0_on_c2;
     RayHit c0;
     {
@@ -311,41 +260,28 @@ std::size_t fusion_startup(FusionState& state,
             if (!symbolic_y_equal(ch.symbolic_y(), a0y))
                 continue;
 
-            // [C91 §2.1 tex 72]: per the visibility map construction,
-            // the junction has TWO ∂C₂ companions and each is incident
-            // upon one chord — so up to two distinct S₂ chords can
-            // share a₀'s symbolic y.  We need the SPECIFIC chord that
-            // a₀c₀ lies on: the one with an endpoint at a₀'s position
-            // on a₀'s ∂C side.  In C₂'s frame, the junction is
-            // C₂.vertex(0) and its incident edge is C₂.edge(0); the
-            // chord's endpoint at the junction has X_edge == 0 and
-            // X_side == a0.side.  (Note: a0.edge references C₁'s frame
-            // — C₁'s last edge — so we use the C₂-frame index 0 here.)
+            // [§2.1 tex 72]: junction has TWO ∂C₂ companions, each
+            // incident on one chord → up to two distinct S₂ chords share
+            // a₀'s symbolic y.  Pick the SPECIFIC chord that a₀c₀ lies on:
+            // one endpoint at a₀'s position on a₀'s ∂C side.  In C₂'s
+            // frame, junction is C₂.vertex(0), so its edge is C₂.edge(0).
+            // (a0.edge is in C₁'s frame — that's why we hardcode 0 here.)
             const bool incident_on_a0 =
                 (ch.left_edge  == 0 && ch.left_side  == a0.side) ||
                 (ch.right_edge == 0 && ch.right_side == a0.side);
             if (!incident_on_a0) continue;
 
-            // a₀c₀ lies on this S₂ chord.  Determine which of its
-            // two regions we "locally enter as we leave p in a
-            // clockwise traversal of ∂C₁."
+            // [§3.1 tex 191]: a₀c₀ lies on this S₂ chord.  Elect "the
+            // region we locally enter as we leave p clockwise on ∂C₁."
+            // `leaving_downward` encodes the y-direction of motion from p
+            // (set differently for Case 1 leaving a₀ vs Case 2 leaving c₀).
             //
-            // We parameterize `leaving_downward` because the topological
-            // vector leaving `p` depends entirely on whether we are in
-            // Case 1 (leaving a₀) or Case 2 (leaving c₀).
-
-            // [C91 §3.1 tex 191]: Determine which of the chord's two
-            // regions is above and which is below the chord.  For each
-            // adj arc at the chord endpoint, find the polygon vertex
-            // adjacent to the chord position along the arc's traversal;
-            // that vertex's SoS y vs chord.symbolic_y tells us which
-            // side the arc's region is on.
-            //
-            // Pick whichever endpoint has count==2 (two adj arcs on
-            // opposite sides — the structural discriminator works
-            // best here, §2.2 tex 94).  If both endpoints have count==1
-            // (vertex-to-vertex case at curve endpoints), the single
-            // adj arc on each side is sufficient.
+            // For each adj arc at the chord endpoint, look at the polygon
+            // vertex adjacent to the chord along the arc's traversal; its
+            // SoS y vs chord.symbolic_y tells us which side the arc's
+            // region is on.  Prefer the count==2 endpoint (its two arcs
+            // straddle the chord per §2.2 tex 96).  Vertex-to-vertex
+            // count==1+1 uses the single arc on each side.
             const Chord::AdjArcs* adj = nullptr;
             std::size_t ch_edge_at_endpoint = NONE;
             Side ch_side_at_endpoint = LEFT;
@@ -359,14 +295,12 @@ std::size_t fusion_startup(FusionState& state,
                 ch_side_at_endpoint = ch.right_side;
             }
 
-            // Helper: given an adj arc at the chord endpoint, return
-            // true iff the arc's region is strictly ABOVE the chord
-            // under SoS.  Looks at the polygon vertex adjacent to the
-            // chord position along the arc's traversal direction.
+            // Returns true iff the arc's region is strictly ABOVE the
+            // chord under SoS.  Looks at the polygon vertex adjacent to
+            // the chord along the arc's traversal direction.
             auto arc_region_above_chord = [&](const Arc& a) -> bool {
-                // Structural classification: does the arc START at the
-                // chord (its first_edge/first_side matches chord's slot)
-                // or END at the chord (last_edge/last_side matches)?
+                // Structural: does the arc START at the chord (first_edge
+                // matches the chord's slot) or END there (last_edge matches)?
                 bool first_matches =
                     (a.first_edge == ch_edge_at_endpoint &&
                      a.first_side == ch_side_at_endpoint);
@@ -379,39 +313,30 @@ std::size_t fusion_startup(FusionState& state,
                 } else if (!first_matches && last_matches) {
                     arc_starts_at_chord = false;
                 } else {
-                    // Single-edge arc on chord's edge (both first and
-                    // last match).  Disambiguate via key_y_tag: if it
-                    // matches chord.y_tag, the arc starts at the chord;
-                    // otherwise it starts at a polygon vertex and ends
-                    // at the chord.
+                    // Single-edge arc on chord's edge — disambiguate via
+                    // key_y_tag (matches chord.y_tag ⟺ arc starts here).
                     assert(first_matches && last_matches &&
-                           "adj arc must structurally touch the chord "
-                           "endpoint via first or last edge/side");
+                           "adj arc must touch the chord endpoint via "
+                           "first_edge or last_edge");
                     arc_starts_at_chord = (a.key_y_tag == ch.y_tag);
                 }
 
-                // Find the polygon vertex adjacent to the chord position
-                // along the arc's traversal direction (the "next" vertex
-                // away from the chord).
+                // Vertex adjacent to the chord along the arc's traversal
+                // (i.e. the next vertex AWAY from the chord).  LEFT
+                // ascends, RIGHT descends.
                 std::size_t adj_v_idx;
                 if (arc_starts_at_chord) {
-                    // Going forward from chord position: next vertex.
-                    // LEFT ascends → next vertex = first_edge.end_idx.
-                    // RIGHT descends → next vertex = first_edge.start_idx.
                     adj_v_idx = (a.first_side == LEFT)
                               ? C2.edge(a.first_edge).end_idx
                               : C2.edge(a.first_edge).start_idx;
                 } else {
-                    // Going backward from chord position: previous vertex.
-                    // LEFT traversal arrives via last_edge.start_idx.
-                    // RIGHT traversal arrives via last_edge.end_idx.
                     adj_v_idx = (a.last_side == LEFT)
                               ? C2.edge(a.last_edge).start_idx
                               : C2.edge(a.last_edge).end_idx;
                 }
 
-                // SoS comparison: every vertex has a unique perturbed y,
-                // so the comparison is definitive (no degenerate case).
+                // SoS ⟹ every vertex has a unique perturbed y, so this
+                // comparison is definitive.
                 return symbolic_y_greater(
                     symbolic_y_of(C2.vertex(adj_v_idx)), ch.symbolic_y());
             };
@@ -450,30 +375,22 @@ std::size_t fusion_startup(FusionState& state,
         return initial_region;
     };
 
-    // The a₀c₀ chord is recorded identically in both Case 1 and Case 2:
-    // its fields depend only on a₀ and c₀ (both known above), not on
-    // which case the start-up takes.
+    // Record a₀c₀ — same in both cases (fields depend only on a₀, c₀).
+    // DiscoveredChord slot convention (chord.h, fusion.h): LEFT slot holds
+    // the LEFT-side endpoint; RIGHT slot holds the RIGHT-side endpoint.
     assert(c0.side == LEFT && a0.side == RIGHT &&
-           "DiscoveredChord slot convention (chord.h:32-33, "
-           "fusion.h:124,126): left slot holds LEFT-side endpoint, "
-           "right slot holds RIGHT-side endpoint");
+           "DiscoveredChord slot convention: c0 on LEFT, a0 on RIGHT");
     state.chords.push_back({a0.y, c0.edge, c0.side, a0.edge, a0.side});
 
     if (c0_on_c2) {
-        // [C91 §3.1 Case 1]: "If c₀ belongs to ∂C₂, then we set
-        // p = a₀ and we call the region of S₂ crossed by a₀c₀
-        // current: the start-up phase is over."
-        //
-        // Main loop starts at k where A_k contains p = a₀ and
-        // p ≠ a_k.  A_k = arc from a₀ to a₁, so k=1.
-        // [C91 §3.1 Case 1]: "we set p = a₀"
+        // [§3.1 Case 1]: "set p = a₀, call the region of S₂ crossed by
+        // a₀c₀ current."  Main loop starts at k=1 (A_k = arc a₀→a₁).
         state.p = a0_point;
         state.p_edge = a0.edge;
         state.p_side = a0.side;
 
-        // From a₀ (RIGHT companion at c_end), clockwise ∂C₁
-        // goes from vertex junction_v toward vertex junction_v-1.
-        // The y-direction of that step mathematically defines leaving p.
+        // CW step from a₀ goes from junction_v to junction_v-1; its
+        // y-direction is the topological "leaving p" vector.
         SymbolicY y_here = symbolic_y_of(C1.vertex(junction_v));
         SymbolicY y_next = symbolic_y_of(C1.vertex(junction_v - 1));
         bool a0_leaving_downward = symbolic_y_less(y_next, y_here);
@@ -481,96 +398,64 @@ std::size_t fusion_startup(FusionState& state,
         state.s2_region = resolve_s2_region(a0_region_s2, a0_leaving_downward);
         return 1;
     } else {
-        // [C91 §3.1 Case 2]: "If c₀ belongs to ∂C₁... We can
-        // therefore skip all the way to c₀.  Now, however, c₀ sees
-        // a point of ∂C₂, namely a₀, so we set p = c₀ and call the
-        // region of S₂ containing a₀ current."
-        // [C91 §3.1 Case 2]: "we set p = c₀"
-        // c₀ is on an edge interior (not necessarily a vertex), so
-        // Point.index = NONE (no vertex identity for SoS).
+        // [§3.1 Case 2]: "skip all the way to c₀ ... set p = c₀, call
+        // the region of S₂ containing a₀ current."  c₀ is on an edge
+        // interior, not a named vertex (index = NONE).
         state.p = Point{c0.x, c0.y, NONE};
         state.p_edge = c0.edge;
         state.p_side = c0.side;
 
-        // [C91 §3.1 Case 2]: Determine topological slope leaving c₀
+        // Topological slope leaving c₀.
         assert(c0.edge < C1.num_edges());
         const auto& e = C1.edge(c0.edge);
         bool edge_ascending = symbolic_y_less(
             symbolic_y_of(C1.vertex(e.start_idx)),
             symbolic_y_of(C1.vertex(e.end_idx)));
-        
-        bool c0_leaving_downward = (c0.side == LEFT) ? !edge_ascending : edge_ascending;
+        bool c0_leaving_downward =
+            (c0.side == LEFT) ? !edge_ascending : edge_ascending;
 
-        // [C91 §3.1 Case 2]: "call the region of S₂ containing a₀ current."
-        // We unconditionally resolve the region, because while a₀ is a start vertex,
-        // it may be a reflex vertex generated by an arbitrary interior cut splitting,
-        // allowing a horizontal S₂ chord to originate from the exact same Y coordinate.
+        // Always invoke the tie-break: a₀ may be a reflex vertex generated
+        // by an interior cut, allowing an S₂ chord at the exact same y.
         state.s2_region = resolve_s2_region(a0_region_s2, c0_leaving_downward);
 
-        // [C91 §3.1 Case 2]: "We can therefore skip all the way to c₀."
-        // Find the first fusion vertex at or past c₀'s position on ∂C₁.
-        // All vertices between a₀ and c₀ (clockwise) see points on ∂C₁
-        // (by Lemma 2.1) and are already known from S₁.
-        //
-        // [C91 §3.1 Case 2]: "We can therefore skip all the way to c₀."
-        // O(1) via arc_starts lookup (the hit arc from local_shoot indexes
-        // directly into the fusion sequence) + O(1) within-bucket scan
-        // (conformal degree ≤ 4 → at most O(1) endpoints per arc bucket).
+        // Skip to c₀: find first fusion vertex at or past c₀'s ∂C₁ position.
+        // O(1) via arc_starts (local_shoot's hit arc → sequence block) plus
+        // a constant within-bucket scan (degree ≤ 4 ⟹ O(1) endpoints/bucket).
         std::size_t junction_edge = C1.num_edges() - 1;
         std::size_t right_half_len = junction_edge + 1;
         auto trav_pos = [&](std::size_t edge, Side side) -> std::size_t {
-            if (side == RIGHT)
-                return junction_edge - edge;
-            else
-                return right_half_len + edge;
+            // CW traversal: RIGHT half descends in edge, LEFT half ascends.
+            return (side == RIGHT) ? junction_edge - edge
+                                   : right_half_len + edge;
         };
 
-        // c₀ lies on ∂C₁ at the same horizontal level as a₀ (they share a
-        // horizontal visibility chord).  c₀ is a point on an edge interior,
-        // not a named vertex, so it has no vertex index of its own.
-        // We assign it the SoS tag of the junction vertex (the vertex that
-        // defines this y-level: a₀ is the companion vertex at the junction,
-        // so a₀.y.tag IS the junction vertex's index).  This is correct
-        // because every comparison downstream (vertex_past_c0, symbolic_y_geq/
-        // symbolic_y_leq) pairs c₀'s symbolic-y against fusion vertices whose
-        // tags are all distinct from the junction vertex's tag — they are
-        // non-companion chord endpoints.  The junction tag is therefore
-        // never involved in a tie-break within the comparison, and the
-        // raw-y equality of the horizontal chord is never ambiguous under SoS.
+        // c₀ shares its raw y with a₀ (horizontal visibility chord), but
+        // it's mid-edge so it has no vertex tag of its own.  We borrow a₀'s
+        // tag (= junction's tag).  Downstream comparisons (vertex_past_c0)
+        // only pair c₀ against non-companion chord endpoints whose tags
+        // differ from the junction's, so the SoS tie-break is never
+        // ambiguous and raw-y equality is unproblematic.
         SymbolicY c0_y = a0.y;
         std::size_t c0_pos = trav_pos(c0.edge, c0.side);
 
-        // Determine y-ordering within an edge on ∂C₁ traversal.
-        // RIGHT half traverses edges in descending order; within an
-        // edge, ∂C₁ goes from end_vertex to start_vertex (reversed).
-        // LEFT half follows edge direction (start to end).
+        // Within an edge, ∂C₁ traversal direction:
+        //   LEFT side  follows the edge (start→end).
+        //   RIGHT side reverses it (end→start).
         auto vertex_past_c0 = [&](const FusionVertex& v) -> bool {
             std::size_t v_pos = trav_pos(v.edge, v.side);
             if (v_pos != c0_pos) return v_pos > c0_pos;
-            // Same edge and side: compare y along traversal direction.
-            // On RIGHT side, ∂C₁ traverses the edge in reverse, so
-            // "past c₀" means lower y (if edge ascends) or higher y
-            // (if edge descends).  On LEFT side, it follows the edge.
             assert(v.edge < C1.num_edges());
             const auto& e = C1.edge(v.edge);
             bool edge_ascending = symbolic_y_less(
                 symbolic_y_of(C1.vertex(e.start_idx)),
                 symbolic_y_of(C1.vertex(e.end_idx)));
-            // LEFT: traversal follows edge direction.
-            //   ascending edge → later in traversal = higher y.
-            //   v is past c₀ if v.y ≥ c₀.y (ascending) or v.y ≤ c₀.y (descending).
-            // RIGHT: traversal is reversed.
             bool traversal_ascending =
                 (v.side == LEFT) ? edge_ascending : !edge_ascending;
-            if (traversal_ascending)
-                return symbolic_y_geq(v.y, c0_y);
-            else
-                return symbolic_y_leq(v.y, c0_y);
+            return traversal_ascending ? symbolic_y_geq(v.y, c0_y)
+                                       : symbolic_y_leq(v.y, c0_y);
         };
 
-        // [C91 §3.1 Case 2]: "We can therefore skip all the way to c₀."
-        // We evaluate this natively in O(1) time. c0 was struck on an explicitly
-        // tracked arc in S1 via local_shoot. We know precisely which block it occupies.
+        // O(1) skip: c0's hit arc indexes directly into the sequence.
         assert(hit_c1.hit_arc_idx != NONE && "§3.1: c0 must carry hit context");
         std::size_t c0_arc_idx = hit_c1.hit_arc_idx;
         
@@ -588,20 +473,14 @@ std::size_t fusion_startup(FusionState& state,
             lo++;
         }
 
-        // [C91 §3.1 tex 179, 188]: c₀ is the visibility hit from a₀ on ∂C₁ and
-        // hence strictly precedes a_{m+1} on the clockwise tour.  a_{m+1} sits
-        // at the maximal trav_pos (LEFT side at the junction's SymbolicY), so
-        // vertex_past_c0(a_{m+1}) is always true and the while loop must exit
-        // with lo ≤ sequence.size() − 1.
+        // [§3.1 tex 179, 188]: c₀ strictly precedes a_{m+1} on the cw
+        // tour, and a_{m+1} sits at the maximal trav_pos → the while loop
+        // always terminates within bounds.
         assert(lo < state.sequence.size() &&
-               "§3.1 tex 179, 188: a_{m+1} sits at maximal trav_pos so "
-               "vertex_past_c0(a_{m+1}) holds; the loop above must terminate "
-               "with lo ≤ sequence.size() − 1");
+               "§3.1 tex 179, 188: skip-to-c₀ must land within sequence");
 
-        // §3.1 Case 2 (Lemma 2.1): All skipped vertices see ∂C₁.
-        // This is a paper-guaranteed structural property; only verify
-        // under CHAZELLE_EXPENSIVE_ASSERTS to avoid inflating startup
-        // from O(f(γ₂)) to O(m) in normal debug builds.
+        // [§3.1 Case 2 / Lemma 2.1]: skipped vertices see ∂C₁ — paper-
+        // guaranteed.  Verifying it costs O(m), so gate the check.
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
         for (std::size_t skipped_i = 1; skipped_i < lo; ++skipped_i) {
             if (!state.sequence[skipped_i].is_companion) {
@@ -623,22 +502,21 @@ void fuse_s1_into_s2(FusionState& state,
                       const Submap& S2, const Polygon& C2,
                       const RayShootingOracle& oracle1,
                       const RayShootingOracle& oracle2) {
-    // [C91 §3.1]: Build the fusion vertex sequence.
     build_fusion_sequence(state, S1, C1);
     state.current_stop = 0;
 
-    // [C91 §3.1 Start-Up]: Initialize p and current S₂ region.
     std::size_t start_idx = fusion_startup(state, S1, C1, S2, C2,
                                             oracle1, oracle2);
 
-    // [C91 §3.1 invariant (A)]: "The points of ∂C that are seen by the exit
-    // chord endpoints of S₁ ... have all been determined already."
+    // [§3.1 invariant (A)]: "points of ∂C seen by exit chord endpoints
+    // ... already determined."  Startup produces at least the a₀c₀ chord.
     assert(!state.chords.empty() &&
-           "§3.1 invariant (A): startup must have produced at least one chord");
+           "§3.1 invariant (A): startup must produce ≥1 chord");
 
-    // [C91 §3.1 invariant (B)]: "The point q of ∂C that is seen by p belongs
-    // to ∂C₂ and the chord pq lies in the region of S₂ called current."
-    // local_shoot is O(f(γ₂)) — gated to avoid doubling startup's own bound.
+    // [§3.1 invariant (B) tex 195]: "p sees a point q of ∂C₂ and pq lies
+    // in the current region of S₂."  Verifying via local_shoot costs
+    // O(f(γ₂)) per check; gated to avoid blowing the paper's bound in
+    // debug builds.
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
     assert(local_shoot(state.p,
                shooting_direction(state.p_edge, state.p_side, C1),
@@ -646,56 +524,31 @@ void fuse_s1_into_s2(FusionState& state,
            "§3.1 invariant (B): p must see ∂C₂ after startup");
 #endif
 
-    // [C91 §3.1]: "We let a variable p run through ∂C₁ in clockwise
-    // order, stopping at a₀, ..., a_{m+1}."
+    // [§3.1]: traverse stops a₀, ..., a_{m+1} clockwise on ∂C₁.
     for (std::size_t i = start_idx; i < state.sequence.size(); ++i) {
         state.current_stop = i;
 
-        // [C91 §3.1 invariant (B)]: "The point q of ∂C that is seen
-        // by p belongs to ∂C₂ and the chord pq lies in the region
-        // of S₂ called current."
         assert(state.s2_region != NONE &&
                state.s2_region < S2.num_nodes() &&
                !S2.node(state.s2_region).dead &&
                "§3.1 invariant (B): current S₂ region must be valid");
-        // [C91 §3.1 invariant (B)] (tex 195): "The point q of ∂C
-        // that is seen by p belongs to ∂C₂ and the chord pq lies in
-        // the region of S₂ called current."
-        // local_shoot is O(f(γ₂)) per call — running it every iteration
-        // would inflate the main loop from O(m + …) to O(m·f(γ₂)) in
-        // debug builds, violating the paper's per-merge bound.  Gate
-        // under CHAZELLE_EXPENSIVE_ASSERTS (matches the §3.1 startup
-        // skipped-vertex pattern at line ~502).
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
-        assert(local_shoot(
-                   state.p,
+        assert(local_shoot(state.p,
                    shooting_direction(state.p_edge, state.p_side, C1),
                    state.s2_region, S2, C2, oracle2).hit &&
-               "§3.1 invariant (B): p must see a point q on ∂C₂");
+               "§3.1 invariant (B): p must see ∂C₂");
 #endif
 
-        // [C91 §3.1 invariant (A)]: "The points of ∂C that are seen
-        // by the exit chord endpoints of S₁ on the portion of ∂C₁
-        // running clockwise from a₀ to the point p in its current
-        // position have all been determined already."
-        //
-        // All fusion vertices before index i have been processed
-        // (either by startup or previous iterations).  Their chords
-        // are in state.chords.
-        // Count non-companion vertices before i that should have
-        // been resolved.
-        // At minimum, the startup produced at least one chord.
         if (i > 0)
             assert(!state.chords.empty() &&
-                   "§3.1 invariant (A): startup must have "
-                   "produced at least one chord");
+                   "§3.1 invariant (A): chord list non-empty after startup");
 
-        // TODO: (§3.1) At each stop:
-        //   1. Determine what p sees on ∂C₂ (local_shoot into S₂ taking O(f(γ₂))).
-        //   2. Determine what p sees on ∂C₁ (CRITICAL: if p has a chord_idx, do NOT use
-        //      local_shoot into S₁! Just return the opposite chord endpoint in O(1) time
-        //      per §3.1 deviation rules. Only fallback to local_shoot for companion vertices).
-        //   3. Record discovered chord and update s2_region for the next stop.
+        // TODO (§3.1) main loop body, at each stop:
+        //   1. p sees q ∈ ∂C₂ via local_shoot into S₂ — O(f(γ₂)).
+        //   2. p sees q ∈ ∂C₁ — at S₁ chord endpoints, return the opposite
+        //      endpoint in O(1) (§3.1 deviation rules); fall back to
+        //      local_shoot for companion vertices.
+        //   3. Record discovered chord; update s2_region for the next stop.
     }
 }
 
@@ -706,25 +559,18 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     std::size_t n = C.num_vertices();
     assert(n >= 2);
 
-    // [C91 §3.1]: The junction vertex is C₁ ∩ C₂ = last vertex of C₁.
+    // Junction = C₁ ∩ C₂ = last vertex of C₁.
     std::size_t junction_v = n - 1;
-    std::size_t junction_edge = junction_v - 1; // last edge of C₁
+    std::size_t junction_edge = junction_v - 1;
 
-    // [C91 §3.1]: "Let a_{m+1} and a₀ be the companion vertices,
-    // as they appear next to each other clockwise around ∂C₁,
-    // resulting from the duplication of the vertex C₁ ∩ C₂."
-    //
-    // Clockwise ∂C₁: RIGHT descending (junction → c_start) → LEFT ascending (c_start → junction).
-    // a_{m+1} = LEFT companion at junction (end of LEFT traversal).
-    // a₀ = RIGHT companion at junction (start of RIGHT traversal).
-    //
-    // Both have the junction vertex's y-coordinate and SoS tag.
+    // [§3.1]: a₀ = RIGHT companion at junction (start of cw tour);
+    // a_{m+1} = LEFT companion (end).  Both inherit junction's symbolic y.
     SymbolicY junction_y = symbolic_y_of(C.vertex(junction_v));
 
     FusionVertex a_0;
     a_0.y = junction_y;
     a_0.edge = junction_edge;
-    a_0.side = RIGHT;  // RIGHT companion: start of clockwise tour
+    a_0.side = RIGHT;
     a_0.chord_idx = NONE;
     a_0.is_left_endpoint = false;
     a_0.is_companion = true;
@@ -732,44 +578,33 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     FusionVertex a_m1;
     a_m1.y = junction_y;
     a_m1.edge = junction_edge;
-    a_m1.side = LEFT;   // LEFT companion: end of clockwise tour
+    a_m1.side = LEFT;
     a_m1.chord_idx = NONE;
     a_m1.is_left_endpoint = false;
     a_m1.is_companion = true;
 
-    // [C91 §3.1]: "Let a₁, a₂, ..., aₘ be the canonical vertex
-    // enumeration of S₁.  Recall that this enumerates the exit chord
-    // endpoints in S₁ as we encounter them going clockwise around ∂C₁."
-    //
-    // [C91 §2.4(iii)] (tex 142): "our representation is powerful enough
-    // to let us perform canonical vertex/region enumerations in optimal
-    // time."  The arc-sequence table is in ∂C order (LEFT ascending,
-    // then RIGHT descending).  Clockwise ∂C₁ from a₀ = RIGHT section
-    // then LEFT section.  We enumerate chord endpoints in O(m) via
-    // counting sort keyed on the clockwise arc-table position.
-    //
-    // Each chord endpoint is associated with an arc via adj_arcs:
-    //   count=2 (non-vertex endpoint): the "starting" arc whose key_y
-    //     equals the chord's y.
-    //   count=1 (vertex endpoint): the single containing arc.
+    // [§3.1]: a₁, ..., aₘ = canonical enumeration of S₁'s exit chord
+    // endpoints in cw ∂C₁ order.  [§2.4(iii) tex 142]: arc-sequence is in
+    // ∂C order (LEFT ascending, then RIGHT descending).  cw ∂C₁ from a₀
+    // is RIGHT then LEFT; we counting-sort endpoints by cw-arc position
+    // in O(m).  Each endpoint is associated with one arc via adj_arcs:
+    // count==1 ⟹ the single arc; count==2 ⟹ the "starting" arc whose
+    // key_y == chord.y.
 
     std::size_t num_arcs = S.num_arcs();
     std::size_t lrb = S.left_right_boundary();
     std::size_t num_right = num_arcs - lrb;
 
-    // Map arc-table index → clockwise position.
-    // Clockwise: RIGHT arcs (table[lrb..end]) then LEFT (table[0..lrb-1]).
+    // Arc-table index → cw position.  RIGHT arcs [lrb..end) come first,
+    // then LEFT arcs [0..lrb).
     auto cw_pos = [&](std::size_t arc_idx) -> std::size_t {
-        if (arc_idx >= lrb)
-            return arc_idx - lrb;             // RIGHT: [0, num_right)
-        else
-            return num_right + arc_idx;       // LEFT:  [num_right, num_arcs)
+        return (arc_idx >= lrb) ? arc_idx - lrb
+                                : num_right + arc_idx;
     };
 
-    // Collect chord endpoints with their clockwise arc key.
     struct KeyedVertex {
         FusionVertex v;
-        std::size_t key;   // clockwise arc position
+        std::size_t key;        // cw arc position
     };
     std::vector<KeyedVertex> endpoints;
     endpoints.reserve(2 * S.num_live_chords());
@@ -786,31 +621,24 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
         return fv;
     };
 
-    // For a count=2 endpoint, the "starting" arc is the one whose
-    // key_y equals the chord's y (it begins at the chord endpoint).
+    // count==2 endpoint: exactly one adj arc starts there (key_y matches).
     auto starting_arc = [&](const Chord::AdjArcs& adj,
                              SymbolicY chord_y) -> std::size_t {
         assert(adj.count == 2);
         if (symbolic_y_equal(S.arc(adj.arcs[0]).key_symbolic_y(), chord_y))
             return adj.arcs[0];
-        // [C91 §2.4]: For a non-vertex endpoint, exactly one of the two
-        // adjacent arcs starts at the chord endpoint (key_y == chord_y).
         assert(symbolic_y_equal(S.arc(adj.arcs[1]).key_symbolic_y(), chord_y) &&
-               "§2.4: one of the two adj arcs must start at the chord endpoint");
+               "§2.4: one adj arc must start at the chord endpoint");
         return adj.arcs[1];
     };
 
     for (std::size_t ci = 0; ci < S.num_chords(); ++ci) {
-        assert(!S.chord(ci).dead &&
-               "§2.4: normal-form (compacted) submap must have no "
-               "dead chords");
+        assert(!S.chord(ci).dead && "§2.4: normal-form submap has no dead chords");
         const auto& c = S.chord(ci);
-        // [C91 §3.1] (tex 179, tex 142): "the canonical vertex enumeration
-        // enumerates the exit chord endpoints."  Exit chords are explicitly
-        // distinguished from null-length chords (tex 96).  NLCs are carried
-        // over automatically to the fused submap (tex 224) and must not enter
-        // the shooting traversal.  Including them would inflate the sequence
-        // from O(n/γ + 1) to O(n), violating Lemma 3.1 (tex 209-210).
+        // [§3.1 tex 179]: only EXIT chords enter the enumeration.  NLCs
+        // (§2.2 tex 96) are carried over to the fused submap directly
+        // (tex 224); including them would blow Lemma 3.1's O(n/γ + 1)
+        // bound (tex 209–210).
         if (c.is_null_length) continue;
         SymbolicY cy = c.symbolic_y();
 
@@ -847,9 +675,8 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
         bucket_starts.assign(num_arcs, 0);
     }
 
-    // Within each bucket (same arc), O(1) elements for conformal
-    // submaps (degree ≤ 4).  Sort by y along the arc's traversal
-    // direction.  Use insertion sort — O(1) per bucket, O(m) total.
+    // Within each bucket (same arc): O(1) elements (conformal degree ≤ 4).
+    // Insertion-sort by y along the arc's traversal direction; O(m) total.
     std::size_t right_half_len = junction_edge + 1;
     auto trav_pos = [&](std::size_t edge, Side side) -> std::size_t {
         if (side == RIGHT)
@@ -894,9 +721,7 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
         }
     }
 
-    // [C91 §3.1]: "we assume that [a₀ and a_{m+1}] are not [in the
-    // sequence] and therefore add them to the sequence."
-    // Prepend a₀, append a_{m+1}.
+    // [§3.1]: a₀ and a_{m+1} are not in the canonical enumeration — add them.
     std::vector<FusionVertex> result;
     result.reserve(sorted.size() + 2);
     result.push_back(a_0);
@@ -906,13 +731,10 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
 
     state.sequence = std::move(result);
 
-    // [C91 §3.1]: Map arc keys directly to their contiguous bounds in sequence.
-    // bucket_starts.size() == num_arcs by construction (both branches above),
-    // so every slot is assigned — no NONE sentinels remain.
+    // Map arc key → start of its block in `sequence`.  +1 for the prepended a₀.
     state.arc_starts.resize(num_arcs);
-    for (std::size_t i = 0; i < num_arcs; ++i) {
-        state.arc_starts[i] = bucket_starts[i] + 1; // +1 because a_0 is prepended
-    }
+    for (std::size_t i = 0; i < num_arcs; ++i)
+        state.arc_starts[i] = bucket_starts[i] + 1;
 }
 
 } // namespace chazelle

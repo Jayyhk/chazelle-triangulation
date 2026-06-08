@@ -1,16 +1,12 @@
 #pragma once
 
-/// [C91 §2.3]: Hierarchical tree decomposition of a conformal submap.
-///
-/// "The idea is to pick the centroid of the submap's tree and observe
-/// that there exists at least one incident edge whose removal leaves
-/// two subtrees, each with a number of edges at most three-quarters
-/// the original number.  Associating the removed edge with the root
-/// of a binary tree and recursing in this fashion with respect to
-/// the root's two children provides a tree decomposition."
-///
-/// Internal nodes ↔ exit chords.  Leaves ↔ regions.
-/// Depth = O(log m).  Built in O(m log m) time.
+// [C91 §2.3]: Hierarchical centroid decomposition of a conformal submap's
+// tree.  "Pick the centroid; some incident edge's removal leaves two
+// subtrees each with ≤ 3/4 the edges.  Associate the removed edge with
+// the root, recurse on its children."
+//
+// Internal nodes ↔ exit chords; leaves ↔ regions.  Depth O(log m),
+// built in O(m log m).
 
 #include "../common.h"
 
@@ -20,10 +16,9 @@
 namespace chazelle {
 
 struct TDNode {
-    /// For internal nodes: index of the chord in the Submap.
+    // Internal node: index of the chord in the Submap.  Leaf: NONE.
     std::size_t chord_idx = NONE;
-
-    /// For leaf nodes: index of the region in the Submap.
+    // Leaf: index of the region in the Submap.  Internal: NONE.
     std::size_t region_idx = NONE;
 
     std::size_t parent      = NONE;
@@ -36,8 +31,7 @@ struct TDNode {
 
 class TreeDecomposition {
 public:
-    /// Build the decomposition from a conformal submap.
-    /// Requires forward declaration — Submap is defined in submap.h.
+    // Submap forward-declared; defined in submap.h.
     void build(const class Submap& submap);
 
     std::size_t root() const noexcept { return root_; }
@@ -53,11 +47,8 @@ private:
     std::vector<TDNode> nodes_;
     std::size_t root_ = NONE;
 
-    /// Recursive centroid decomposition on a subtree.
-    /// [C91 §2.3] (tex 116): O(m log m) via reusable buffer.
-    /// region_local_buf: pre-allocated buffer of size submap.num_nodes(),
-    ///   shared across all recursive calls.  Used entries are cleaned
-    ///   up after each call (O(n_local) per call, O(m) per level).
+    // [§2.3 tex 116]: O(m log m) via a shared region_local_buf
+    // (pre-allocated to submap.num_nodes(); cleaned per call).
     std::size_t decompose(
         const class Submap& submap,
         const std::vector<std::size_t>& chords_in_subtree,

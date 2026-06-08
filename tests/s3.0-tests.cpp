@@ -1,4 +1,4 @@
-/// tests/s3.0-tests.cpp — Tests for §3.0: merge setup and preconditions.
+// tests/s3.0-tests.cpp — Tests for §3.0: merge setup and preconditions.
 
 #include "merge/merge.h"
 
@@ -51,7 +51,7 @@ struct StubArcCutter : ArcCuttingOracle {
 static const StubRayShooter STUB_RAY;
 static const StubArcCutter STUB_ARC;
 
-/// Build a MergeInput with stub oracles.
+// Build a MergeInput with stub oracles.
 static MergeInput make_input(const Polygon& C1, const Polygon& C2,
                               Submap& S1, Submap& S2,
                               std::size_t g1, std::size_t g2,
@@ -71,7 +71,7 @@ static MergeInput make_input(const Polygon& C1, const Polygon& C2,
 //  Helpers
 // ════════════════════════════════════════════════════════════════
 
-/// Two curves sharing vertex (5,5,2): C₁ = v0→v1→v2, C₂ = v2→v3→v4.
+// Two curves sharing vertex (5,5,2): C₁ = v0→v1→v2, C₂ = v2→v3→v4.
 static Polygon make_C1() {
     return Polygon({{0,0,0}, {3,3,1}, {5,5,2}});
 }
@@ -79,7 +79,7 @@ static Polygon make_C2() {
     return Polygon({{5,5,2}, {7,2,3}, {10,8,4}});
 }
 
-/// Single-region conformal submap (no chords → granular by default).
+// Single-region conformal submap (no chords → granular by default).
 static Submap make_single_region_submap(const Polygon& poly) {
     Submap s;
     s.add_node();
@@ -256,7 +256,7 @@ static void test_conformality_required() {
 //  7. assert_cut_postconditions — positive case
 // ════════════════════════════════════════════════════════════════
 
-/// Minimal valid 2-vertex submap for use as a piece's V(ᾱⱼ).
+// Minimal valid 2-vertex submap for use as a piece's V(ᾱⱼ).
 static Polygon make_segment_curve() {
     return Polygon({{0,0,100}, {1,1,101}});
 }

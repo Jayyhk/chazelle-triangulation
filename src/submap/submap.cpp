@@ -1,4 +1,4 @@
-/// src/submap/submap.cpp
+// src/submap/submap.cpp
 
 #include "submap.h"
 #include "../polygon/polygon.h"
@@ -10,10 +10,8 @@ namespace chazelle {
 // ── SubmapNode ──────────────────────────────────────────────────
 
 std::size_t SubmapNode::degree() const noexcept {
-    // Invariant: remove_chord actively maintains incident_chords —
-    // dead chord indices are erased at removal time and only live
-    // chords from merged regions are copied.  So incident_chords
-    // contains only live entries for live nodes.
+    // remove_chord erases dead chord indices at removal time, so
+    // incident_chords contains only live entries for live nodes.
     return incident_chords.size();
 }
 
@@ -22,62 +20,45 @@ std::size_t SubmapNode::degree() const noexcept {
 std::size_t Submap::add_node() {
     std::size_t idx = nodes_.size();
     nodes_.push_back(SubmapNode{});
-    // [C91 §2.4(iv)]: tree decomposition indexes nodes_; flag stale.
-    // O(1) — destruction is deferred to next build() or destructor.
-    tree_decomp_dirty_ = true;
+    tree_decomp_dirty_ = true;     // [§2.4(iv)]: TD indexes nodes_.
     return idx;
 }
 
 std::size_t Submap::add_arc(Arc arc) {
-    // [C91 §2.4(ii)] (tex 137): every arc-structure carries a pointer to
-    // the live region it bounds.  O(1) check.
+    // [§2.4(ii) tex 137]: arc must point to a live region.
     assert(arc.region_node != NONE &&
            arc.region_node < nodes_.size() &&
            !nodes_[arc.region_node].dead &&
-           "§2.4(ii) tex 137: arc.region_node must point to a live region");
+           "§2.4(ii) tex 137: arc.region_node must be live");
 
-    // [C91 §2 tex 47 (SoS)] + [C91 §2.4 tex 144]: arc.key_y is used by
-    // double_identify Phase 2's binary search and tie-break by symbolic-y;
-    // arc.key_y_tag must therefore carry a valid SoS tag.  Real arcs
-    // inherit their start vertex's tag; null-length arcs inherit the
-    // NLC's tag.  No paper-valid arc has a NONE tag.
+    // [§2.4 tex 144]: double_identify's Phase 2 binary-searches on
+    // symbolic key_y, so key_y_tag must carry a valid SoS tag (real arcs
+    // inherit the start vertex's tag; null-length arcs inherit the NLC's).
     assert(arc.key_y_tag != SOS_NONE &&
-           "§2 tex 47 (SoS) + §2.4 tex 144: arc.key_y_tag must carry a "
-           "valid SoS tag");
+           "§2.4 tex 144: arc.key_y_tag must carry a valid SoS tag");
 
     std::size_t idx = arc_sequence_.size();
 
-    // [C91 §2.4(iii)] (tex 138): "The arc-structures are stored in a
-    // table in the order corresponding to a canonical traversal of ∂C."
-    // LEFT arcs (ascending first_edge) must precede all RIGHT arcs
-    // (descending first_edge).  left_right_boundary_ is computed as a
-    // side effect of insertion order, so out-of-order insertion silently
-    // corrupts double_identify's binary search ranges.
+    // [§2.4(iii) tex 138]: arc-sequence is in canonical ∂C order — LEFT
+    // ascending first_edge, then RIGHT descending.  left_right_boundary_
+    // tracks this implicitly, so out-of-order insertion would silently
+    // break double_identify's binary search.
     if (!arc_sequence_.empty()) {
         Side prev_side = arc_sequence_.back().first_side;
         if (arc.first_side == LEFT) {
             assert(prev_side == LEFT &&
-                   "§2.4(iii): LEFT arc added after RIGHT arc "
-                   "violates ∂C order");
+                   "§2.4(iii): LEFT arc after RIGHT violates ∂C order");
             assert(arc.first_edge >= arc_sequence_.back().first_edge &&
-                   "§2.4(iii): LEFT arcs must have ascending "
-                   "first_edge");
-        } else {
-            if (prev_side == RIGHT) {
-                assert(arc.first_edge <= arc_sequence_.back().first_edge &&
-                       "§2.4(iii): RIGHT arcs must have descending "
-                       "first_edge");
-            }
+                   "§2.4(iii): LEFT arcs must ascend in first_edge");
+        } else if (prev_side == RIGHT) {
+            assert(arc.first_edge <= arc_sequence_.back().first_edge &&
+                   "§2.4(iii): RIGHT arcs must descend in first_edge");
         }
     }
 
-    // [C91 §2.4]: Maintain cached LEFT/RIGHT boundary.
-    if (arc.first_side == LEFT) {
+    if (arc.first_side == LEFT)
         left_right_boundary_ = idx + 1;
-    }
     arc_sequence_.push_back(arc);
-    // [C91 §2.4(iv)]: tree decomposition references the arc sequence
-    // via region adjacency; flag stale.  O(1).
     tree_decomp_dirty_ = true;
     return idx;
 }
@@ -85,24 +66,21 @@ std::size_t Submap::add_arc(Arc arc) {
 std::size_t Submap::add_chord(Chord chord) {
     std::size_t idx = chords_.size();
 
-    // [C91 §2.4(ii)] (tex 137): "pointers to the arc-structures of the
-    // two, three, or four arcs adjacent to it."  The per-endpoint count
-    // is 1 or 2 (1 at a polygon-vertex endpoint, 2 at a non-vertex
-    // endpoint per §2.2 tex 94).  Per-endpoint bounds 1..2 imply the
-    // §2.4(ii) total ∈ {2, 3, 4} (1+1, 1+2, 2+1, or 2+2).
+    // [§2.4(ii) tex 137]: per-endpoint adj-arc count ∈ {1, 2}, total
+    // across both endpoints ∈ {2, 3, 4}.  count==1 at polygon-vertex
+    // endpoints; count==2 at non-vertex endpoints (§2.2 tex 94).
     assert(chord.left_adj.count >= 1 && chord.left_adj.count <= 2 &&
-           "§2.4(ii): LEFT endpoint must have 1 or 2 adjacent arcs");
+           "§2.4(ii): LEFT endpoint adj count ∈ [1,2]");
     assert(chord.right_adj.count >= 1 && chord.right_adj.count <= 2 &&
-           "§2.4(ii): RIGHT endpoint must have 1 or 2 adjacent arcs");
+           "§2.4(ii): RIGHT endpoint adj count ∈ [1,2]");
     assert(chord.left_adj.count + chord.right_adj.count >= 2 &&
            chord.left_adj.count + chord.right_adj.count <= 4 &&
-           "§2.4(ii) (tex 137): chord must have 2, 3, or 4 adjacent "
-           "arcs in total across both endpoints");
+           "§2.4(ii) tex 137: total adj count ∈ [2,4]");
     auto check_adj = [&](const Chord::AdjArcs& adj) {
         for (std::size_t k = 0; k < adj.count; ++k) {
             assert(adj.arcs[k] != NONE &&
                    adj.arcs[k] < arc_sequence_.size() &&
-                   "§2.4(ii): adj_arc must be a valid arc index");
+                   "§2.4(ii): adj_arc index must be valid");
             assert(!arc_sequence_[adj.arcs[k]].dead &&
                    "§2.4(ii): adj_arc must be live");
             assert((arc_sequence_[adj.arcs[k]].region_node ==
@@ -116,68 +94,48 @@ std::size_t Submap::add_chord(Chord chord) {
     check_adj(chord.left_adj);
     check_adj(chord.right_adj);
 
-    // [C91 §2.2] (tex 102): dual graph is a tree — no self-loops.
+    // [§2.2 tex 102]: dual graph is a tree — no self-loops.
     assert(chord.region[0] != chord.region[1] &&
-           "§2.2: chord must connect two distinct regions "
-           "(tree, no self-loops)");
+           "§2.2 tex 102: chord must connect two distinct regions");
 
-    // [C91 §2 tex 47 (SoS)] + [C91 §2.1 tex 70]: every chord is horizontal
-    // at the y of some polygon vertex (the visibility source).  That
-    // vertex has a valid SoS tag, so every chord must carry one.  Without
-    // it, endpoint_is_polygon_vertex() and double_identify's y-
-    // disambiguation silently misclassify.
+    // [§2 tex 47 + §2.1 tex 70]: every chord is horizontal at a polygon
+    // vertex's y, so it must carry that vertex's SoS tag — otherwise
+    // endpoint_is_polygon_vertex() and double_identify's y-disambiguation
+    // silently misclassify.
     assert(chord.y_tag != SOS_NONE &&
-           "§2 tex 47 (SoS): chord must carry the source y-extremum "
-           "vertex's SoS tag");
+           "§2 tex 47 (SoS): chord must carry the source vertex's SoS tag");
 
-    // [C91 §2.1] (tex 72) + §2.2 (tex 108): null-length chords arise
-    // at y-extrema of C from the "inside" pair of duplicate vertices.
-    // Both chord endpoints sit at the same ∂C point, so they share
-    // edge, side, and symbolic y; on each ∂C side of the NLC there is
-    // exactly one adjacent arc (the duplicate vertices in the pair are
-    // next to each other along ∂C, separated by the NLC).
-    // remove_chord (line 210-212) re-asserts (2) at removal time;
-    // asserting at construction catches mis-creation earlier.
+    // [§2.1 tex 72 + §2.2 tex 108]: NLC arises at a y-extremum from the
+    // "inside" pair of duplicate vertices — both endpoints at the same
+    // ∂C point (same edge/side/symbolic y), one adj arc per ∂C side.
     if (chord.is_null_length) {
         assert(chord.left_edge == chord.right_edge &&
                chord.left_side == chord.right_side &&
-               "§2.1 tex 72: null-length chord endpoints must coincide "
-               "(same edge and ∂C side — both at the y-extremum's "
-               "'inside' pair of duplicate vertices)");
+               "§2.1 tex 72: NLC endpoints must coincide (same edge + side)");
         assert(chord.left_adj.count == 1 && chord.right_adj.count == 1 &&
-               "§2.1 tex 72: null-length chord must have exactly 1 "
-               "adjacent arc per ∂C side (the single arc flanking the "
-               "duplicate-vertex pair on each side)");
+               "§2.1 tex 72: NLC has exactly 1 adj arc per ∂C side");
     }
 
     chords_.push_back(chord);
 
-    // [C91 §2.4(i)]: Update adjacency — each region knows its
-    // incident chords.  Both regions must be live (the dual tree's
-    // chord-edges always connect two live nodes).  O(1).
+    // [§2.4(i)]: update region adjacency; both regions must be live.
     for (std::size_t r : chord.region) {
         assert(r != NONE && r < nodes_.size() && !nodes_[r].dead &&
                "§2.4(i): chord must connect two LIVE regions");
         nodes_[r].incident_chords.push_back(idx);
     }
 
-    // [C91 §2.4(iv)]: tree decomposition indexes chords_; flag stale.
-    // O(1).  add_chord is O(1) per §2.4 invariants.
     tree_decomp_dirty_ = true;
     return idx;
 }
 
 // ── Chord removal (O(1) via tombstones) ─────────────────────────
 
-// [C91 §2.2] (tex 94): "the removal of a chord entails removing not
-// only the chord itself but also those endpoints that are not vertices
-// of C, and glueing back ∂C at those points."
-//
-// [C91 §3.3]: "can be enforced in time linear in the size of the
-// submap tree, that is, O(n₁/γ₁ + n₂/γ₂ + 1)."  This requires O(1)
-// per removal.  We achieve this by tombstoning dead entries instead
-// of erasing from vectors.  Indices remain stable.  Dead entries are
-// stripped by compact() before putting S in normal form.
+// [§2.2 tex 94]: "remove the chord and those endpoints that are not
+// vertices of C, gluing back ∂C at those points."
+// [§3.3]: must be O(1) per removal to keep the submap-tree-linear bound.
+// We tombstone instead of erasing; indices stay stable.  compact() strips
+// dead entries before normal form.
 
 std::size_t Submap::remove_chord(std::size_t chord_idx,
                                   const Polygon& polygon) {
@@ -190,40 +148,36 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     std::size_t r1 = c.region[1];
     assert(!nodes_[r0].dead && !nodes_[r1].dead);
 
-    // Check if each chord endpoint is a polygon vertex.
+    // Is an endpoint a polygon vertex? (Chord's symbolic y matches
+    // either of the edge's endpoints.)
     auto endpoint_is_polygon_vertex = [&](std::size_t edge,
                                           double ey,
                                           std::size_t ey_tag) -> bool {
-        assert(edge < polygon.num_edges() &&
-               "§2.2: chord endpoint edge must be a valid edge index");
+        assert(edge < polygon.num_edges() && "§2.2: invalid edge index");
         const auto& e = polygon.edge(edge);
-        const auto& v_start = polygon.vertex(e.start_idx);
-        const auto& v_end   = polygon.vertex(e.end_idx);
         SymbolicY chord_y{ey, ey_tag};
-        return symbolic_y_equal(chord_y, symbolic_y_of(v_start)) ||
-               symbolic_y_equal(chord_y, symbolic_y_of(v_end));
+        return symbolic_y_equal(chord_y, symbolic_y_of(polygon.vertex(e.start_idx))) ||
+               symbolic_y_equal(chord_y, symbolic_y_of(polygon.vertex(e.end_idx)));
     };
 
     bool left_is_vertex  = endpoint_is_polygon_vertex(c.left_edge, c.y, c.y_tag);
     bool right_is_vertex = endpoint_is_polygon_vertex(c.right_edge, c.y, c.y_tag);
 
-    // [C91 §2.2]: "glueing back ∂C at those points."
-    // Merge arc pairs at endpoints.  O(1): at most 2 pairs.
+    // [§2.2 tex 94]: "glue back ∂C" — merge arc pairs at non-vertex
+    // endpoints.  O(1): at most 2 pairs.
     auto do_merge = [&](std::size_t ai, std::size_t aj) {
         assert(ai != NONE && ai < arc_sequence_.size() &&
-               "§2.4(ii): adj_arc must be valid");
-        assert(aj != NONE && aj < arc_sequence_.size() &&
-               "§2.4(ii): adj_arc must be valid");
-        assert(!arc_sequence_[ai].dead && !arc_sequence_[aj].dead);
+               aj != NONE && aj < arc_sequence_.size() &&
+               !arc_sequence_[ai].dead && !arc_sequence_[aj].dead &&
+               "§2.4(ii): adj_arc must be valid + live");
 
         auto& a_keep = arc_sequence_[ai];
         auto& a_dead = arc_sequence_[aj];
 
         assert(a_keep.last_edge == a_dead.first_edge &&
-               "§2.4(iii): adjacent arcs at chord endpoint "
-               "must share the junction edge");
+               "§2.4(iii): adj arcs at chord endpoint share the junction edge");
 
-        // [C91 §2.2] (tex 106): merged edge count.
+        // [§2.2 tex 106]: merged edge count subtracts the shared edge.
         std::size_t shared_edge = a_dead.first_edge;
         std::size_t shared_nonnull =
             polygon.count_nonnull_edges(shared_edge, shared_edge);
@@ -263,66 +217,47 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     // [C91 §2.2] (tex 108): "once removed, a chord of zero length
     // ceases to separate any arcs."
     //
-    // Use the stored flag — do NOT recompute from edge/side fields.
-    // The default Chord has left_side=LEFT, right_side=RIGHT, so
-    // any exit chord with left_edge==right_edge would be misclassified
-    // as an NLC if we recomputed here.
+    // Use the stored flag — recomputing from edge/side would misclassify
+    // exit chords whose left_edge == right_edge but sides differ.
     bool is_null_length = c.is_null_length;
 
     if (is_null_length) {
         assert(c.left_adj.count == 1 && c.right_adj.count == 1 &&
-               "§2.2: null-length chord at vertex must have exactly "
-               "1 adjacent arc per side");
-        // [C91 §2.1 tex 72] + [§2.2 tex 108]: NLCs arise at y-extrema
-        // from the "inside" pair of duplicate ∂C-vertices, so both
-        // endpoints are polygon vertices by construction.  O(1)-free
-        // assertion: left_is_vertex/right_is_vertex were already
-        // computed above.
+               "§2.2: NLC must have exactly 1 adj arc per side");
+        // [§2.1 tex 72]: NLC endpoints are y-extremum duplicate vertices
+        // — both polygon vertices by construction.
         assert(left_is_vertex && right_is_vertex &&
-               "§2.1 tex 72: NLC endpoints must both be polygon vertices "
-               "(y-extremum 'inside' duplicate pair)");
-        // Vertex endpoints do NOT trigger arc merging (§2.2 tex 94).
-        // The null-length arc (right_adj) is kept alive and absorbed
-        // into the main region by the reassignment step below —
-        // it correctly represents the y-extremum vertex on r0's boundary.
-        // do_merge is NOT called here.
+               "§2.1 tex 72: NLC endpoints must both be polygon vertices");
+        // Vertex endpoints don't trigger merging (§2.2 tex 94).  The
+        // null-length arc is absorbed into r0 by the reassignment below.
     } else {
-        // Standard logic for chords with nonzero length: merge if NOT a vertex.
+        // [§2.2 tex 94]: non-vertex endpoint ⟹ 2 adj arcs to glue.
         if (!left_is_vertex) {
-            // [C91 §2.2] (tex 94): a non-vertex chord endpoint always has
-            // exactly 2 adjacent arcs (one ending, one starting) to be glued.
             assert(c.left_adj.count == 2 &&
-                   "§2.2 (tex 94): non-vertex chord endpoint must have "
-                   "exactly 2 adjacent arcs for glueing");
+                   "§2.2 tex 94: non-vertex endpoint needs 2 adj arcs");
             do_merge(c.left_adj.arcs[0], c.left_adj.arcs[1]);
         }
         if (!right_is_vertex) {
             assert(c.right_adj.count == 2 &&
-                   "§2.2 (tex 94): non-vertex chord endpoint must have "
-                   "exactly 2 adjacent arcs for glueing");
+                   "§2.2 tex 94: non-vertex endpoint needs 2 adj arcs");
             do_merge(c.right_adj.arcs[0], c.right_adj.arcs[1]);
         }
     }
 
-    // Reassign r1's arcs to r0.  Use chord→arc adjacency for O(1).
-    // [C91 §2.4(ii)] (tex 137): traverse r1's incident chords' adj arcs.
-    //
-    // Two call sites with different invariants:
-    //   (a) Other chords' adj arcs: replace_arc already updated them
-    //       to point to surviving arcs, so all must be live.
+    // Reassign r1's arcs to r0 by walking r1's incident chords' adj arcs
+    // ([§2.4(ii) tex 137]).  Two cases:
+    //   (a) Other chords' adj arcs: replace_arc kept them pointing to
+    //       live arcs, so all are guaranteed live.
     //   (b) The removed chord's own adj arcs: do_merge may have killed
-    //       one arc at each non-vertex endpoint.
+    //       one per non-vertex endpoint, so check for dead.
     auto reassign_live = [&](const Chord::AdjArcs& adj) {
         for (std::size_t k = 0; k < adj.count; ++k) {
             std::size_t ai = adj.arcs[k];
             assert(ai != NONE && ai < arc_sequence_.size() &&
-                   "§2.4(ii): adj_arc index must be valid");
-            assert(!arc_sequence_[ai].dead &&
-                   "§2.4(ii): other chords' adj arcs must be live "
-                   "(replace_arc maintains this)");
-            if (arc_sequence_[ai].region_node == r1) {
+                   !arc_sequence_[ai].dead &&
+                   "§2.4(ii): other chords' adj arcs must be live");
+            if (arc_sequence_[ai].region_node == r1)
                 arc_sequence_[ai].region_node = r0;
-            }
         }
     };
     auto reassign_maybe_dead = [&](const Chord::AdjArcs& adj) {
@@ -331,9 +266,8 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
             assert(ai != NONE && ai < arc_sequence_.size() &&
                    "§2.4(ii): adj_arc index must be valid");
             if (arc_sequence_[ai].dead) continue;
-            if (arc_sequence_[ai].region_node == r1) {
+            if (arc_sequence_[ai].region_node == r1)
                 arc_sequence_[ai].region_node = r0;
-            }
         }
     };
     for (std::size_t ci : nodes_[r1].incident_chords) {
@@ -343,36 +277,28 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         reassign_live(ch.left_adj);
         reassign_live(ch.right_adj);
     }
-    // The removed chord's own adj arcs: do_merge may have killed one
-    // arc at each non-vertex endpoint, so skip dead arcs here.
     reassign_maybe_dead(c.left_adj);
     reassign_maybe_dead(c.right_adj);
 
-    // Move r1's incident chords (other than this one) to r0.
-    // Also update the chord's region[] to point to r0.
+    // Move r1's other incident chords to r0, and rewrite their region
+    // pointers from r1 → r0.
     for (std::size_t ci : nodes_[r1].incident_chords) {
         if (ci == chord_idx) continue;
         auto& ch = chords_[ci];
         if (ch.dead) continue;
         nodes_[r0].incident_chords.push_back(ci);
-        // Fix the chord's region pointer from r1 → r0.
         if (ch.region[0] == r1) ch.region[0] = r0;
         if (ch.region[1] == r1) ch.region[1] = r0;
     }
 
-    // Remove this chord from r0's incident list.  O(degree) = O(1).
+    // Drop this chord from r0's incident list.  O(degree) = O(1).
     {
         auto& ic = nodes_[r0].incident_chords;
         ic.erase(std::remove(ic.begin(), ic.end(), chord_idx), ic.end());
     }
 
-    // Tombstone the chord and the dead region.
     c.dead = true;
     nodes_[r1].dead = true;
-
-    // [C91 §2.4(iv)]: tree decomposition can reference c and r1, both
-    // now dead; flag stale.  O(1) — required by §3.3 (tex 277) O(1) per
-    // chord removal.
     tree_decomp_dirty_ = true;
     return r0;
 }
@@ -383,22 +309,18 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
 // dead entries and rebuilds index mappings in O(m).
 
 void Submap::compact() {
-    // [C91 §2.2] (tex 94): After cascaded chord removals, some live
-    // arcs may still point to dead regions.  This happens when region
-    // R2 is absorbed into R1 (chord A removed), then R1 is later
-    // absorbed into R0 (chord B removed) — arcs that were adjacent to
-    // chord A and belonged to R2 were reassigned to R1 by A's removal,
-    // but B's removal only reassigns arcs reachable via chord adjacency,
-    // missing the orphaned arcs.
+    // Cascaded removals can leave live arcs pointing to dead regions:
+    // when r2 is absorbed into r1 (chord A removed), then r1 into r0
+    // (chord B), arcs that lived in r2 were reassigned to r1 by A, but B
+    // only walks chord-adjacency and misses those orphans.
     //
-    // Fix: build a forwarding table from dead chords (each dead chord
-    // records region[1] → region[0]), resolve chains, then fixup arcs.
-    // O(m) total — does not change the paper's complexity.
+    // Fix: build a forwarding table (each dead chord records region[1]
+    // → region[0]), resolve chains, fixup arcs.  O(m), no asymptotic hit.
     {
         std::vector<std::size_t> forward(nodes_.size(), NONE);
         for (const auto& ch : chords_) {
             if (!ch.dead) continue;
-            // remove_chord always kills region[1] and keeps region[0].
+            // remove_chord always kills region[1], keeps region[0].
             std::size_t dead_r = ch.region[1];
             std::size_t live_r = ch.region[0];
             if (dead_r < nodes_.size() && nodes_[dead_r].dead &&
@@ -406,15 +328,12 @@ void Submap::compact() {
                 forward[dead_r] = live_r;
             }
         }
-        // Resolve chains with path compression.
         auto resolve = [&](std::size_t r) -> std::size_t {
-            // Phase 1: find root
             std::size_t root = r;
             while (root < nodes_.size() && nodes_[root].dead &&
-                   forward[root] != NONE) {
+                   forward[root] != NONE)
                 root = forward[root];
-            }
-            // Phase 2: compress path
+            // Path-compress.
             while (r != root && r < nodes_.size() && nodes_[r].dead) {
                 std::size_t next = forward[r];
                 forward[r] = root;
@@ -528,14 +447,8 @@ void Submap::compact() {
             left_right_boundary_ = i + 1;
     }
 
-    // [C91 §2.4] (tex 144): arc-sequence is now free of dead entries.
-    compacted_ = true;
-
-    // [C91 §2.4(iv)]: tree decomposition indices reference the
-    // pre-compaction chord/node tables and are now stale.  Flag — the
-    // deferred destruction is absorbed by the next build() (which
-    // clears internally) or the Submap destructor.
-    tree_decomp_dirty_ = true;
+    compacted_ = true;          // [§2.4 tex 144]: no dead arcs remain.
+    tree_decomp_dirty_ = true;  // [§2.4(iv)]: TD indices were stale anyway.
 }
 
 // ── Live counts ─────────────────────────────────────────────────
@@ -561,21 +474,15 @@ std::size_t Submap::num_live_arcs() const noexcept {
 // ── Invariant checks ────────────────────────────────────────────
 
 void Submap::assert_tree_property() const {
-    // [C91 §2.2] (tex 110): "Combinatorially, a region corresponds to a
-    // subtree of the visibility tree of C."  A submap is the polygonal
-    // subdivision induced by removing chords from V(C); that subdivision
-    // always has at least one region.  Asserted up front so an empty
-    // submap fails with the right diagnostic instead of the misleading
-    // "0 ≠ 1" tree-property message below.
+    // [§2.2 tex 110]: a submap is induced from V(C) — always ≥1 region.
+    // Asserted first so an empty submap fails with this diagnostic rather
+    // than the misleading "0 ≠ 1" tree-property message below.
     assert(num_live_nodes() >= 1 &&
-           "§2.2: submap must have at least one region "
-           "(induced from V(C))");
+           "§2.2: submap must have at least one region");
 
-    // [C91 §2.2]: "the dual graph of a submap is itself a tree."
-    // For a tree: num_live_regions == num_live_chords + 1.
+    // [§2.2]: "the dual graph of a submap is itself a tree."
     assert(num_live_nodes() == num_live_chords() + 1 &&
-           "§2.2: submap tree property violated "
-           "(num_regions ≠ num_chords + 1)");
+           "§2.2: submap tree property: num_regions = num_chords + 1");
 }
 
 void Submap::check_invariants() const {
@@ -621,8 +528,7 @@ void Submap::check_invariants() const {
         check_adj(c.right_adj);
     }
 
-    // [C91 §2.4(iii)] (tex 138): ∂C ordering of live arcs.
-    // Dead arcs are gaps in the table; skip them for ordering checks.
+    // [§2.4(iii) tex 138]: ∂C ordering of live arcs (skip dead gaps).
     {
         bool seen_right = false;
         std::size_t prev_live = NONE;
@@ -667,53 +573,40 @@ void Submap::check_invariants() const {
                !arc_sequence_[end_arc].dead &&
                "§2.4(iii): end_arc out of range or dead");
 
-        // [C91 §2.4(iii) tex 138] + [§2.4 tex 144]: the canonical
-        // arc-sequence has LEFT arcs first (ascending first_edge), then
-        // RIGHT arcs (descending).  Endpoint arcs sit at the LEFT-half
-        // boundaries: start_arc = first LEFT arc (index 0), end_arc =
-        // last LEFT arc (left_right_boundary_ - 1).  This canonical
-        // layout is what double_identify's two-linear-sequence binary
-        // search (tex 144) relies on.  O(1) checks.
+        // [§2.4(iii) tex 138 + tex 144]: canonical layout has LEFT arcs
+        // first (ascending), then RIGHT (descending).  The endpoints sit
+        // at the LEFT-half boundaries — required by double_identify's
+        // two-linear-sequence binary search.
         assert(arc_sequence_[start_arc].first_side == LEFT &&
-               "§2.4(iii) tex 138: start_arc must be a LEFT-side arc");
+               "§2.4(iii): start_arc must be LEFT-side");
         assert(arc_sequence_[end_arc].first_side == LEFT &&
-               "§2.4(iii) tex 138: end_arc must be a LEFT-side arc");
+               "§2.4(iii): end_arc must be LEFT-side");
         assert(start_arc == 0 &&
-               "§2.4(iii) tex 138: start_arc must be the first arc in "
-               "canonical ∂C order (index 0)");
+               "§2.4(iii): start_arc must be index 0");
         assert(end_arc + 1 == left_right_boundary_ &&
-               "§2.4 tex 144: end_arc must be the last LEFT arc "
-               "(left_right_boundary_ - 1) for the two-linear-sequence "
-               "split required by double_identify");
+               "§2.4 tex 144: end_arc must be the last LEFT arc");
 
         assert(start_vertex != NONE &&
-               "§2.4(iii): start_vertex must be set when arcs exist");
+               "§2.4(iii): start_vertex required when arcs exist");
         {
-            // [C91 §2.4(iii)]: start_arc must pass through C's
-            // start vertex.  Vertex v is on arc [first_edge, last_edge]
-            // iff edge v-1 or edge v is in the arc's range (v is the
-            // start of edge v and the end of edge v-1).
-            // For edge-index convention: vertex v ∈ arc iff
-            //   first_edge ≤ v ≤ last_edge  (v starts edge v in range)
-            //   OR v == first_edge  (v is the start of the first edge)
-            // Simplified: first_edge ≤ v ≤ last_edge + 1 for non-wrapped.
-            // For wrapped arcs, extend to C endpoint.
+            // [§2.4(iii)]: start_arc must pass through C's start vertex.
+            // Vertex v lies on arc [first_edge, last_edge] iff
+            //   first_edge ≤ v ≤ last_edge + 1 (non-wrapped).
+            // For wrapped arcs, the range extends through the C endpoint.
             const auto& sa = arc_sequence_[start_arc];
             std::size_t elo = std::min(sa.first_edge, sa.last_edge);
             std::size_t ehi = std::max(sa.first_edge, sa.last_edge) + 1;
             if (sa.first_side != sa.last_side)
                 elo = std::min(elo, start_vertex);
             assert(start_vertex >= elo && start_vertex <= ehi &&
-                   "§2.4(iii): start_arc must pass through "
-                   "start_vertex");
+                   "§2.4(iii): start_arc must pass through start_vertex");
         }
 
         assert(end_vertex != NONE && end_vertex > 0 &&
-               "§2.4(iii): end_vertex must be set when arcs exist");
+               "§2.4(iii): end_vertex required when arcs exist");
         {
-            // [C91 §2.4(iii)]: end_arc must pass through C's end
-            // vertex.  end_vertex is the last vertex of C; the last
-            // edge of C is end_vertex - 1.
+            // [§2.4(iii)]: end_arc must pass through C's end vertex.
+            // C's last edge is end_vertex - 1.
             const auto& ea = arc_sequence_[end_arc];
             std::size_t c_end_edge = end_vertex - 1;
             std::size_t elo = std::min(ea.first_edge, ea.last_edge);
@@ -721,30 +614,21 @@ void Submap::check_invariants() const {
             if (ea.first_side != ea.last_side)
                 ehi = std::max(ehi, c_end_edge);
             assert(c_end_edge >= elo && c_end_edge <= ehi &&
-                   "§2.4(iii): end_arc must pass through "
-                   "end_vertex");
+                   "§2.4(iii): end_arc must pass through end_vertex");
         }
     }
 }
 
 void Submap::check_invariants(const Polygon& polygon) const {
-    // First all polygon-independent invariants.
     check_invariants();
 
-    // [C91 §2.4] (tex 144): within a same-(first_side, first_edge)
-    // interval, key_y must be monotonic — `double_identify` Phase 2
-    // (submap.cpp `keys_ascending` line ~837) infers the direction
-    // from interval endpoints and binary-searches by key_y, so an
-    // intermediate arc out of order in the inferred direction
-    // silently corrupts identification.
-    //
-    // We check monotonicity in the direction inferred from endpoints
-    // (matching Phase 2's semantics).  This is more permissive than
-    // requiring strict canonical ascending/descending traversal: at
-    // NLC duplicate-vertex pairs both arcs share a raw y but differ
-    // in SoS tag, and the direction implied by tags need not match
-    // the geometric edge ascent.  All that matters for Phase 2
-    // correctness is that the table is monotonic in some direction.
+    // [§2.4 tex 144]: within a same-(first_side, first_edge) run, key_y
+    // must be monotonic — double_identify Phase 2 infers the direction
+    // from the run's endpoints and binary-searches.  We check
+    // monotonicity in the inferred direction (more permissive than strict
+    // canonical ascent/descent: at NLC duplicate-vertex pairs the SoS
+    // tag direction may oppose geometric edge ascent, and Phase 2 only
+    // needs SOME monotonic direction).
     {
         std::size_t i = 0;
         while (i < arc_sequence_.size()) {
@@ -776,18 +660,14 @@ void Submap::check_invariants(const Polygon& polygon) const {
                         assert(symbolic_y_leq(
                                 arc_sequence_[prev_live].key_symbolic_y(),
                                 arc_sequence_[k].key_symbolic_y()) &&
-                               "§2.4 tex 144: arcs sharing first_edge "
-                               "must have key_y monotonic (ascending "
-                               "by inference) for double_identify "
-                               "Phase 2 binary search");
+                               "§2.4 tex 144: same-first_edge run must "
+                               "be key_y-monotonic (ascending)");
                     } else {
                         assert(symbolic_y_geq(
                                 arc_sequence_[prev_live].key_symbolic_y(),
                                 arc_sequence_[k].key_symbolic_y()) &&
-                               "§2.4 tex 144: arcs sharing first_edge "
-                               "must have key_y monotonic (descending "
-                               "by inference) for double_identify "
-                               "Phase 2 binary search");
+                               "§2.4 tex 144: same-first_edge run must "
+                               "be key_y-monotonic (descending)");
                     }
                     prev_live = k;
                 }
@@ -796,26 +676,20 @@ void Submap::check_invariants(const Polygon& polygon) const {
         }
     }
 
-    // [C91 §2.2] (tex 106): "the maximum number of nonnull length
-    // edges in any of its arcs."  `arc.edge_count` is a cache used by
-    // `region_weight` and `simulated_contraction_weight`; verify it
-    // equals the authoritative count from the input table over the
-    // arc's underlying edge range.  A stale or wrong cache silently
-    // miscomputes weights → wrong γ-granularity decisions.
+    // [§2.2 tex 106]: arc.edge_count caches the max-nonnull-edges count
+    // used by region_weight and simulated_contraction_weight.  Validate
+    // it against polygon.count_nonnull_edges — a stale cache silently
+    // miscomputes weights, breaking γ-granularity decisions.
     //
-    // §2.4 (tex 133): "Null-length arcs can be represented explicitly."
-    // A null-length arc encodes a single ∂C point (the duplicate-vertex
-    // pair flanking an NLC) rather than an edge span — its
-    // `first_edge`/`last_edge` is a positional hint, not a traversed
-    // edge.  Under §2.1's simple-polygon assumption every polygon edge
-    // is geometrically nonnull, so `edge_count == 0` uniquely identifies
-    // null-length arcs and we skip the cache check for them.
+    // §2.4 tex 133: null-length arcs encode a single ∂C point (NLC
+    // duplicate-vertex pair), not an edge span.  Under §2.1 every
+    // polygon edge has nonzero length, so edge_count == 0 uniquely
+    // identifies null-length arcs — skip the cache check for them.
     //
-    // For wrapped (double-backing) arcs the underlying range covers
-    // both legs as a contiguous range (see arc.h `underlying_edge_range`).
-    // Wrapped arcs are not present in canonical normal-form submaps
-    // (§3.0 oracle (ii) condition (2) — "no double-backing"); start_arc
-    // / end_arc may wrap and are counted via the same union-range.
+    // Wrapped arcs: underlying_edge_range (arc.h) covers both legs as a
+    // contiguous range.  Wrapped arcs don't appear in canonical normal
+    // form (§3.0(ii)(2) "no double-backing"); only start_arc / end_arc
+    // may wrap, counted via the same union range.
     if (num_live_arcs() > 0) {
         assert(start_vertex != NONE && end_vertex != NONE &&
                end_vertex > 0 &&
@@ -823,13 +697,10 @@ void Submap::check_invariants(const Polygon& polygon) const {
         for (std::size_t i = 0; i < arc_sequence_.size(); ++i) {
             const auto& a = arc_sequence_[i];
             if (a.dead) continue;
-            // §2 tex 47 (SoS) + §2.4 tex 144: every live arc carries a
-            // valid SoS tag for double_identify Phase 2 binary search.
-            // Applies to both real and null-length arcs.
             assert(a.key_y_tag != SOS_NONE &&
-                   "§2 tex 47 (SoS): live arc must carry a valid SoS tag "
-                   "(key_y_tag != NONE) for double_identify y-disambiguation");
-            if (a.edge_count == 0) continue;  // §2.4 tex 133: null-length arc.
+                   "§2.4 tex 144: live arc needs a valid SoS tag");
+            if (a.edge_count == 0) continue;     // null-length arc
+
             assert(a.first_edge < polygon.num_edges() &&
                    a.last_edge < polygon.num_edges() &&
                    "§2.4(iii): arc edges must be valid input-table indices");
@@ -842,17 +713,13 @@ void Submap::check_invariants(const Polygon& polygon) const {
         }
     }
 
-    // [C91 §2.2] (tex 94): "the removal of a chord entails removing not
-    // only the chord itself but also those endpoints that are not vertices
-    // of C, and glueing back ∂C at those points."  remove_chord and
-    // simulated_contraction_weight classify a chord endpoint as a polygon
-    // vertex iff its (y, y_tag) symbolic-y-equals one of the underlying
-    // edge's two vertices.  When an endpoint has exactly one adjacent arc
-    // (count == 1) §2.2 requires it to be a vertex of C, so the chord's
-    // SoS tag must match that vertex's tag.  A mismatch silently flips
-    // the classification: do_merge fires where it should not, corrupting
-    // arc adjacency.  O(1) per chord, O(num_chords) total — matches
-    // check_invariants's existing O(m) bound.
+    // [§2.2 tex 94] consistency: remove_chord and simulated_contraction_
+    // weight classify a chord endpoint as a polygon vertex iff its
+    // symbolic y matches one of the underlying edge's vertices.
+    // count==1 ⟺ vertex endpoint (no glueing); count==2 ⟺ non-vertex
+    // (glue).  A tag/count mismatch silently breaks both directions:
+    //   count==1 with no match → contraction skips a needed merge.
+    //   count==2 with a match  → contraction merges arcs at a vertex.
     auto matches_an_endpoint = [&](std::size_t edge_idx,
                                     SymbolicY chord_y) -> bool {
         assert(edge_idx < polygon.num_edges());
@@ -863,44 +730,24 @@ void Submap::check_invariants(const Polygon& polygon) const {
     for (std::size_t ci = 0; ci < chords_.size(); ++ci) {
         const auto& c = chords_[ci];
         if (c.dead) continue;
-        // NLCs use a distinct SoS-tag convention (auxiliary tags beyond
-        // polygon vertex indices to disambiguate multiple NLCs at the
-        // same y-extremum); skip them here.  Their structural invariants
-        // are enforced separately in add_chord.
+        // NLCs use auxiliary SoS tags (beyond polygon-vertex indices) to
+        // disambiguate multiple NLCs at the same y-extremum; add_chord
+        // enforces their structural invariants separately.
         if (c.is_null_length) continue;
 
-        // [C91 §2.1 tex 70]: chords arise from horizontal visibility
-        // shots at polygon vertices, so a non-NLC chord is horizontal
-        // at some vertex's y and carries that vertex's SoS tag.  The
-        // tag identifies the source vertex (= polygon.vertex(c.y_tag));
-        // chord.y must symbolic-y-equal that vertex's y.  O(1) per chord
-        // — preserves check_invariants's O(m) bound.
+        // [§2.1 tex 70]: a non-NLC chord is horizontal at its source
+        // vertex's y, with y_tag = that vertex's index.
         assert(c.y_tag < polygon.num_vertices() &&
-               "§2.1 tex 70: non-NLC chord y_tag must index a polygon "
-               "vertex (the source of the horizontal visibility shot)");
+               "§2.1 tex 70: non-NLC chord y_tag must be a polygon vertex index");
         SymbolicY chord_y{c.y, c.y_tag};
         assert(symbolic_y_equal(chord_y,
                                 symbolic_y_of(polygon.vertex(c.y_tag))) &&
-               "§2.1 tex 70: non-NLC chord must be horizontal at its "
-               "source vertex's y (chord.y_tag identifies the vertex)");
+               "§2.1 tex 70: non-NLC chord must be horizontal at its source vertex");
 
-        // §2.2 tex 94: "removing... those endpoints that are not vertices
-        // of C" — count==1 ⟺ vertex endpoint, count==2 ⟺ non-vertex
-        // endpoint (also documented in add_chord, submap.cpp:90-92).
-        // The equivalence catches BOTH directions:
-        //   count==1 but tag-mismatch ⟹ count claims vertex but chord
-        //     points mid-edge → simulated_contraction_weight skips merges
-        //     it should attempt.
-        //   count==2 but tag-match ⟹ count claims mid-edge but chord
-        //     points at a vertex → contraction merges arcs at a vertex
-        //     that shouldn't be glued (violates §2.2 "removing non-vertex
-        //     endpoints" specifically).
         assert((c.left_adj.count == 1) == matches_an_endpoint(c.left_edge, chord_y) &&
-               "§2.2 tex 94: LEFT endpoint — count==1 ⟺ chord SoS tag "
-               "matches one of the underlying edge's polygon-vertex tags");
+               "§2.2 tex 94: LEFT endpoint count == 1 ⟺ endpoint is a polygon vertex");
         assert((c.right_adj.count == 1) == matches_an_endpoint(c.right_edge, chord_y) &&
-               "§2.2 tex 94: RIGHT endpoint — count==1 ⟺ chord SoS tag "
-               "matches one of the underlying edge's polygon-vertex tags");
+               "§2.2 tex 94: RIGHT endpoint count == 1 ⟺ endpoint is a polygon vertex");
     }
 }
 
@@ -912,98 +759,48 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
     DoubleIdentifyResult result;
     if (arc_sequence_.empty()) return result;
 
-    // Precondition: submap must be compacted (no dead arcs).
-    // The binary search assumes a contiguous sorted table; dead
-    // gaps would make the expansion O(k) instead of O(1), violating
-    // the paper's O(log m) bound (§2.4 tex 144).
-    // O(1) flag check — maintained by remove_chord (sets false) and
-    // compact() (sets true).
+    // [§2.4 tex 144]: O(log m) requires a compacted arc-sequence (no
+    // dead gaps).  O(1) flag — remove_chord clears it, compact() sets it.
     assert(compacted_ &&
            "§2.4: double_identify requires compacted arc-sequence");
 
-    // [C91 §2] (tex 47): SoS perturbation [10] ensures every point
-    // on ∂C has a well-defined symbolic y.  double_identify must
-    // disambiguate by y when multiple arcs share an edge (tex 144),
-    // which requires a valid tag.
     assert(y.tag != SOS_NONE &&
-           "§2.4: double_identify requires a valid SoS y-tag "
-           "for y-disambiguation");
+           "§2.4: double_identify requires a valid SoS y-tag");
 
-    // [C91 §2.4]: "we can conceptually break up the circular arc
-    // sequence into two linear sequences and perform in each of
-    // them a binary search, using the name of the containing edge
-    // as a query."
-    //
-    // The arc-sequence table is in ∂C order: LEFT arcs first
-    // (ascending first_edge), then RIGHT arcs (descending first_edge).
-
-    // [C91 §2.4] (tex 144): "Since we know the location of the two 
-    // endpoints of C in the arc-sequence table (i.e., which arcs pass 
-    // through them) we can conceptually break up the circular arc 
-    // sequence into two linear sequences..."
-    //
-    // The paper dictates anchoring the split at these two endpoints.
-    // In our normal-form storage:
-    //   - Sequence 1 (Forward/LEFT): [start_arc, ..., end_arc]
-    //   - Sequence 2 (Return/RIGHT): (end_arc, ..., circular wrap to start_arc)
-    //
-    // For a simple chain C, this corresponds to:
-    assert(start_arc == 0 &&
-           "§2.4: start_arc MUST be index 0 in a normal-form canonical traversal");
-
-    // [C91 §2.4] (tex 144): "Since we know the location of the two
-    // endpoints of C in the arc-sequence table (i.e., which arcs pass
-    // through them) we can conceptually break up the circular arc
-    // sequence into two linear sequences."
-    //
-    // The split is at C's end endpoint: end_arc is the LAST LEFT arc
-    // (index = left_right_boundary_ - 1).  end_arc + 1 equals
-    // left_right_boundary_, giving [LEFT arcs | RIGHT arcs].
+    // [§2.4 tex 144]: "break up the circular arc sequence into two linear
+    // sequences" anchored at C's endpoints.  Normal-form layout:
+    //   LEFT  half: [start_arc=0, ..., end_arc] = [0, lrb)
+    //   RIGHT half: [end_arc+1, ..., end)       = [lrb, end)
+    assert(start_arc == 0 && "§2.4: start_arc must be index 0");
     assert(end_arc == left_right_boundary_ - 1 &&
-           "§2.4 (tex 144): end_arc must be the last LEFT arc "
-           "(left_right_boundary_ - 1) so the arc-sequence split "
-           "produces [LEFT arcs | RIGHT arcs]");
+           "§2.4 tex 144: end_arc must be the last LEFT arc");
 
-    // Frame the two linear search sequences as prescribed by the paper:
     std::size_t left_begin  = start_arc;
     std::size_t left_end    = end_arc + 1;
     std::size_t right_begin = left_end;
     std::size_t right_end   = arc_sequence_.size();
 
-    // [C91 §2.4] (tex 144): Two-phase binary search.
-    //
-    // Phase 1: binary search by first_edge → find the contiguous
-    //   interval of arcs starting at edge_idx.  O(log m).
-    // Phase 2: binary search by key_y within that interval → find
-    //   the arc(s) containing query y.  O(log k) ≤ O(log m).
-    // Plus O(1) check for a boundary arc (first_edge < edge_idx
-    //   but last_edge ≥ edge_idx) at the interval's left neighbor.
-    //
+    // [§2.4 tex 144]: two-phase binary search.
+    //   Phase 1: bsearch by first_edge → contiguous run of arcs on edge_idx.
+    //   Phase 2: bsearch by key_y within that run → arc(s) at y.
+    //   Plus O(1) check at run's left neighbor for a boundary arc with
+    //   first_edge < edge_idx but last_edge ≥ edge_idx.
     // Total: O(log m).
     auto search_half = [&](std::size_t lo, std::size_t hi, bool ascending) {
         if (lo >= hi) return;
 
-        // ── Phase 1: binary search by first_edge ─────────────────
-        // Find blo = first arc with first_edge >= edge_idx (ascending)
-        //   or first arc with first_edge <= edge_idx (descending).
+        // Phase 1: bsearch for blo = first arc with first_edge ≥ edge_idx
+        // (LEFT half ascending; RIGHT half descending uses the opposite).
         std::size_t blo = lo, bhi = hi;
         while (blo < bhi) {
             std::size_t mid = blo + (bhi - blo) / 2;
-            if (ascending) {
-                if (arc_sequence_[mid].first_edge < edge_idx)
-                    blo = mid + 1;
-                else
-                    bhi = mid;
-            } else {
-                if (arc_sequence_[mid].first_edge > edge_idx)
-                    blo = mid + 1;
-                else
-                    bhi = mid;
-            }
+            bool advance = ascending
+                ? (arc_sequence_[mid].first_edge < edge_idx)
+                : (arc_sequence_[mid].first_edge > edge_idx);
+            if (advance) blo = mid + 1; else bhi = mid;
         }
 
-        // Find the end of the same-first_edge interval: bend = first
-        // arc with first_edge != edge_idx after blo.  O(log m).
+        // Find run end: bend = first arc with first_edge != edge_idx.
         std::size_t bend = blo;
         if (bend < hi && arc_sequence_[bend].first_edge == edge_idx) {
             std::size_t slo = blo, shi = hi;
@@ -1017,38 +814,24 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
             bend = slo;
         }
 
-        // [C91 §2.4] (tex 142): "caution must be used since an arc
-        // might wrap around both sides of C, something we call
-        // double-backing."  Check for at most one boundary arc at
-        // blo-1 whose edge range contains edge_idx despite having
-        // a different first_edge.  O(1).
+        // [§2.4 tex 142]: boundary arc at blo-1 may cover edge_idx via
+        // double-backing.  Only start_arc and end_arc may wrap in a
+        // normal-form submap (§3.0(ii)(2) tex 170 + §2.4(iii) tex 138).
         auto arc_contains_edge = [&](std::size_t ai) -> bool {
-            assert(ai < arc_sequence_.size() &&
-                   "§2.4: arc index must be valid");
+            assert(ai < arc_sequence_.size() && "§2.4: invalid arc index");
             const auto& a = arc_sequence_[ai];
-            assert(!a.dead &&
-                   "§2.4: arc_contains_edge called on dead arc "
-                   "(double_identify requires compacted arc-sequence)");
+            assert(!a.dead && "§2.4: arc_contains_edge on dead arc");
             std::size_t elo = std::min(a.first_edge, a.last_edge);
             std::size_t ehi = std::max(a.first_edge, a.last_edge);
             if (a.first_side != a.last_side) {
-                // [C91 §3.0(ii)(2)] (tex 170): arcs in canonical normal-form
-                // submaps are guaranteed single-side ("no double-backing")
-                // — only start_arc and end_arc may wrap around a C-endpoint
-                // (§2.4 (iii) tex 138).  A non-start/end wrapped arc would
-                // make plain min/max return the wrong edge range silently.
                 assert((ai == start_arc || ai == end_arc) &&
-                       "§3.0(ii)(2) tex 170 / §2.4(iii) tex 138: only "
-                       "start_arc and end_arc may double-back in a normal-"
-                       "form submap");
+                       "§3.0(ii)(2)/§2.4(iii): only start/end_arc may "
+                       "double-back in a normal-form submap");
                 if (ai == start_arc)
                     elo = std::min(elo, start_vertex);
                 if (ai == end_arc) {
-                    assert(end_vertex > 0 &&
-                           "§2.1: end_vertex must be ≥ 1 "
-                           "(curve has at least 2 vertices)");
-                    std::size_t c_end_edge = end_vertex - 1;
-                    ehi = std::max(ehi, c_end_edge);
+                    assert(end_vertex > 0 && "§2.1: end_vertex ≥ 1");
+                    ehi = std::max(ehi, end_vertex - 1);
                 }
             }
             return edge_idx >= elo && edge_idx <= ehi;
@@ -1073,68 +856,40 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
             result.push(blo);
             return;
         }
-        // Two arcs: one interval + one boundary.  Can't detect key_y
-        // direction from a single interval arc, so use the edge's
-        // geometric y-direction from the Polygon.
-        // The junction is at the interval arc's key_y.  Together the
-        // two arcs cover the entire edge.
+        // Two arcs (one interval + one boundary): can't infer key_y
+        // direction from a single interval arc, so derive it from the
+        // edge's geometric y-direction.  The interval arc's key_y is the
+        // shared junction; together they cover the whole edge.
         if (interval_len == 1 && boundary_arc != NONE) {
             SymbolicY junction_y = arc_sequence_[blo].key_symbolic_y();
             if (symbolic_y_equal(junction_y, y)) {
-                // At the junction: both arcs pass through.
                 result.push(blo);
                 result.push(boundary_arc);
             } else {
-                // y is strictly on one side of the junction.
-                // The boundary arc comes BEFORE the interval arc in
-                // ∂C traversal (it's at blo-1).  On the LEFT half,
-                // ∂C traversal follows the edge from start→end vertex.
-                // The boundary arc covers [edge_start_y, junction_y]
-                // and the interval arc covers [junction_y, edge_end_y]
-                // (in traversal direction).
-                //
-                // Determine the edge's y-direction from the Polygon.
+                // boundary_arc is BEFORE blo in ∂C traversal.
+                // LEFT half: traversal = edge direction; RIGHT half: reversed.
                 assert(edge_idx < polygon.num_edges());
                 const auto& e = polygon.edge(edge_idx);
-                SymbolicY start_y = symbolic_y_of(polygon.vertex(e.start_idx));
-                bool edge_ascending = symbolic_y_less(start_y,
+                bool edge_ascending = symbolic_y_less(
+                    symbolic_y_of(polygon.vertex(e.start_idx)),
                     symbolic_y_of(polygon.vertex(e.end_idx)));
-                // On the LEFT half, ∂C goes start→end (same as edge).
-                // On the RIGHT half, ∂C goes end→start (reversed).
                 bool traversal_ascending = ascending ? edge_ascending
                                                      : !edge_ascending;
-                // Boundary arc is on the "start" side of junction_y.
                 bool y_in_boundary = traversal_ascending
                     ? symbolic_y_less(y, junction_y)
                     : symbolic_y_greater(y, junction_y);
-                if (y_in_boundary)
-                    result.push(boundary_arc);
-                else
-                    result.push(blo);
+                result.push(y_in_boundary ? boundary_arc : blo);
             }
             return;
         }
 
-        // ── Phase 2: binary search by key_y ──────────────────────
-        // [C91 §2.4] (tex 144): "We can disambiguate by pursuing the
-        // binary search, now using, say, the y-coordinate of q as a
-        // query."
-        //
-        // The key_y direction within a single edge follows the ∂C
-        // traversal, which depends on the edge's geometric y-direction
-        // (tex 138), NOT on the LEFT/RIGHT half.  Determine it from
-        // the interval endpoints.
+        // [§2.4 tex 144] Phase 2: bsearch by key_y.  Direction is inferred
+        // from the run's endpoints (depends on the edge's geometric
+        // y-direction per tex 138, NOT on the LEFT/RIGHT half).
         bool keys_ascending = (interval_len >= 2) &&
             symbolic_y_leq(arc_sequence_[blo].key_symbolic_y(),
                            arc_sequence_[bend - 1].key_symbolic_y());
 
-        // Binary search within [blo, bend) for the arc whose key_y
-        // range contains y.  O(log k).
-        //
-        // For ascending key_y: find the last arc with key_y <= y.
-        // For descending key_y: find the last arc with key_y >= y.
-        // The arc at that position (and possibly its neighbor at a
-        // key_y boundary) contains the query point.
         std::size_t ylo = blo, yhi = bend;
         while (ylo < yhi) {
             std::size_t mid = ylo + (yhi - ylo) / 2;
@@ -1153,25 +908,16 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
                     yhi = mid;
             }
         }
-        // ylo = first arc PAST the query position.
-        // The arc containing y is at p = ylo-1 (if it exists).
-        // If y exactly matches key_y[p], arc p-1 also passes through
-        // (its range ends at that boundary).  Scan backward for
-        // consecutive equal key_y (NLC case).  O(1) bounded by the
-        // paper's max 6 arcs at any point (§2.4 tex 144).
-
+        // ylo = first arc past y; the arc containing y is at p = ylo-1.
+        // If y exactly matches key_y[p], arc p-1 also passes through (its
+        // range ends at that boundary); walk back through equal-key_y
+        // runs to pick up NLC duplicates.  Bounded by 6 (§2.4 tex 144).
         if (ylo > blo) {
             std::size_t p = ylo - 1;
             result.push(p);
-            // At a chord boundary (y == key_y[p]), the predecessor
-            // arc's range ends at this y, so it also passes through.
-            // Continue backward through any consecutive equal key_y
-            // (NLC duplicates at the same y).
             if (symbolic_y_equal(arc_sequence_[p].key_symbolic_y(), y)
                 && p > blo) {
                 result.push(p - 1);
-                // Scan further only if the predecessor also has the
-                // same key_y (NLC case, §2.4 tex 144: at most 6).
                 for (std::size_t i = p - 1; i > blo; --i) {
                     if (!symbolic_y_equal(
                             arc_sequence_[i].key_symbolic_y(), y))
@@ -1180,26 +926,21 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
                 }
             }
         } else if (boundary_arc == NONE) {
-            // y is before the first arc's key_y and no boundary arc
-            // exists → first interval arc's range extends to the edge
-            // boundary, so it covers y.
+            // y is before the first arc's key_y; with no boundary arc,
+            // the first interval arc's range extends here.
             result.push(blo);
-            // (If boundary_arc exists, it covers this region instead
-            // and is handled below.)
         }
 
-        // Boundary arc: if it exists, it always contains edge_idx.
-        // Its y-range spans from its key_y to the first interval arc's
-        // key_y.  Check whether y falls in that range.  O(1).
+        // Boundary arc (if present) always covers edge_idx; its y-range
+        // runs from its key_y to the first interval arc's key_y.
         if (boundary_arc != NONE) {
             SymbolicY b_y = arc_sequence_[boundary_arc].key_symbolic_y();
             if (symbolic_y_equal(b_y, y)) {
                 result.push(boundary_arc);
             } else {
-                // The boundary arc's range is from the edge start to
-                // the first interval arc's key_y (inclusive — at the
-                // boundary, both the boundary arc and the first
-                // interval arc pass through the point).
+                // The boundary arc's range extends from the edge start
+                // to the first interval arc's key_y (inclusive — both
+                // arcs pass through the boundary point).
                 SymbolicY first_y = arc_sequence_[blo].key_symbolic_y();
                 bool in_boundary = keys_ascending
                     ? symbolic_y_leq(y, first_y)
@@ -1210,19 +951,16 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
         }
     };
 
-    // [C91 §2.4]: LEFT half — ascending first_edge.
+    // [§2.4 tex 144]: at most 3 arcs per ∂C half (= arc + NLC + arc at
+    // a y-extremum); total ≤ 6 across both halves.
     search_half(left_begin, left_end, /*ascending=*/true);
-    assert(result.count <= 3 &&
-           "§2.4: at most 3 arcs per ∂C half at any point "
-           "(tex 144: worst case = arc + NLC + arc at y-extremum)");
+    assert(result.count <= 3 && "§2.4 tex 144: ≤ 3 arcs per ∂C half");
 
-    // [C91 §2.4]: RIGHT half — descending first_edge.
     std::size_t left_count = result.count;
     search_half(right_begin, right_end, /*ascending=*/false);
-    assert(result.count - left_count <= 3 &&
-           "§2.4: at most 3 arcs per ∂C half at any point");
+    assert(result.count - left_count <= 3 && "§2.4 tex 144: ≤ 3 arcs per ∂C half");
     assert(result.count <= DoubleIdentifyResult::MAX &&
-           "§2.4: at most 6 arcs at any point (tex 144)");
+           "§2.4 tex 144: ≤ 6 arcs at any point");
 
     return result;
 }
@@ -1230,21 +968,17 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
 // ── Tree decomposition ──────────────────────────────────────────
 
 void Submap::build_tree_decomposition() {
-    // tree_decomp_.build() clears any stale contents internally before
-    // building, so any cost from a previously-flagged stale TD is
-    // absorbed here (not in the mutators that set the flag).
+    // build() clears any stale contents internally; deferred destruction
+    // from a previously-flagged stale TD is absorbed here.
     tree_decomp_.build(*this);
     tree_decomp_dirty_ = false;
 }
 
-// ── Region weight (O(1) via chord→arc adjacency) ────────────────
+// ── Region weight ───────────────────────────────────────────────
 
-// [C91 §2.2] (tex 106): "the maximum number of nonnull length edges
-// in any of its arcs."
-// [C91 §2.4(ii)] (tex 137): chord→arc adjacency enables O(1) per
-// region for conformal submaps (degree ≤ 4).
-// [C91 §3.3]: granularity enforcement requires O(m) total weight
-// checks, so each must be O(1).
+// [§2.2 tex 106]: weight = max nonnull-edge count over the region's arcs.
+// O(1) per region via chord→arc adjacency (§2.4(ii) tex 137) for conformal
+// submaps (degree ≤ 4) — required by §3.3 granularity enforcement.
 
 std::size_t Submap::region_weight(std::size_t node_idx) const noexcept {
     assert(node_idx < nodes_.size() && !nodes_[node_idx].dead);
@@ -1252,22 +986,16 @@ std::size_t Submap::region_weight(std::size_t node_idx) const noexcept {
     const auto& nd = nodes_[node_idx];
     std::size_t max_count = 0;
 
-    // Enumerate this region's arcs via chord→arc adjacency:
-    // region → incident_chords → each chord's adj arcs → filter by
-    // region_node.  For conformal submaps: ≤ 4 chords × 2×2 adj arcs
-    // = O(1) candidates.
+    // ≤ 4 incident chords × 4 adj arcs each = O(1) candidates.
     auto check_adj = [&](const Chord::AdjArcs& adj) {
         for (std::size_t k = 0; k < adj.count; ++k) {
             std::size_t ai = adj.arcs[k];
             assert(ai != NONE && ai < arc_sequence_.size() &&
-                   "§2.4(ii): chord adj_arc must be a valid arc index");
+                   !arc_sequence_[ai].dead &&
+                   "§2.4(ii): adj_arc must be valid + live");
             const auto& a = arc_sequence_[ai];
-            assert(!a.dead &&
-                   "§2.4(ii): chord adj_arc must be live");
-            if (a.region_node == node_idx) {
-                if (a.edge_count > max_count)
-                    max_count = a.edge_count;
-            }
+            if (a.region_node == node_idx && a.edge_count > max_count)
+                max_count = a.edge_count;
         }
     };
     for (std::size_t ci : nd.incident_chords) {
@@ -1278,9 +1006,8 @@ std::size_t Submap::region_weight(std::size_t node_idx) const noexcept {
         check_adj(ch.right_adj);
     }
 
-    // Also check arcs at C's endpoints — these might be adjacent
-    // to only one chord (or none, for single-region submaps).
-    // [C91 §2.4(iii)]: if set, endpoint arc pointers must be valid.
+    // [§2.4(iii)]: also check arcs at C's endpoints — they may be
+    // adjacent to ≤ 1 chord (or none, for single-region submaps).
     if (start_arc != NONE) {
         assert(start_arc < arc_sequence_.size() &&
                !arc_sequence_[start_arc].dead &&
@@ -1306,22 +1033,19 @@ std::size_t Submap::region_weight(std::size_t node_idx) const noexcept {
 // ── Conformal / semigranular / granular ─────────────────────────
 
 bool Submap::is_conformal() const noexcept {
-    // [C91 §2.3]: "conformal submaps [are] those with node-degree
-    // at most 4."
+    // [§2.3]: conformal = node-degree ≤ 4.
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
         if (nodes_[i].dead) continue;
-        if (nodes_[i].degree() > 4)
-            return false;
+        if (nodes_[i].degree() > 4) return false;
     }
     return true;
 }
 
 bool Submap::is_semigranular(std::size_t gamma) const noexcept {
-    // [C91 §2.3]: "every node of its tree has weight at most γ."
+    // [§2.3]: every region weight ≤ γ.
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
         if (nodes_[i].dead) continue;
-        if (region_weight(i) > gamma)
-            return false;
+        if (region_weight(i) > gamma) return false;
     }
     return true;
 }
@@ -1332,52 +1056,34 @@ std::size_t Submap::simulated_contraction_weight(
     assert(chord_idx < chords_.size() && !chords_[chord_idx].dead);
     const auto& c = chords_[chord_idx];
     assert(c.region[0] != NONE && c.region[1] != NONE &&
-           "§2.4(i): chord must have valid regions");
-    // [C91 §2.2] (tex 102): submap dual graph is a tree — chord
-    // endpoints must be distinct regions.  Enforced at add_chord;
-    // re-asserted here so the contraction weight has well-defined
-    // semantics (region_weight(r0) and region_weight(r1) are independent).
-    assert(c.region[0] != c.region[1] &&
-           "§2.2: chord must connect two distinct regions "
-           "(tree, no self-loops)");
+           c.region[0] != c.region[1] &&
+           "§2.4(i)/§2.2 tex 102: chord regions valid + distinct (tree)");
 
-    // [C91 §2.3] (tex 121): "contracting any edge... produces a new
-    // node whose weight."
-    // [C91 §2.2] (tex 94): removal only merges at non-vertex endpoints.
-    //
-    // Max of all individual arcs in both regions.  Use chord→arc
-    // adjacency for O(1).
+    // [§2.3 tex 121 + §2.2 tex 94]: merged region's weight = max over
+    // both regions' arcs, plus merged pairs at non-vertex endpoints only.
     std::size_t max_count = std::max(region_weight(c.region[0]),
                                       region_weight(c.region[1]));
 
-    // Check which endpoints are polygon vertices.
     auto endpoint_is_vertex = [&](std::size_t edge,
                                    double ey,
                                    std::size_t ey_tag) -> bool {
-        assert(edge < polygon.num_edges() &&
-               "§2.2: chord endpoint edge must be a valid edge index");
+        assert(edge < polygon.num_edges() && "§2.2: invalid edge");
         const auto& e = polygon.edge(edge);
-        const auto& v_start = polygon.vertex(e.start_idx);
-        const auto& v_end   = polygon.vertex(e.end_idx);
         SymbolicY chord_y{ey, ey_tag};
-        return symbolic_y_equal(chord_y, symbolic_y_of(v_start)) ||
-               symbolic_y_equal(chord_y, symbolic_y_of(v_end));
+        return symbolic_y_equal(chord_y, symbolic_y_of(polygon.vertex(e.start_idx))) ||
+               symbolic_y_equal(chord_y, symbolic_y_of(polygon.vertex(e.end_idx)));
     };
 
     bool left_is_vertex  = endpoint_is_vertex(c.left_edge, c.y, c.y_tag);
     bool right_is_vertex = endpoint_is_vertex(c.right_edge, c.y, c.y_tag);
 
-    // Only compute merged weights at NON-vertex endpoints.
     auto try_merge_pair = [&](std::size_t ai, std::size_t aj) {
         assert(ai < arc_sequence_.size() && !arc_sequence_[ai].dead &&
                aj < arc_sequence_.size() && !arc_sequence_[aj].dead &&
-               "§2.4(ii): adj_arcs must be valid and live");
-        // [C91 §2.2] (tex 94): adjacent arcs at a chord endpoint
-        // share the junction edge — same invariant as remove_chord's
-        // do_merge (line 158).
+               "§2.4(ii): adj_arcs must be valid + live");
+        // [§2.2 tex 94]: adj arcs at chord endpoint share the junction edge.
         assert(arc_sequence_[ai].last_edge == arc_sequence_[aj].first_edge &&
-               "§2.2: adjacent arcs at chord endpoint must share "
-               "the junction edge");
+               "§2.2 tex 94: adj arcs share junction edge");
         std::size_t shared_edge = arc_sequence_[aj].first_edge;
         std::size_t shared_nonnull =
             polygon.count_nonnull_edges(shared_edge, shared_edge);
@@ -1398,63 +1104,49 @@ std::size_t Submap::simulated_contraction_weight(
 
 bool Submap::is_granular(std::size_t gamma,
                           const Polygon& polygon) const noexcept {
-    // [C91 §2.3] condition (i): all weights ≤ γ.
+    // [§2.3] (i): all weights ≤ γ.
     if (!is_semigranular(gamma)) return false;
 
-    // [C91 §2.3]: "by default, if (i) holds but the submap has no
-    // exit chord, it is still said to be γ-granular."
+    // [§2.3]: "if (i) holds but the submap has no exit chord, it is still
+    // said to be γ-granular."
     if (num_live_chords() == 0) return true;
 
-    // [C91 §2.3] condition (ii): "contracting any edge incident upon
-    // at least one node of degree less than 3 produces a new node
-    // whose weight exceeds γ."
+    // [§2.3] (ii): contracting any edge incident on a < 3-degree node
+    // yields weight > γ.
     for (std::size_t ci = 0; ci < chords_.size(); ++ci) {
         const auto& c = chords_[ci];
         if (c.dead) continue;
-
         std::size_t d0 = nodes_[c.region[0]].degree();
         std::size_t d1 = nodes_[c.region[1]].degree();
-
         if (d0 >= 3 && d1 >= 3) continue;
-
         if (simulated_contraction_weight(ci, polygon) <= gamma)
             return false;
     }
 
-    // [C91 §2.3 Lemma 2.3] (tex 126): "any γ-granular conformal submap of the
-    // visibility map of C has O(n/γ + 1) regions."  The proof at tex 129 uses
-    // conformality at three points (the "fixed fraction" lower bound on |E|,
-    // the degree ≤ 4 multiplier, and the bounded vertex-reuse argument), so the
-    // bound only holds for conformal submaps.  γ-granularity is defined by
-    // (i)+(ii) alone (tex 118–122); is_granular() does not check conformality,
-    // so we gate the bound on is_conformal() here.
+    // [§2.3 Lemma 2.3 tex 126,129]: γ-granular conformal V(C) submap has
+    // V ≤ 2·⌊8(|C|−1)/(γ+1)⌋ regions (|C| = SUBCHAIN vertex count).
+    // The proof uses conformality at three places (lower bound on |E|,
+    // degree ≤ 4 multiplier, bounded vertex-reuse), so the bound only
+    // holds when is_conformal() — is_granular() doesn't check that, so
+    // we gate the assert.
     //
-    // Constant derived from the paper proof (conformality required):
-    //   1. V ≤ 2|E| (tree handshake: from V − 2|E| = 2(|E_high| + 1) − V and
-    //      V ≥ 2|E_high| + 2 for any tree with chords, valid universally).
-    //   2. |E|·(γ+1) ≤ Σ_{e=(u,v)∈E} (W_u + W_v) ≤ 4·Σ_u W_u (deg ≤ 4 from
-    //      conformality; merged weight > γ means ≥ γ+1 since weights are integer
-    //      nonnull-edge counts).
-    //   3. Σ_u W_u ≤ Σ_arcs (arc weight) = 2·(nonnull C-edges) ≤ 2(n−1) (each
-    //      nonnull C-edge gives 2 nonnull ∂C-edges; arcs partition ∂C).
-    //   Combining: |E| ≤ ⌊8(n−1)/(γ+1)⌋ since |E| is integer, hence
-    //   V ≤ 2·⌊8(n−1)/(γ+1)⌋.  The floor sits inside the doubling, so no
-    //   additive slack is needed.
+    // Bound derivation (conformality required):
+    //   V ≤ 2|E|                                  (tree handshake)
+    //   |E|·(γ+1) ≤ 4·Σ_u W_u                     (deg ≤ 4 + merged > γ)
+    //   Σ_u W_u ≤ 2(n−1)                          (arcs partition ∂C;
+    //                                              each nonnull C-edge
+    //                                              gives 2 ∂C-edges)
+    //   ⟹ |E| ≤ ⌊8(n−1)/(γ+1)⌋  ⟹  V ≤ 2·⌊8(n−1)/(γ+1)⌋.
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
     if (is_conformal()) {
-        std::size_t denom = gamma + 1; // γ+1 > 0 even when γ = 0
-        // [C91 §2.3] Lemma 2.3: n is the vertex count of the SUBCHAIN C
-        // covered by the submap, not the parent polygon.  We're past the
-        // "no chords" early-return above, so live arcs exist, so §2.4(iii)
-        // (tex 138) requires start_vertex/end_vertex to be set.
+        // We're past the "no chords" return, so live arcs exist and
+        // §2.4(iii) tex 138 requires start_vertex/end_vertex set.
         assert(start_vertex != NONE && end_vertex != NONE &&
-               "§2.4(iii) tex 138: submap with chords must have "
-               "start_vertex/end_vertex set");
+               "§2.4(iii) tex 138: submap with chords needs start/end_vertex");
         std::size_t n_c = end_vertex - start_vertex + 1;
-        std::size_t bound = 2 * (8 * (n_c - 1) / denom);
+        std::size_t bound = 2 * (8 * (n_c - 1) / (gamma + 1));
         assert(num_live_nodes() <= bound &&
-               "§2.3 Lemma 2.3 (tex 126,129): V ≤ 2·⌊8(|C|−1)/(γ+1)⌋ for "
-               "γ-granular conformal submap (|C| = subchain vertex count)");
+               "§2.3 Lemma 2.3: V ≤ 2·⌊8(|C|−1)/(γ+1)⌋");
     }
 #endif
 

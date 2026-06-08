@@ -1,9 +1,7 @@
 #pragma once
 
-/// [C91 §2.1]: "Given a simple (nonclosed) polygonal curve C with
-/// vertices v1, ..., vn."
-///
-/// Stores the curve's vertices and edge table.
+// [C91 §2.1]: a simple (nonclosed) polygonal curve C with vertices
+// v1, ..., vn and its directed edge table.
 
 #include "point.h"
 #include "edge.h"
@@ -17,8 +15,7 @@ namespace chazelle {
 
 class Polygon {
 public:
-    /// Construct from a sequence of vertices.
-    /// Builds the directed edge table automatically.
+    // Edge table is built from the vertex sequence.
     explicit Polygon(std::vector<Point> vertices);
 
     std::size_t num_vertices() const noexcept { return vertices_.size(); }
@@ -34,21 +31,17 @@ public:
         return edges_[i];
     }
 
-    /// [C91 §2.1] (Fig 2.2.3): True if vertex is one of the two
-    /// endpoints of C.
+    // [§2.1 Fig 2.2.3]: one of C's two endpoints.
     bool is_endpoint(std::size_t vertex_index) const noexcept {
-        assert(vertex_index < vertices_.size() &&
-               "§2.1: vertex_index must be a valid vertex of C");
+        assert(vertex_index < vertices_.size() && "§2.1: invalid vertex");
         return vertex_index == 0
             || vertex_index == vertices_.size() - 1;
     }
 
-    /// [C91 §2.1] (Fig 2.2.2): True if vertex is a local y-extremum
-    /// under SoS.  Endpoints are never extrema — they are case 3,
-    /// not case 2.
+    // [§2.1 Fig 2.2.2]: local y-extremum under SoS.  Endpoints are
+    // case 3, not case 2 — never extrema.
     bool is_y_extremum(std::size_t vertex_index) const noexcept {
-        assert(vertex_index < vertices_.size() &&
-               "§2.1: vertex_index must be a valid vertex of C");
+        assert(vertex_index < vertices_.size() && "§2.1: invalid vertex");
         if (is_endpoint(vertex_index)) return false;
         return is_local_y_extremum(
             vertices_[vertex_index - 1],
@@ -56,16 +49,15 @@ public:
             vertices_[vertex_index + 1]);
     }
 
-    /// [C91 §2.2]: Count nonnull-length edges in [lo, hi] inclusive.
-    /// O(1) via prefix sums.  Used to compute region weight: "the
-    /// maximum number of nonnull length edges in any of its arcs."
+    // [§2.2]: count of nonnull-length edges in [lo, hi].  O(1) via prefix
+    // sums; used by region_weight ("max nonnull edges in any of its arcs").
     std::size_t count_nonnull_edges(std::size_t lo,
                                      std::size_t hi) const noexcept;
 
 private:
     std::vector<Point> vertices_;
     std::vector<Edge>  edges_;
-    /// nonnull_prefix_[i] = number of nonnull-length edges in [0, i).
+    // nonnull_prefix_[i] = number of nonnull edges in [0, i).
     std::vector<std::size_t> nonnull_prefix_;
 
     void build_edges();
