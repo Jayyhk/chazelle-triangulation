@@ -473,8 +473,8 @@ struct TieBreakRayShooter : RayShootingOracle {
 };
 
 static void test_local_shoot_tie_break() {
-    // [C91 §2.1 tex 72] (snake left/right) + [C91 §2.4 tex 142]:
-    // when two arcs deliver hits at exactly the same x (distance tie),
+    // [C91 §2.1 tex 72] (double boundary's snake left/right): when two
+    // arcs deliver hits at exactly the same x (distance tie),
     // the disambiguation in fusion.cpp:114-145 picks the face struck
     // first by an infinitesimally thick ray, computed from the edge's
     // geometric ascent and the shooting direction:
@@ -857,6 +857,78 @@ static void test_startup_mid_edge_tie_break() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  15. fuse_s1_into_s2 — main loop smoke test, case (i) path.
+// ════════════════════════════════════════════════════════════════
+//
+// Forward-distance oracle: hit_x is always at `forward_dist` from p in
+// the shoot direction.  hit.side is derived geometrically.  Unlike
+// StartupOracle (absolute hit_x), this works for any p — the main loop
+// shifts p across iterations.
+struct ForwardOracle : RayShootingOracle {
+    const Polygon* C;
+    double forward_dist;
+    ForwardOracle(const Polygon* c, double d) : C(c), forward_dist(d) {}
+    RayHit shoot(Point p, Side dir,
+                 std::size_t /*arc_idx*/,
+                 const Subarc& target) const override {
+        RayHit h;
+        h.hit = true;
+        h.y = p.y;
+        h.x = (dir == LEFT) ? (p.x - forward_dist) : (p.x + forward_dist);
+        h.edge = target.first_edge;
+        const auto& e = C->edge(target.first_edge);
+        bool asc = symbolic_y_less(symbolic_y_of(C->vertex(e.start_idx)),
+                                    symbolic_y_of(C->vertex(e.end_idx)));
+        h.side = asc ? (dir == LEFT ? RIGHT : LEFT) : dir;
+        return h;
+    }
+};
+
+// Smoke test: main loop runs without asserting on the make_C1 setup.
+// Most iterations will not fire (i) on this specific geometry (chord
+// endpoints at vertex 2 are y-extremum companions; t_dist = 0), but the
+// loop must walk j = k..m+1 cleanly and terminate via (iii) or via a
+// fired case + break.  Verifies:
+//   (1) build_fusion_sequence + fusion_startup + main loop scaffolding
+//       chain together end-to-end.
+//   (2) case_i_test predicate's local_shoot calls succeed with
+//       require_hit=false (no spurious asserts).
+//   (3) Invariant asserts at the top of each outer iteration hold.
+static void test_fuse_main_loop_smoke() {
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
+
+    Submap S2;
+    S2.add_node();
+    Arc a{};
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0; a.edge_count = 2;
+    a.key_y = C2.vertex(0).y; a.key_y_tag = 0;
+    std::size_t ai0 = S2.add_arc(a);
+    a.first_edge = 1; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
+    S2.add_arc(a);
+    S2.start_arc = ai0; S2.end_arc = ai0;
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // S₂ closer than S₁ → Case 1 startup.  Forward dist same for both
+    // so startup distance comparison favors S₂ (tie → ∂C₂ per tex 191).
+    ForwardOracle oracle1(&C1, 5.0);
+    ForwardOracle oracle2(&C2, 1.0);
+
+    FusionState state;
+    fuse_s1_into_s2(state, S1, C1, S2, C2, oracle1, oracle2);
+
+    // At minimum, fusion_startup recorded a₀c₀ chord.
+    assert(!state.chords.empty());
+    std::printf("  [PASS] fuse_main_loop_smoke (chords=%zu)\n",
+                state.chords.size());
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -876,6 +948,7 @@ int main() {
     test_build_fusion_sequence_skips_null_length_chords();
     test_startup_vertex_to_vertex_tie_break();
     test_startup_mid_edge_tie_break();
+    test_fuse_main_loop_smoke();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }

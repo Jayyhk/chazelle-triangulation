@@ -475,7 +475,8 @@ std::size_t Submap::num_live_arcs() const noexcept {
 // ── Invariant checks ────────────────────────────────────────────
 
 void Submap::assert_tree_property() const {
-    // [C91 §2.2 tex 110]: a submap is induced from V(C) — always ≥1 region.
+    // [C91 §2.2 tex 96]: a submap is a polygonal subdivision of the
+    // spherical plane — always ≥1 region by definition.
     // Asserted first so an empty submap fails with this diagnostic rather
     // than the misleading "0 ≠ 1" tree-property message below.
     assert(num_live_nodes() >= 1 &&

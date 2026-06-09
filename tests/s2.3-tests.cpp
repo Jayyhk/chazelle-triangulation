@@ -11,7 +11,7 @@ using namespace chazelle;
 static Polygon test_polygon() {
     // 4-vertex non-monotone polygon with vertices at the chord y values
     // (y=0.5 at index 2, y=1.5 at index 3).  Chord SoS tags identify
-    // these source vertices per [C91 §2.1 tex 70.]  Three edges keep region
+    // these source vertices per [C91 §2 tex 47].  Three edges keep region
     // weights bounded so the γ=2 granularity demo below remains achievable.
     return Polygon({
         {0, 0,   0},
@@ -81,7 +81,7 @@ static Submap build_conformal_submap() {
 
     Chord c;
     // c0: r0 — r1.  Horizontal exit chord at y=0.5 (vertex 2's y)
-    // sourced at vertex 2 per [C91 §2.1 tex 70]; tag identifies the source.
+    // sourced at vertex 2 per [C91 §2 tex 47]; tag identifies the source.
     c = {}; c.region[0] = 0; c.region[1] = 1;
     c.left_edge = 0; c.right_edge = 0; c.y = 0.5; c.y_tag = 2;
     c.left_adj = {{0, 1}, 2}; c.right_adj = {{4, 5}, 2};

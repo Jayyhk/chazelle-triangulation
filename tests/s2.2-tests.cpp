@@ -615,11 +615,11 @@ static void test_null_length_chord_right_side() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  11. Death: assert_tree_property on empty submap ([C91 §2.2 tex 110])
+//  11. Death: assert_tree_property on empty submap ([C91 §2.2 tex 96])
 // ════════════════════════════════════════════════════════════════
 
 static void test_empty_submap_fires() {
-    // [C91 §2.2 tex 110]: every submap has at least one region.
+    // [C91 §2.2 tex 96]: every submap is a polygonal subdivision ⟹ ≥1 region.
     assert(assert_fires([]{
         Submap s;  // 0 nodes, 0 chords.
         s.assert_tree_property();

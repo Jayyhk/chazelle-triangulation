@@ -170,7 +170,7 @@ public:
     // [C91 §2.4(iv)]: conformal ⟹ tree decomposition available.
     void build_tree_decomposition();
     const TreeDecomposition& tree_decomposition() const noexcept {
-        // [C91 §3.3 tex 277] needs mutators O(1).  Mutators flag dirty rather
+        // [C91 §3.3 tex 276] needs mutators O(1).  Mutators flag dirty rather
         // than rebuilding; a stale tree decomposition reads as empty so
         // consumers fail fast (e.g. merge.h's !tree_decomposition().empty()
         // precondition).

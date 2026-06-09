@@ -52,10 +52,16 @@ RegionArcs collect_region_arcs(const Submap& S, std::size_t region);
 // each of p's region's arcs (closed under visibility by Lemma 2.1) and
 // pick the nearest hit.  p need not lie on ∂Cᵢ as long as `region` is
 // the region of Sᵢ containing p.
+//
+// `require_hit = true` (default): asserts the ray hits (Lemma 2.1 — p
+// is inside the region by precondition).  `require_hit = false`: returns
+// `RayHit{hit=false}` when no arc is struck — needed by the `[C91 §3.1
+// tex 220]` case (i) test, which uses no-hit as evidence that a_j ∉ R.
 RayHit local_shoot(Point p, Side direction,
                     std::size_t region,
                     const Submap& S, const Polygon& C,
-                    const RayShootingOracle& oracle);
+                    const RayShootingOracle& oracle,
+                    bool require_hit = true);
 
 // [C91 §3.1]: Traversal state.  "We let a variable p run through ∂C₁
 // in clockwise order, stopping at a₀, ..., a_{m+1} ... determining what
