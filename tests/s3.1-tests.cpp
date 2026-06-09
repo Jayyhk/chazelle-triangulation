@@ -292,10 +292,15 @@ static void test_local_shoot_nearest() {
 //  8. fusion_startup — Case 1 (c₀ on ∂C₂)
 // ════════════════════════════════════════════════════════════════
 
-// Oracle that always hits at a fixed x on the target's side.
+// Oracle that hits at a fixed x on the target's first_edge, with
+// hit.side derived geometrically from the edge's orientation per
+// [C91 §3.1] / fusion.cpp::shooting_direction's inverse:
+//   LEFT-going ray strikes the EAST face (ascending→RIGHT, descending→LEFT).
+//   RIGHT-going ray strikes the WEST face (ascending→LEFT, descending→RIGHT).
 struct StartupOracle : RayShootingOracle {
+    const Polygon* C;
     double hit_x;
-    explicit StartupOracle(double x) : hit_x(x) {}
+    StartupOracle(const Polygon* c, double x) : C(c), hit_x(x) {}
     RayHit shoot(Point p, Side dir,
                  std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
@@ -304,11 +309,15 @@ struct StartupOracle : RayShootingOracle {
         h.x = hit_x;
         h.y = p.y;
         h.edge = target.first_edge;
-        // A horizontal ray always hits the face it approaches first.
-        // Shooting LEFT → hits a LEFT-side point; RIGHT → RIGHT.
-        // This ensures the discovered chord connects opposite sides
-        // ([C91 §2.2 tex 96]: exit chords cross the double boundary).
-        h.side = dir;
+        const auto& e = C->edge(target.first_edge);
+        bool ascending = symbolic_y_less(
+            symbolic_y_of(C->vertex(e.start_idx)),
+            symbolic_y_of(C->vertex(e.end_idx)));
+        // Ascending: face struck is opposite of dir.  Descending: same.
+        if (ascending)
+            h.side = (dir == LEFT) ? RIGHT : LEFT;
+        else
+            h.side = dir;
         return h;
     }
 };
@@ -343,8 +352,8 @@ static void test_startup_case1() {
     // Oracle for S₁: hits at x=-10 (far left).
     // Oracle for S₂: hits at x=3 (close left).
     // c₀ on ∂C₂ (closer) → Case 1.
-    StartupOracle oracle1(-10.0);
-    StartupOracle oracle2(3.0);
+    StartupOracle oracle1(&C1, -10.0);
+    StartupOracle oracle2(&C2, 3.0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -390,8 +399,8 @@ static void test_startup_case2() {
     // Oracle for S₁: hits at x=3 (close left, on ∂C₁).
     // Oracle for S₂: hits at x=-10 (far left, on ∂C₂).
     // c₀ on ∂C₁ (closer) → Case 2.
-    StartupOracle oracle1(3.0);
-    StartupOracle oracle2(-10.0);
+    StartupOracle oracle1(&C1, 3.0);
+    StartupOracle oracle2(&C2, -10.0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -531,8 +540,8 @@ static void test_startup_d1_eq_d2_defaults_to_case1() {
     S2.start_vertex = 0; S2.end_vertex = 2;
 
     // Both oracles return hits at the SAME x (3.0), so d1 == d2.
-    StartupOracle oracle1(3.0);
-    StartupOracle oracle2(3.0);
+    StartupOracle oracle1(&C1, 3.0);
+    StartupOracle oracle2(&C2, 3.0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -710,8 +719,8 @@ static void test_startup_vertex_to_vertex_tie_break() {
     // Oracle for S₁: hit at x=-10 (far LEFT, not interesting).
     // Oracle for S₂: hit at x=2 (where v_end of C₂ is).
     // c₀ on ∂C₂ (closer) → Case 1.  a₀c₀ lies on the matching chord.
-    StartupOracle oracle1(-10.0);
-    StartupOracle oracle2(2.0);
+    StartupOracle oracle1(&C1, -10.0);
+    StartupOracle oracle2(&C2, 2.0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -819,8 +828,8 @@ static void test_startup_mid_edge_tie_break() {
     S2.start_vertex = 0; S2.end_vertex = 2;
 
     // a₀ shoots LEFT and hits the mid-edge crossing on edge 1 at x≈2.5.
-    StartupOracle oracle1(-10.0);
-    StartupOracle oracle2(2.5);
+    StartupOracle oracle1(&C1, -10.0);
+    StartupOracle oracle2(&C2, 2.5);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);

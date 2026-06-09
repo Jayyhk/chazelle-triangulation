@@ -374,12 +374,15 @@ std::size_t fusion_startup(FusionState& state,
         return initial_region;
     };
 
-    // Record a₀c₀ — same in both cases (fields depend only on a₀, c₀).
-    // DiscoveredChord slot convention (chord.h, fusion.h): LEFT slot holds
-    // the LEFT-side endpoint; RIGHT slot holds the RIGHT-side endpoint.
-    assert(c0.side == LEFT && a0.side == RIGHT &&
-           "DiscoveredChord slot convention: c0 on LEFT, a0 on RIGHT");
-    state.chords.push_back({a0.y, c0.edge, c0.side, a0.edge, a0.side});
+    // Record a₀c₀ — slot order = ascending x.  Per [C91 §2.1 tex 70]
+    // `Side` labels the snake's geometric face (LEFT = walker-from-
+    // start-to-end's left); two ∂C points of a horizontal chord can
+    // share a Side (e.g. LEFT-face-of-ascending-edge + LEFT-face-of-
+    // descending-edge), so slot name is independent of Side value.
+    if (a0_point.x < c0.x)
+        state.chords.push_back({a0.y, a0.edge, a0.side, c0.edge, c0.side});
+    else
+        state.chords.push_back({a0.y, c0.edge, c0.side, a0.edge, a0.side});
 
     if (c0_on_c2) {
         // [C91 §3.1 Case 1]: "set p = a₀, call the region of S₂ crossed by
