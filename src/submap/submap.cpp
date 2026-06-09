@@ -1128,11 +1128,10 @@ bool Submap::is_granular(std::size_t gamma,
     }
 
     // [C91 §2.3 Lemma 2.3 tex 126,129]: γ-granular conformal V(C) submap has
-    // V ≤ 2·⌊8(|C|−1)/(γ+1)⌋ regions (|C| = SUBCHAIN vertex count).
-    // The proof uses conformality at three places (lower bound on |E|,
-    // degree ≤ 4 multiplier, bounded vertex-reuse), so the bound only
-    // holds when is_conformal() — is_granular() doesn't check that, so
-    // we gate the assert.
+    // V ≤ 2·⌊8(|C|−1)/(γ+1)⌋ regions (|C| = SUBCHAIN vertex count).  The
+    // proof uses conformality at three places (lower bound on |E|, degree
+    // ≤ 4 multiplier, bounded vertex-reuse), so the bound only holds when
+    // is_conformal() — is_granular() doesn't itself require conformality.
     //
     // Bound derivation (conformality required):
     //   V ≤ 2|E|                                  (tree handshake)
@@ -1141,7 +1140,6 @@ bool Submap::is_granular(std::size_t gamma,
     //                                              each nonnull C-edge
     //                                              gives 2 ∂C-edges)
     //   ⟹ |E| ≤ ⌊8(n−1)/(γ+1)⌋  ⟹  V ≤ 2·⌊8(n−1)/(γ+1)⌋.
-#ifdef CHAZELLE_EXPENSIVE_ASSERTS
     if (is_conformal()) {
         // We're past the "no chords" return, so live arcs exist and
         // [C91 §2.4(iii) tex 138] requires start_vertex/end_vertex set.
@@ -1152,7 +1150,6 @@ bool Submap::is_granular(std::size_t gamma,
         assert(num_live_nodes() <= bound &&
                "[C91 §2.3 Lemma 2.3]: V ≤ 2·⌊8(|C|−1)/(γ+1)⌋");
     }
-#endif
 
     return true;
 }

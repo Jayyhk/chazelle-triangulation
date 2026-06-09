@@ -107,7 +107,6 @@ std::size_t fusion_startup(FusionState& state,
 
 // [C91 §3.1]: Main loop — traverse ∂C₁ clockwise, shooting into S₂ at
 // each stop to discover new chords.
-// TODO: ([C91 §3.1]) implement main loop body.
 void fuse_s1_into_s2(FusionState& state,
                       const Submap& S1, const Polygon& C1,
                       const Submap& S2, const Polygon& C2,

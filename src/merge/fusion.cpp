@@ -479,8 +479,7 @@ std::size_t fusion_startup(FusionState& state,
                "[C91 §3.1 tex 179, 188]: skip-to-c₀ must land within sequence");
 
         // [C91 §3.1 Case 2 / Lemma 2.1]: skipped vertices see ∂C₁ — paper-
-        // guaranteed.  Verifying it costs O(m), so gate the check.
-#ifdef CHAZELLE_EXPENSIVE_ASSERTS
+        // guaranteed (their chord ends on ∂C₁ before c₀ in cw order).
         for (std::size_t skipped_i = 1; skipped_i < lo; ++skipped_i) {
             if (!state.sequence[skipped_i].is_companion) {
                 assert(state.sequence[skipped_i].chord_idx != NONE &&
@@ -488,7 +487,6 @@ std::size_t fusion_startup(FusionState& state,
                        "chord endpoint of S₁ (sees ∂C₁ by construction)");
             }
         }
-#endif
 
         return lo;
     }
@@ -502,52 +500,57 @@ void fuse_s1_into_s2(FusionState& state,
                       const RayShootingOracle& oracle1,
                       const RayShootingOracle& oracle2) {
     build_fusion_sequence(state, S1, C1);
-    state.current_stop = 0;
 
-    std::size_t start_idx = fusion_startup(state, S1, C1, S2, C2,
-                                            oracle1, oracle2);
+    // [C91 §3.1 tex 197]: k = index of arc A_k of S₁ containing p, tie-break
+    // p ≠ a_k.  A_j runs from a_{j-1} to a_j cw on ∂C₁ (A_1 = a_0→a_1,
+    // A_{m+1} = a_m→a_{m+1}).
+    std::size_t k = fusion_startup(state, S1, C1, S2, C2, oracle1, oracle2);
 
-    // [C91 §3.1 invariant (A)]: "points of ∂C seen by exit chord endpoints
-    // ... already determined."  Startup produces at least the a₀c₀ chord.
-    assert(!state.chords.empty() &&
-           "[C91 §3.1 invariant (A)]: startup must produce ≥1 chord");
+    while (true) {
+        // [C91 §3.1 tex 197]: p == a_{m+1} ⟹ terminate (no A_k defined).
+        if (k >= state.sequence.size()) return;
 
-    // [C91 §3.1 invariant (B) tex 195]: "p sees a point q of ∂C₂ and pq lies
-    // in the current region of S₂."  Verifying via local_shoot costs
-    // O(f(γ₂)) per check; gated to avoid blowing the paper's bound in
-    // debug builds.
-#ifdef CHAZELLE_EXPENSIVE_ASSERTS
-    assert(local_shoot(state.p,
-               shooting_direction(state.p_edge, state.p_side, C1),
-               state.s2_region, S2, C2, oracle2).hit &&
-           "[C91 §3.1 invariant (B)]: p must see ∂C₂ after startup");
-#endif
-
-    // [C91 §3.1]: traverse stops a₀, ..., a_{m+1} clockwise on ∂C₁.
-    for (std::size_t i = start_idx; i < state.sequence.size(); ++i) {
-        state.current_stop = i;
-
+        // [C91 §3.1 tex 195]: loop invariants (A) and (B).
+        assert(!state.chords.empty() &&
+               "[C91 §3.1 invariant (A)]: chord list non-empty");
         assert(state.s2_region != NONE &&
                state.s2_region < S2.num_nodes() &&
                !S2.node(state.s2_region).dead &&
                "[C91 §3.1 invariant (B)]: current S₂ region must be valid");
-#ifdef CHAZELLE_EXPENSIVE_ASSERTS
         assert(local_shoot(state.p,
                    shooting_direction(state.p_edge, state.p_side, C1),
                    state.s2_region, S2, C2, oracle2).hit &&
                "[C91 §3.1 invariant (B)]: p must see ∂C₂");
-#endif
 
-        if (i > 0)
-            assert(!state.chords.empty() &&
-                   "[C91 §3.1 invariant (A)]: chord list non-empty after startup");
+        // [C91 §3.1 tex 197]: R = current region; snapshot fixed for the
+        // inner walk; updates take effect next outer iteration.
+        [[maybe_unused]] const std::size_t R = state.s2_region;
 
-        // TODO ([C91 §3.1]) main loop body, at each stop:
-        //   1. p sees q ∈ ∂C₂ via local_shoot into S₂ — O(f(γ₂)).
-        //   2. p sees q ∈ ∂C₁ — at S₁ chord endpoints, return the opposite
-        //      endpoint in O(1) ([C91 §3.1] deviation rules); fall back to
-        //      local_shoot for companion vertices.
-        //   3. Record discovered chord; update s2_region for the next stop.
+        // [C91 §3.1 tex 200(i)]: a_j ∈ R AND a_j sees ∂C₂.
+        // TODO ([C91 §3.1] — actions paragraph): wire predicate + action.
+        auto case_i_fires = [&](std::size_t /*j*/) -> bool {
+            return false;
+        };
+
+        // [C91 §3.1 tex 202(ii)]: (i) fails, but R has an exit chord whose
+        // endpoint sees a point of ∂C on A_j strictly after p.  Per-endpoint
+        // O(f(γ₁)) test at [C91 §3.1 tex 222].
+        // TODO ([C91 §3.1] — actions paragraph): wire predicate + action.
+        auto case_ii_fires = [&](std::size_t /*j*/) -> bool {
+            return false;
+        };
+
+        for (std::size_t j = k; ; ++j) {
+            // [C91 §3.1 tex 203(iii)]: j == m+2 ⟹ terminate.
+            if (j == state.sequence.size()) return;
+
+            state.current_stop = j;
+
+            // TODO ([C91 §3.1] — actions paragraph): wire (i)/(ii) actions
+            // to record the discovered chord and advance (p, k, s2_region).
+            if (case_i_fires(j))  break;
+            if (case_ii_fires(j)) break;
+        }
     }
 }
 
