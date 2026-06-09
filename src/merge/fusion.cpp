@@ -526,30 +526,56 @@ void fuse_s1_into_s2(FusionState& state,
         // inner walk; updates take effect next outer iteration.
         [[maybe_unused]] const std::size_t R = state.s2_region;
 
-        // [C91 §3.1 tex 200(i)]: a_j ∈ R AND a_j sees ∂C₂.
+        // [C91 §3.1 tex 200(i)]: a_j ∈ R AND a_j sees ∂C₂.  O(f(γ₂)) test
+        // at [C91 §3.1 tex 220]: shoot a_j against each arc of R; no hit
+        // ⟹ a_j ∉ R; else nearest hit's side+orientation confirms in-R
+        // and gives s ∈ ∂C₂; compare to t = a_j's ∂C₁ hit (O(1) when a_j
+        // is an S₁ chord endpoint, else local_shoot in S₁).
         // TODO ([C91 §3.1] — actions paragraph): wire predicate + action.
         auto case_i_fires = [&](std::size_t /*j*/) -> bool {
             return false;
         };
 
         // [C91 §3.1 tex 202(ii)]: (i) fails, but R has an exit chord whose
-        // endpoint sees a point of ∂C on A_j strictly after p.  Per-endpoint
-        // O(f(γ₁)) test at [C91 §3.1 tex 222].
+        // endpoint sees a point on A_j strictly after p.  O(f(γ₁)) test
+        // at [C91 §3.1 tex 222]: per exit-chord endpoint a, shoot via
+        // oracle1 toward A_j — disqualify on miss / off-chord / before-p /
+        // wrong orientation; else verify by local_shoot from hit s back
+        // toward a in S₁ (passes through a ⟺ s and a see each other).
         // TODO ([C91 §3.1] — actions paragraph): wire predicate + action.
         auto case_ii_fires = [&](std::size_t /*j*/) -> bool {
             return false;
         };
 
         for (std::size_t j = k; ; ++j) {
-            // [C91 §3.1 tex 203(iii)]: j == m+2 ⟹ terminate.
+            // [C91 §3.1 tex 203(iii) + tex 206 action]: j == m+2 ⟹ stop;
+            // remaining a_k..a_{m+1} see ∂C₁ (informational — no chords
+            // recorded, only S₁'s existing chords carry over in rebuild).
             if (j == state.sequence.size()) return;
 
             state.current_stop = j;
 
-            // TODO ([C91 §3.1] — actions paragraph): wire (i)/(ii) actions
-            // to record the discovered chord and advance (p, k, s2_region).
-            if (case_i_fires(j))  break;
-            if (case_ii_fires(j)) break;
+            if (case_i_fires(j)) {
+                // TODO ([C91 §3.1 tex 206 case (i) action]):
+                //   - Find q ∈ ∂C₂ seen by a_j (local_shoot from a_j in R).
+                //   - Record chord a_j → q in state.chords.
+                //   - p ← a_j, R unchanged.
+                //   - k ← j+1 (per A_k tie-break p ≠ a_k).
+                // Intervening a_i (k ≤ i < j) see ∂C₁ — informational.
+                break;
+            }
+            if (case_ii_fires(j)) {
+                // TODO ([C91 §3.1 tex 206 case (ii) action]):
+                //   - Among (ii) candidates, pick endpoint q' whose seen
+                //     point p' is the LAST one cw on ∂C₁ starting from p.
+                //   - Record chord q' → p'.
+                //   - p ← p'; s2_region ← region entered when locally
+                //     crossing the exit chord at p' along ∂C₁.
+                //   - k ← j (p' lies in A_j's interior; tie-break not
+                //     triggered since p' isn't a fusion vertex).
+                // Intervening a_i (k ≤ i < j) see ∂C₁ — informational.
+                break;
+            }
         }
     }
 }

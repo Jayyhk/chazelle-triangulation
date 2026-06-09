@@ -106,7 +106,8 @@ std::size_t fusion_startup(FusionState& state,
                             const RayShootingOracle& oracle2);
 
 // [C91 §3.1]: Main loop — traverse ∂C₁ clockwise, shooting into S₂ at
-// each stop to discover new chords.
+// each stop to discover new chords.  [C91 §3.1 Lemma 3.1]: runs in
+// O((n₁/γ₁ + n₂/γ₂ + 1)(f(γ₂) + log(n₁+n₂))) time.
 void fuse_s1_into_s2(FusionState& state,
                       const Submap& S1, const Polygon& C1,
                       const Submap& S2, const Polygon& C2,
