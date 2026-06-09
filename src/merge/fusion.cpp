@@ -531,9 +531,8 @@ void fuse_s1_into_s2(FusionState& state,
         // inner walk; updates take effect next outer iteration.
         const std::size_t R = state.s2_region;
 
-        // [C91 §3.1] helper: compute the (x,y) point of a fusion vertex by
-        // interpolating its edge at the chord y, or returning the junction
-        // vertex directly for companions.
+        // Position of a fusion vertex: edge-interp at chord y, or junction
+        // for companions.
         auto fv_point = [&](const FusionVertex& v) -> Point {
             if (v.is_companion)
                 return C1.vertex(C1.num_vertices() - 1);
@@ -545,34 +544,26 @@ void fuse_s1_into_s2(FusionState& state,
             return Point{vs.x + t * (ve.x - vs.x), y, NONE};
         };
 
-        // [C91 §3.1 tex 220 case (i) test]: returns {fires, s_hit} where
-        // s_hit (when fires) is the ∂C₂ point a_j sees, ready for the
-        // action to record as the discovered chord.
+        // [C91 §3.1 tex 220]: case (i) test in O(f(γ₂)).
         struct CaseIResult { bool fires; RayHit s_hit; };
         auto case_i_test = [&](std::size_t j) -> CaseIResult {
             const FusionVertex& aj_v = state.sequence[j];
             Point aj_point = fv_point(aj_v);
             Side dir = shooting_direction(aj_v.edge, aj_v.side, C1);
 
-            // [C91 §3.1 tex 220]: "shoot a ray of light from a_j ... If
-            // there is no hit on any arc, a_j is not in R."
+            // shoot from a_j; no hit ⟹ a_j ∉ R.
             RayHit s_hit = local_shoot(aj_point, dir, R, S2, C2, oracle2,
                                        /*require_hit=*/false);
             if (!s_hit.hit) return {false, {}};
 
-            // [C91 §3.1 tex 220]: "Whether a_j lies in R or not can be
-            // directly inferred from ... which side of the double boundary
-            // is hit."  Arc-structures encode the arcs' Side; if the hit's
-            // Side matches the arc's, the ray struck R from R's interior.
+            // hit.side matches arc's stored Side ⟺ a_j ∈ R.
             const Arc& s_arc = S2.arc(s_hit.hit_arc_idx);
-            bool aj_in_R = (s_hit.side == s_arc.first_side) ||
-                            (s_hit.side == s_arc.last_side);
-            if (!aj_in_R) return {false, {}};
+            if (s_hit.side != s_arc.first_side &&
+                s_hit.side != s_arc.last_side)
+                return {false, {}};
 
-            // [C91 §3.1 tex 220]: "use local shooting within S₁ to
-            // determine the point t of ∂C₁ hit ... most often (i.e., when
-            // 0 < j ≤ m) a_j is the endpoint of a chord of S₁ so t is
-            // just the other endpoint of the chord."
+            // t = ∂C₁ point a_j sees.  O(1) at S₁ chord endpoints
+            // (other endpoint); local_shoot in S₁ for companions.
             double t_x;
             if (aj_v.chord_idx != NONE) {
                 const Chord& ch = S1.chord(aj_v.chord_idx);
@@ -584,16 +575,12 @@ void fuse_s1_into_s2(FusionState& state,
                 double t_param = (ch.y - vs.y) / (ve.y - vs.y);
                 t_x = vs.x + t_param * (ve.x - vs.x);
             } else {
-                // Companion (j = m+1): full local_shoot in S₁.
                 std::size_t aj_region_s1 = S1.arc(S1.end_arc).region_node;
-                RayHit t_hit = local_shoot(aj_point, dir, aj_region_s1,
-                                           S1, C1, oracle1);
-                t_x = t_hit.x;
+                t_x = local_shoot(aj_point, dir, aj_region_s1,
+                                  S1, C1, oracle1).x;
             }
 
-            // [C91 §3.1 tex 220]: "derive the point of ∂C that it sees
-            // and ... decide whether we are in case (i)" — the closer of
-            // s and t in dir is what a_j sees.  (i) fires iff s wins.
+            // (i) fires iff s closer than t in dir.
             double s_dist = (dir == LEFT)
                 ? (aj_point.x - s_hit.x) : (s_hit.x - aj_point.x);
             double t_dist = (dir == LEFT)
@@ -601,15 +588,130 @@ void fuse_s1_into_s2(FusionState& state,
             return {s_dist < t_dist, s_hit};
         };
 
-        // [C91 §3.1 tex 202(ii)]: (i) fails, but R has an exit chord whose
-        // endpoint sees a point on A_j strictly after p.  O(f(γ₁)) test
-        // at [C91 §3.1 tex 222]: per exit-chord endpoint a, shoot via
-        // oracle1 toward A_j — disqualify on miss / off-chord / before-p /
-        // wrong orientation; else verify by local_shoot from hit s back
-        // toward a in S₁ (passes through a ⟺ s and a see each other).
-        // TODO ([C91 §3.1] — actions paragraph): wire predicate + action.
-        auto case_ii_fires = [&](std::size_t /*j*/) -> bool {
-            return false;
+        // Position of an S₂ chord endpoint: edge-interp at chord y.
+        auto s2_endpoint_point = [&](std::size_t edge, double y) -> Point {
+            const auto& e = C2.edge(edge);
+            const Point& vs = C2.vertex(e.start_idx);
+            const Point& ve = C2.vertex(e.end_idx);
+            double t = (y - vs.y) / (ve.y - vs.y);
+            return Point{vs.x + t * (ve.x - vs.x), y, NONE};
+        };
+
+        // O(1) lookup of A_j's S₁ arc index (precomputed inverse map).
+        auto Aj_arc_idx = [&](std::size_t j) -> std::size_t {
+            return (j < state.arc_for_seq_pos.size())
+                ? state.arc_for_seq_pos[j] : NONE;
+        };
+
+        // CW position on ∂C₁ as (trav_pos, within_edge); lex compare
+        // gives the cw walk.  LEFT side: within = edge param t; RIGHT
+        // side: 1−t (cw traversal is end→start).
+        auto cw_position = [&](double y, std::size_t edge, Side side)
+                           -> std::pair<std::size_t, double> {
+            std::size_t junction_edge = C1.num_edges() - 1;
+            std::size_t right_half_len = junction_edge + 1;
+            std::size_t tp = (side == RIGHT)
+                ? (junction_edge - edge)
+                : (right_half_len + edge);
+            const auto& e = C1.edge(edge);
+            const Point& vs = C1.vertex(e.start_idx);
+            const Point& ve = C1.vertex(e.end_idx);
+            double t = (y - vs.y) / (ve.y - vs.y);
+            return {tp, (side == LEFT) ? t : (1.0 - t)};
+        };
+
+        // [C91 §3.1 tex 222]: case (ii) test in O(f(γ₁)).
+        struct CaseIIResult {
+            bool fires;
+            RayHit p_prime_hit;
+            std::size_t chord_idx;
+            bool q_is_left;
+        };
+        auto case_ii_test = [&](std::size_t j) -> CaseIIResult {
+            CaseIIResult best{false, {}, NONE, false};
+            auto best_cw = std::make_pair<std::size_t, double>(0, -1.0);
+
+            std::size_t aj_arc = Aj_arc_idx(j);
+            if (aj_arc == NONE) return best;
+            Subarc aj_sub{state.sequence[j-1].edge,
+                          state.sequence[j-1].side,
+                          state.sequence[j].edge,
+                          state.sequence[j].side};
+
+            Side aj_left_side = state.sequence[j-1].side;
+            Side aj_right_side = state.sequence[j].side;
+            bool aj_non_wrapping = (aj_left_side == aj_right_side);
+
+            auto p_cw = cw_position(state.p.y, state.p_edge, state.p_side);
+
+            for (std::size_t ci : S2.node(R).incident_chords) {
+                const Chord& chord_ab = S2.chord(ci);
+                if (chord_ab.dead || chord_ab.is_null_length) continue;
+
+                Point a_pt = s2_endpoint_point(chord_ab.left_edge,
+                                                chord_ab.y);
+                Point b_pt = s2_endpoint_point(chord_ab.right_edge,
+                                                chord_ab.y);
+
+                for (bool is_left : {true, false}) {
+                    std::size_t q_edge = is_left ? chord_ab.left_edge
+                                                  : chord_ab.right_edge;
+                    Side q_side = is_left ? chord_ab.left_side
+                                          : chord_ab.right_side;
+                    Point q_point = is_left ? a_pt : b_pt;
+                    Point other_point = is_left ? b_pt : a_pt;
+                    Side shoot_dir = shooting_direction(q_edge, q_side, C2);
+
+                    // "hit does not lie on ab": shoot must traverse ab —
+                    // i.e., shoot_dir points toward the other endpoint.
+                    Side dir_to_other = (other_point.x < q_point.x)
+                                          ? LEFT : RIGHT;
+                    if (shoot_dir != dir_to_other) continue;
+
+                    // shoot from a toward A_j; no hit ⟹ disqualify.
+                    RayHit hit = oracle1.shoot(q_point, shoot_dir,
+                                                aj_arc, aj_sub);
+                    if (!hit.hit) continue;
+
+                    // "proper orientation": hit.Side matches A_j's Side
+                    // at hit.edge.  Wrapping A_j (only the RIGHT→LEFT
+                    // transition) splits into edge-range zones.
+                    bool hit_side_ok = aj_non_wrapping
+                        ? (hit.side == aj_left_side)
+                        : (hit.side == RIGHT
+                            ? hit.edge <= state.sequence[j-1].edge
+                            : hit.edge <= state.sequence[j].edge);
+                    if (!hit_side_ok) continue;
+
+                    // "occurs before p along A_j": strict cw compare.
+                    auto hit_cw = cw_position(hit.y, hit.edge, hit.side);
+                    if (hit_cw <= p_cw) continue;
+
+                    // back-shot from s in its natural direction; q' must
+                    // lie between s and t for s↔a visibility.
+                    Side s_back_dir = shooting_direction(hit.edge, hit.side,
+                                                         C1);
+                    Point s_point{hit.x, hit.y, NONE};
+                    RayHit t_hit = local_shoot(
+                        s_point, s_back_dir,
+                        S1.arc(aj_arc).region_node,
+                        S1, C1, oracle1);
+                    double s_to_q = (s_back_dir == LEFT)
+                        ? (s_point.x - q_point.x)
+                        : (q_point.x - s_point.x);
+                    double s_to_t = (s_back_dir == LEFT)
+                        ? (s_point.x - t_hit.x)
+                        : (t_hit.x - s_point.x);
+                    if (s_to_q < 0.0 || s_to_q > s_to_t) continue;
+
+                    // [C91 §3.1 tex 206]: pick LAST p' cw from p.
+                    if (hit_cw > best_cw) {
+                        best = {true, hit, ci, is_left};
+                        best_cw = hit_cw;
+                    }
+                }
+            }
+            return best;
         };
 
         for (std::size_t j = k; ; ++j) {
@@ -620,43 +722,51 @@ void fuse_s1_into_s2(FusionState& state,
 
             state.current_stop = j;
 
-            // [C91 §3.1 tex 206 case (i) action]: "find which point of ∂C
-            // is seen by a_j ... set p = a_j, let the current region still
-            // be R, ... resetting k."  Intervening a_i (k ≤ i < j) see
-            // ∂C₁ — informational.
+            // [C91 §3.1 tex 206 case (i)]: record a_j → s_hit; p = a_j;
+            // R unchanged; k = j+1 (A_k tie-break).
             if (auto r = case_i_test(j); r.fires) {
                 const FusionVertex& aj_v = state.sequence[j];
                 Point aj_point = fv_point(aj_v);
 
-                // Record chord a_j → r.s_hit.  Slot order = ascending x
-                // (matching the fusion_startup convention).
-                if (aj_point.x < r.s_hit.x) {
-                    state.chords.push_back({aj_v.y,
-                        aj_v.edge, aj_v.side,
+                if (aj_point.x < r.s_hit.x)
+                    state.chords.push_back({aj_v.y, aj_v.edge, aj_v.side,
                         r.s_hit.edge, r.s_hit.side});
-                } else {
-                    state.chords.push_back({aj_v.y,
-                        r.s_hit.edge, r.s_hit.side,
-                        aj_v.edge, aj_v.side});
-                }
+                else
+                    state.chords.push_back({aj_v.y, r.s_hit.edge,
+                        r.s_hit.side, aj_v.edge, aj_v.side});
 
                 state.p = aj_point;
                 state.p_edge = aj_v.edge;
                 state.p_side = aj_v.side;
-                // R unchanged: state.s2_region stays.
-                k = j + 1;  // A_k tie-break: arc starting at p=a_j.
+                k = j + 1;
                 break;
             }
-            if (case_ii_fires(j)) {
-                // TODO ([C91 §3.1 tex 206 case (ii) action]):
-                //   - Among (ii) candidates, pick endpoint q' whose seen
-                //     point p' is the LAST one cw on ∂C₁ starting from p.
-                //   - Record chord q' → p'.
-                //   - p ← p'; s2_region ← region entered when locally
-                //     crossing the exit chord at p' along ∂C₁.
-                //   - k ← j (p' lies in A_j's interior; tie-break not
-                //     triggered since p' isn't a fusion vertex).
-                // Intervening a_i (k ≤ i < j) see ∂C₁ — informational.
+            // [C91 §3.1 tex 206 case (ii)]: record q' → p'; p = p';
+            // current = R's neighbor across chord ab; k = j.
+            if (auto r = case_ii_test(j); r.fires) {
+                const Chord& chord_ab = S2.chord(r.chord_idx);
+                std::size_t q_edge = r.q_is_left ? chord_ab.left_edge
+                                                  : chord_ab.right_edge;
+                Side q_side = r.q_is_left ? chord_ab.left_side
+                                          : chord_ab.right_side;
+                Point q_point = s2_endpoint_point(q_edge, chord_ab.y);
+                Point p_prime{r.p_prime_hit.x, r.p_prime_hit.y, NONE};
+                SymbolicY chord_y = chord_ab.symbolic_y();
+
+                if (q_point.x < p_prime.x)
+                    state.chords.push_back({chord_y, q_edge, q_side,
+                        r.p_prime_hit.edge, r.p_prime_hit.side});
+                else
+                    state.chords.push_back({chord_y, r.p_prime_hit.edge,
+                        r.p_prime_hit.side, q_edge, q_side});
+
+                state.p = p_prime;
+                state.p_edge = r.p_prime_hit.edge;
+                state.p_side = r.p_prime_hit.side;
+                state.s2_region = (chord_ab.region[0] == R)
+                                    ? chord_ab.region[1]
+                                    : chord_ab.region[0];
+                k = j;
                 break;
             }
         }
@@ -847,6 +957,17 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     state.arc_starts.resize(num_arcs);
     for (std::size_t i = 0; i < num_arcs; ++i)
         state.arc_starts[i] = bucket_starts[i] + 1;
+
+    // Inverse: arc_for_seq_pos[j] = S₁ arc index for A_j.  O(num_arcs)
+    // one-time cost so the case (ii) per-test lookup is O(1).
+    state.arc_for_seq_pos.assign(state.sequence.size(), NONE);
+    for (std::size_t cw_pos = 0; cw_pos < num_arcs; ++cw_pos) {
+        std::size_t j = state.arc_starts[cw_pos];
+        if (j >= state.arc_for_seq_pos.size()) continue;
+        std::size_t arc_idx = (cw_pos < num_right)
+            ? (lrb + cw_pos) : (cw_pos - num_right);
+        state.arc_for_seq_pos[j] = arc_idx;
+    }
 }
 
 } // namespace chazelle

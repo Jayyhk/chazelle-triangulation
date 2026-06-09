@@ -929,6 +929,79 @@ static void test_fuse_main_loop_smoke() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  16. fuse_s1_into_s2 — case (ii) path exercises the loop body.
+// ════════════════════════════════════════════════════════════════
+//
+// Adapts test_startup_mid_edge_tie_break's S₂ (which has a chord and
+// 2 regions) and runs the full main loop.  Goal: exercise the case (ii)
+// per-endpoint test code path — R has an incident exit chord, so the
+// (ii) test iterates real candidates (even if none ultimately fire for
+// this specific geometry, the predicate's loop body is reached).
+static void test_fuse_main_loop_case_ii_smoke() {
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+
+    // C₂ goes UP from junction (y=3) to v_mid (y=5) and back DOWN past
+    // y=3 to v_end (y=1).  Edge 1 (v_mid→v_end) crosses y=3 at x≈2.5.
+    Polygon C2({{4,3,4}, {3,5,5}, {2,1,6}});
+
+    Submap S2;
+    std::size_t r_above = S2.add_node();
+    std::size_t r_below = S2.add_node();
+
+    // S₂ chord at y=3 (junction's y): mid-edge crossing on edge 1 (LEFT)
+    // and vertex endpoint at junction on edge 0 (RIGHT).
+    Arc a{};
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_above;
+    a.edge_count = 1;
+    a.key_y = C2.vertex(1).y; a.key_y_tag = 1;
+    std::size_t ai_above_L = S2.add_arc(a);
+
+    a = {};
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_below;
+    a.edge_count = 1;
+    a.key_y = 3.0; a.key_y_tag = 4;  // chord's y/tag — arc STARTS at chord.
+    std::size_t ai_below_L = S2.add_arc(a);
+
+    a = {};
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r_above;
+    a.edge_count = 1;
+    a.key_y = C2.vertex(1).y; a.key_y_tag = 1;
+    std::size_t ai_right_at_junction = S2.add_arc(a);
+
+    Chord c{};
+    c.region[0] = r_above;
+    c.region[1] = r_below;
+    c.left_edge = 1; c.left_side = LEFT;
+    c.right_edge = 0; c.right_side = RIGHT;
+    c.y = 3.0; c.y_tag = 4;
+    c.left_adj = {{ai_above_L, ai_below_L}, 2};
+    c.right_adj = {{ai_right_at_junction}, 1};
+    S2.add_chord(c);
+
+    S2.start_arc = ai_above_L; S2.end_arc = ai_above_L;
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // Forward oracles — distance-from-p so the main loop iterates without
+    // backward-hit asserts.  S₂ closer than S₁ to keep Case 1 startup.
+    ForwardOracle oracle1(&C1, 5.0);
+    ForwardOracle oracle2(&C2, 1.5);
+
+    FusionState state;
+    fuse_s1_into_s2(state, S1, C1, S2, C2, oracle1, oracle2);
+
+    assert(!state.chords.empty());
+    std::printf("  [PASS] fuse_main_loop_case_ii_smoke (chords=%zu)\n",
+                state.chords.size());
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -949,6 +1022,7 @@ int main() {
     test_startup_vertex_to_vertex_tie_break();
     test_startup_mid_edge_tie_break();
     test_fuse_main_loop_smoke();
+    test_fuse_main_loop_case_ii_smoke();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }
