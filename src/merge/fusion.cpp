@@ -2,6 +2,8 @@
 
 #include "fusion.h"
 
+#include <algorithm>
+
 namespace chazelle {
 
 // ── collect_region_arcs ─────────────────────────────────────────
@@ -230,7 +232,7 @@ std::size_t fusion_startup(FusionState& state,
         // c₀ sees a point of ∂C₂ with respect to C."  The paper allows
         // edge cases (a₀ at a y-extremum where c₀ technically cannot see
         // ∂C₂) and explicitly mandates defaulting to "c₀ on ∂C₂".  The
-        // `d2 <= d1` (rather than `d2 < d1`) selects Case 1 in ties,
+        // `d2 <= d1` (rather than `d2 < d1`) selects case (i) in ties,
         // implementing the paper's tex 191 default.
         if (d2 <= d1) {
             c0 = hit_c2; c0_on_c2 = true;
@@ -274,7 +276,7 @@ std::size_t fusion_startup(FusionState& state,
             // [C91 §3.1 tex 191]: a₀c₀ lies on this S₂ chord.  Elect "the
             // region we locally enter as we leave p clockwise on ∂C₁."
             // `leaving_downward` encodes the y-direction of motion from p
-            // (set differently for Case 1 leaving a₀ vs Case 2 leaving c₀).
+            // (set differently for case (i) leaving a₀ vs case (ii) leaving c₀).
             //
             // For each adj arc at the chord endpoint, look at the polygon
             // vertex adjacent to the chord along the arc's traversal; its
@@ -381,13 +383,19 @@ std::size_t fusion_startup(FusionState& state,
     // start-to-end's left); two ∂C points of a horizontal chord can
     // share a Side (e.g. LEFT-face-of-ascending-edge + LEFT-face-of-
     // descending-edge), so slot name is independent of Side value.
+    // [C91 §3.1 tex 224]: a₀ lives in C₁'s edge frame; c₀ lives in C₁
+    // (case (ii)) or C₂ (case (i)).  rebuild_submap translates accordingly.
+    const bool a0_on_c1 = true;
+    const bool c0_on_c1 = !c0_on_c2;
     if (a0_point.x < c0.x)
-        state.chords.push_back({a0.y, a0.edge, a0.side, c0.edge, c0.side});
+        state.chords.push_back({a0.y, a0.edge, a0.side, c0.edge, c0.side,
+                                a0_on_c1, c0_on_c1});
     else
-        state.chords.push_back({a0.y, c0.edge, c0.side, a0.edge, a0.side});
+        state.chords.push_back({a0.y, c0.edge, c0.side, a0.edge, a0.side,
+                                c0_on_c1, a0_on_c1});
 
     if (c0_on_c2) {
-        // [C91 §3.1 Case 1]: "set p = a₀, call the region of S₂ crossed by
+        // [C91 §3.1 case (i)]: "set p = a₀, call the region of S₂ crossed by
         // a₀c₀ current."  Main loop starts at k=1 (A_k = arc a₀→a₁).
         state.p = a0_point;
         state.p_edge = a0.edge;
@@ -402,7 +410,7 @@ std::size_t fusion_startup(FusionState& state,
         state.s2_region = resolve_s2_region(a0_region_s2, a0_leaving_downward);
         return 1;
     } else {
-        // [C91 §3.1 Case 2]: "skip all the way to c₀ ... set p = c₀, call
+        // [C91 §3.1 case (ii)]: "skip all the way to c₀ ... set p = c₀, call
         // the region of S₂ containing a₀ current."  c₀ is on an edge
         // interior, not a named vertex (index = NONE).
         state.p = Point{c0.x, c0.y, NONE};
@@ -483,12 +491,12 @@ std::size_t fusion_startup(FusionState& state,
         assert(lo < state.sequence.size() &&
                "[C91 §3.1 tex 179, 188]: skip-to-c₀ must land within sequence");
 
-        // [C91 §3.1 Case 2 / Lemma 2.1]: skipped vertices see ∂C₁ — paper-
+        // [C91 §3.1 case (ii) / Lemma 2.1]: skipped vertices see ∂C₁ — paper-
         // guaranteed (their chord ends on ∂C₁ before c₀ in cw order).
         for (std::size_t skipped_i = 1; skipped_i < lo; ++skipped_i) {
             if (!state.sequence[skipped_i].is_companion) {
                 assert(state.sequence[skipped_i].chord_idx != NONE &&
-                       "[C91 §3.1 Case 2 (Lemma 2.1)]: skipped vertex must be a "
+                       "[C91 §3.1 case (ii) (Lemma 2.1)]: skipped vertex must be a "
                        "chord endpoint of S₁ (sees ∂C₁ by construction)");
             }
         }
@@ -505,6 +513,10 @@ void fuse_s1_into_s2(FusionState& state,
                       const RayShootingOracle& oracle1,
                       const RayShootingOracle& oracle2) {
     build_fusion_sequence(state, S1, C1);
+
+    // [C91 §3.1 tex 224]: per-pass invalidation bitsets for rebuild_submap.
+    state.invalidated_self.assign(S1.num_chords(), false);
+    state.invalidated_other.assign(S2.num_chords(), false);
 
     // [C91 §3.1 tex 199]: k = index of arc A_k of S₁ containing p, tie-break
     // p ≠ a_k.  A_j runs from a_{j-1} to a_j cw on ∂C₁ (A_1 = a_0→a_1,
@@ -728,12 +740,22 @@ void fuse_s1_into_s2(FusionState& state,
                 const FusionVertex& aj_v = state.sequence[j];
                 Point aj_point = fv_point(aj_v);
 
+                // a_j on C₁ (S₁ walker); s_hit on C₂ (oracle2 target).
                 if (aj_point.x < r.s_hit.x)
                     state.chords.push_back({aj_v.y, aj_v.edge, aj_v.side,
-                        r.s_hit.edge, r.s_hit.side});
+                        r.s_hit.edge, r.s_hit.side,
+                        /*left_on_c1=*/true, /*right_on_c1=*/false});
                 else
                     state.chords.push_back({aj_v.y, r.s_hit.edge,
-                        r.s_hit.side, aj_v.edge, aj_v.side});
+                        r.s_hit.side, aj_v.edge, aj_v.side,
+                        /*left_on_c1=*/false, /*right_on_c1=*/true});
+
+                // [C91 §3.1 tex 224]: a_j sees ∂C₂ now → mark its S₁
+                // chord superseded (junction companions have NONE).
+                if (aj_v.chord_idx != NONE) {
+                    assert(aj_v.chord_idx < state.invalidated_self.size());
+                    state.invalidated_self[aj_v.chord_idx] = true;
+                }
 
                 state.p = aj_point;
                 state.p_edge = aj_v.edge;
@@ -753,12 +775,20 @@ void fuse_s1_into_s2(FusionState& state,
                 Point p_prime{r.p_prime_hit.x, r.p_prime_hit.y, NONE};
                 SymbolicY chord_y = chord_ab.symbolic_y();
 
+                // q on C₂ (S₂ exit chord endpoint); p' on C₁ (A_j of S₁).
                 if (q_point.x < p_prime.x)
                     state.chords.push_back({chord_y, q_edge, q_side,
-                        r.p_prime_hit.edge, r.p_prime_hit.side});
+                        r.p_prime_hit.edge, r.p_prime_hit.side,
+                        /*left_on_c1=*/false, /*right_on_c1=*/true});
                 else
                     state.chords.push_back({chord_y, r.p_prime_hit.edge,
-                        r.p_prime_hit.side, q_edge, q_side});
+                        r.p_prime_hit.side, q_edge, q_side,
+                        /*left_on_c1=*/true, /*right_on_c1=*/false});
+
+                // [C91 §3.1 tex 224]: q sees p' on A_j now → mark S₂'s
+                // chord_ab superseded.
+                assert(r.chord_idx < state.invalidated_other.size());
+                state.invalidated_other[r.chord_idx] = true;
 
                 state.p = p_prime;
                 state.p_edge = r.p_prime_hit.edge;
@@ -967,6 +997,390 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
         std::size_t arc_idx = (cw_pos < num_right)
             ? (lrb + cw_pos) : (cw_pos - num_right);
         state.arc_for_seq_pos[j] = arc_idx;
+    }
+}
+
+// ── rebuild_submap ──────────────────────────────────────────────
+
+// [C91 §3.1 tex 226]: set up S in normal form from the [tex 224] chord
+// inventory — sort endpoints along ∂C (edge name then y), build the
+// arc-sequence table + region tree (parenthesis sweep), wire adj-arc
+// pointers per [§2.4(ii) tex 137], skip tree decomposition (§3.2's job).
+//
+// Time: O((n₁/γ₁ + n₂/γ₂ + 1) log(n₁+n₂)) — endpoint sort dominates.
+void rebuild_submap(Submap& out_S,
+                     const Polygon& C,
+                     const Submap& S1, const Polygon& C1,
+                     const Submap& S2, const Polygon& C2,
+                     const FusionState& state1,
+                     const FusionState& state2) {
+    assert(out_S.num_nodes() == 0 && out_S.num_arcs() == 0 &&
+           out_S.num_chords() == 0 &&
+           "[C91 §3.1 tex 226]: rebuild_submap requires a fresh output submap");
+    assert(C.num_edges() == C1.num_edges() + C2.num_edges() &&
+           "[C91 §3 tex 160]: C = C₁ ∪ C₂ shares one vertex");
+
+    const std::size_t n_c1_edges = C1.num_edges();
+    const std::size_t n_edges    = C.num_edges();
+
+    // ── Step 1: Chord inventory (per [C91 §3.1 tex 224]) ────────
+
+    struct Pending {
+        SymbolicY y;
+        std::size_t left_edge_c;
+        Side        left_side;
+        std::size_t right_edge_c;
+        Side        right_side;
+        bool        is_null_length;
+    };
+    std::vector<Pending> pending;
+    pending.reserve(state1.chords.size() + state2.chords.size() +
+                    S1.num_live_chords() + S2.num_live_chords());
+
+    auto edge_in_c = [&](std::size_t edge, bool on_c1) {
+        return on_c1 ? edge : (n_c1_edges + edge);
+    };
+
+    auto ingest_discovered = [&](const FusionState& st) {
+        for (const auto& dc : st.chords) {
+            pending.push_back({dc.y,
+                edge_in_c(dc.left_edge,  dc.left_on_c1),  dc.left_side,
+                edge_in_c(dc.right_edge, dc.right_on_c1), dc.right_side,
+                /*is_null_length=*/false});
+        }
+    };
+    ingest_discovered(state1);
+    ingest_discovered(state2);
+
+    // [C91 §3.1 tex 224]: drop old chords whose endpoint sat on the C₁/C₂
+    // junction wrap.  Per [C91 §2.1 tex 72 case 3], the junction is a
+    // C-endpoint in V(Cᵢ) with two duplicate companions; in V(C) the
+    // junction is interior and the wrap is gone, so the chord is no
+    // longer maximal there.
+    const std::size_t junction_vidx_in_c = C1.num_vertices() - 1;
+    const std::size_t junction_tag = C1.vertex(junction_vidx_in_c).index;
+    assert(junction_tag == C2.vertex(0).index &&
+           "[C91 §3 tex 160]: junction shared between C₁ and C₂");
+
+    assert(junction_vidx_in_c >= 1 && junction_vidx_in_c + 1 < C.num_vertices() &&
+           "[C91 §3 tex 160]: junction is interior to C");
+
+    // [C91 §3.1 tex 224] visibility filter: union the per-pass bitsets.
+    // state₁'s self = S₁, other = S₂; state₂ swaps.
+    auto bit_at = [](const std::vector<bool>& b, std::size_t i) {
+        return i < b.size() && b[i];
+    };
+    auto s1_invalid = [&](std::size_t i) {
+        return bit_at(state1.invalidated_self, i) ||
+               bit_at(state2.invalidated_other, i);
+    };
+    auto s2_invalid = [&](std::size_t i) {
+        return bit_at(state1.invalidated_other, i) ||
+               bit_at(state2.invalidated_self, i);
+    };
+
+    auto ingest_old = [&](const Submap& S, bool on_c1,
+                           std::size_t junction_edge, auto is_invalid) {
+        for (std::size_t ci = 0; ci < S.num_chords(); ++ci) {
+            const Chord& c = S.chord(ci);
+            if (c.dead) continue;
+            // [C91 §3.1 tex 224]: drop junction-wrap chord ([§2.1 tex 72
+            // case 3] gone in V(C)) or one superseded by case (i)/(ii).
+            if (!c.is_null_length && c.y_tag == junction_tag &&
+                (c.left_edge == junction_edge ||
+                 c.right_edge == junction_edge)) continue;
+            if (is_invalid(ci)) continue;
+            pending.push_back({c.symbolic_y(),
+                edge_in_c(c.left_edge,  on_c1), c.left_side,
+                edge_in_c(c.right_edge, on_c1), c.right_side,
+                c.is_null_length});
+        }
+    };
+    ingest_old(S1, /*on_c1=*/true,  n_c1_edges - 1, s1_invalid);
+    ingest_old(S2, /*on_c1=*/false, 0,             s2_invalid);
+
+    // [C91 §2.1 tex 72 case 2 + §3.1 tex 224]: y-extremum junction —
+    // synthesize the inside-pair null-length chord.  Convention: store
+    // both endpoints at (next-edge, LEFT) per the s2.4 layout; auxiliary
+    // SoS tag = C.num_vertices() (distinct from any polygon-vertex tag).
+    if (is_local_y_extremum(C.vertex(junction_vidx_in_c - 1),
+                             C.vertex(junction_vidx_in_c),
+                             C.vertex(junction_vidx_in_c + 1))) {
+        Pending p;
+        p.y.y = C.vertex(junction_vidx_in_c).y;
+        p.y.tag = C.num_vertices();
+        p.left_edge_c = p.right_edge_c = n_c1_edges;
+        p.left_side = p.right_side = LEFT;
+        p.is_null_length = true;
+        pending.push_back(p);
+    }
+
+    // ── Step 2: Sort endpoints along ∂C ────────────────────────
+
+    // [C91 §3.1 tex 226]: sort by edge name, then by y within an edge.
+    // [C91 §2.4(iii) tex 138] canonical ∂C order: LEFT ascending (0..n-1)
+    // then RIGHT descending; within an edge the y-tiebreak follows the
+    // cw traversal direction.
+    auto trav_pos = [&](std::size_t edge, Side side) -> std::size_t {
+        return (side == LEFT) ? edge : (2 * n_edges - 1 - edge);
+    };
+    auto edge_ascends = [&](std::size_t edge) -> bool {
+        const auto& e = C.edge(edge);
+        return symbolic_y_less(symbolic_y_of(C.vertex(e.start_idx)),
+                                symbolic_y_of(C.vertex(e.end_idx)));
+    };
+
+    struct Endpoint {
+        std::size_t edge_c;
+        Side        side;
+        SymbolicY   y;
+        std::size_t pending_idx;
+        bool        is_left_slot;
+    };
+    std::vector<Endpoint> eps;
+    eps.reserve(2 * pending.size());
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        const auto& p = pending[i];
+        eps.push_back({p.left_edge_c,  p.left_side,  p.y, i, true});
+        eps.push_back({p.right_edge_c, p.right_side, p.y, i, false});
+    }
+    std::sort(eps.begin(), eps.end(),
+        [&](const Endpoint& a, const Endpoint& b) {
+            std::size_t pa = trav_pos(a.edge_c, a.side);
+            std::size_t pb = trav_pos(b.edge_c, b.side);
+            if (pa != pb) return pa < pb;
+            bool trav_asc = (a.side == LEFT) == edge_ascends(a.edge_c);
+            return trav_asc ? symbolic_y_less(a.y, b.y)
+                            : symbolic_y_greater(a.y, b.y);
+        });
+
+    // ── Step 3: Walk endpoints → arcs + regions ─────────────────
+
+    // [C91 §2.4(ii) tex 137 + §2.2 tex 94]: mid-edge endpoint → 2 adj
+    // (arc splits); polygon-vertex endpoint → 1 adj (no split).
+    // Identification via SoS y match per [§2 tex 47].
+    auto is_vertex_endpoint = [&](std::size_t edge_c, SymbolicY y) -> bool {
+        const auto& e = C.edge(edge_c);
+        return symbolic_y_equal(y, symbolic_y_of(C.vertex(e.start_idx))) ||
+               symbolic_y_equal(y, symbolic_y_of(C.vertex(e.end_idx)));
+    };
+
+    struct ChordOut {
+        std::size_t r_outer = NONE;
+        std::size_t r_inner = NONE;
+        Chord::AdjArcs left_adj{};
+        Chord::AdjArcs right_adj{};
+        bool first_seen = false;
+        // Mid-edge: defer the after-arc until next emit.  Vertex: unused.
+        std::size_t pending_after_left  = NONE;
+        std::size_t pending_after_right = NONE;
+        // [C91 §2.4 tex 133]: own R_inner null-arc for null-length chords
+        // (nested null-lengths must not collide on `arcs.size() - 1`).
+        std::size_t r_inner_arc = NONE;
+    };
+    std::vector<ChordOut> chord_out(pending.size());
+
+    // Patched on every emit; bounded by the most-recent group → O(N) total.
+    std::vector<std::size_t> pending_chords;
+
+    std::vector<Arc> arcs;
+    arcs.reserve(2 * pending.size() + 2);
+
+    const std::size_t r_start = out_S.add_node();
+    std::size_t current_region = r_start;
+
+    struct Cursor { std::size_t edge; Side side; SymbolicY y; };
+    Cursor cursor{0, LEFT, symbolic_y_of(C.vertex(0))};
+
+    auto emit_arc = [&](std::size_t end_edge, Side end_side, SymbolicY end_y,
+                         std::size_t override_edge_count = NONE) {
+        assert(cursor.side == end_side &&
+               "[C91 §2.4(iii)]: arc must not straddle the L/R wrap");
+        Arc a;
+        a.first_edge = cursor.edge; a.first_side = cursor.side;
+        a.last_edge  = end_edge;     a.last_side  = end_side;
+        a.region_node = current_region;
+        if (override_edge_count != NONE) {
+            a.edge_count = override_edge_count;
+        } else {
+            std::size_t lo = std::min(a.first_edge, a.last_edge);
+            std::size_t hi = std::max(a.first_edge, a.last_edge);
+            a.edge_count = C.count_nonnull_edges(lo, hi);
+        }
+        a.key_y = cursor.y.y; a.key_y_tag = cursor.y.tag;
+        std::size_t idx = arcs.size();
+        arcs.push_back(a);
+        cursor = {end_edge, end_side, end_y};
+        return idx;
+    };
+
+    // Patch mid-edge endpoints' second adj with the next emit.
+    auto patch_after_arcs = [&](std::size_t after_arc) {
+        for (std::size_t pi : pending_chords) {
+            ChordOut& co = chord_out[pi];
+            if (co.pending_after_left != NONE) {
+                assert(co.left_adj.count == 1);
+                co.left_adj.arcs[1] = after_arc;
+                co.left_adj.count   = 2;
+                co.pending_after_left = NONE;
+            }
+            if (co.pending_after_right != NONE) {
+                assert(co.right_adj.count == 1);
+                co.right_adj.arcs[1] = after_arc;
+                co.right_adj.count   = 2;
+                co.pending_after_right = NONE;
+            }
+        }
+        pending_chords.clear();
+    };
+
+    const std::size_t end_v_edge = n_edges - 1;
+    SymbolicY end_v_y = symbolic_y_of(C.vertex(C.num_vertices() - 1));
+    SymbolicY start_v_y = symbolic_y_of(C.vertex(0));
+
+    auto process_group = [&](std::size_t i, std::size_t j) {
+        // [tex 226]: emit the arc closing at this group's position.
+        std::size_t before_arc = emit_arc(eps[i].edge_c, eps[i].side, eps[i].y);
+        patch_after_arcs(before_arc);
+
+        // [C91 §2.2] tree + cw walk → proper parenthesis nesting.
+        for (std::size_t k = i; k < j; ++k) {
+            const Endpoint& e = eps[k];
+            ChordOut& co = chord_out[e.pending_idx];
+            bool is_vert = is_vertex_endpoint(e.edge_c, e.y);
+
+            Chord::AdjArcs& adj = e.is_left_slot ? co.left_adj : co.right_adj;
+            std::size_t& pending_after = e.is_left_slot
+                ? co.pending_after_left : co.pending_after_right;
+
+            if (!co.first_seen) {
+                // Opening: most-recent arc is in R_outer (pre-toggle).
+                adj.arcs[0] = arcs.size() - 1;
+                adj.count   = 1;
+                co.first_seen = true;
+                co.r_outer = current_region;
+                co.r_inner = out_S.add_node();
+                current_region = co.r_inner;
+
+                // [C91 §2.4 tex 133]: synthesize R_inner-bounding null-arc.
+                if (pending[e.pending_idx].is_null_length) {
+                    co.r_inner_arc = emit_arc(
+                        e.edge_c, e.side, e.y, /*edge_count=*/0);
+                    assert(is_vert &&
+                           "[C91 §2.1 tex 72]: null-length endpoints are "
+                           "polygon-vertex companions");
+                    continue;
+                }
+            } else {
+                // Closing: null-length uses own R_inner-arc; else most-recent.
+                adj.arcs[0] = pending[e.pending_idx].is_null_length
+                    ? co.r_inner_arc : arcs.size() - 1;
+                assert(adj.arcs[0] != NONE);
+                adj.count   = 1;
+                current_region = co.r_outer;
+            }
+
+            if (!is_vert) {
+                pending_after = adj.arcs[0];
+                pending_chords.push_back(e.pending_idx);
+            }
+        }
+    };
+
+    std::size_t i = 0;
+    bool wrap_done = false;
+    while (i < eps.size()) {
+        // L→R wrap at end_vertex on first RIGHT endpoint.
+        if (!wrap_done && eps[i].side == RIGHT) {
+            std::size_t a_idx = emit_arc(end_v_edge, LEFT, end_v_y);
+            patch_after_arcs(a_idx);
+            cursor = {end_v_edge, RIGHT, end_v_y};
+            wrap_done = true;
+            continue;
+        }
+
+        std::size_t j = i + 1;
+        while (j < eps.size() &&
+               trav_pos(eps[j].edge_c, eps[j].side) ==
+                   trav_pos(eps[i].edge_c, eps[i].side) &&
+               symbolic_y_equal(eps[j].y, eps[i].y)) ++j;
+        process_group(i, j);
+        i = j;
+    }
+
+    // Trailing wrap (if no RIGHT endpoint) + final arc to vertex(0).
+    if (!wrap_done) {
+        std::size_t a_idx = emit_arc(end_v_edge, LEFT, end_v_y);
+        patch_after_arcs(a_idx);
+        cursor = {end_v_edge, RIGHT, end_v_y};
+    }
+    std::size_t tail_arc = emit_arc(0, RIGHT, start_v_y);
+    patch_after_arcs(tail_arc);
+
+    // [C91 §3.1]: closed-loop ∂C + Jordan curve ⟹ sweep balances.
+    assert(current_region == r_start &&
+           "[C91 §3.1]: parenthesis sweep must return to the starting region");
+
+    // ── Step 4: Hand to Submap in canonical order ──────────────
+    // [C91 §2.4(iii) tex 138]: LEFT ascending then RIGHT descending.
+    // Submap::add_arc asserts the order at insertion.
+
+    std::vector<std::size_t> left_order, right_order;
+    left_order.reserve(arcs.size());
+    right_order.reserve(arcs.size());
+    for (std::size_t ai = 0; ai < arcs.size(); ++ai) {
+        (arcs[ai].first_side == LEFT ? left_order : right_order)
+            .push_back(ai);
+    }
+    std::stable_sort(left_order.begin(), left_order.end(),
+        [&](std::size_t a, std::size_t b) {
+            return arcs[a].first_edge < arcs[b].first_edge;
+        });
+    std::stable_sort(right_order.begin(), right_order.end(),
+        [&](std::size_t a, std::size_t b) {
+            return arcs[a].first_edge > arcs[b].first_edge;
+        });
+
+    std::vector<std::size_t> arc_remap(arcs.size(), NONE);
+    auto add_in_order = [&](const std::vector<std::size_t>& order) {
+        for (std::size_t old_ai : order)
+            arc_remap[old_ai] = out_S.add_arc(arcs[old_ai]);
+    };
+    add_in_order(left_order);
+    add_in_order(right_order);
+
+    out_S.start_vertex = 0;
+    out_S.end_vertex   = C.num_vertices() - 1;
+
+    assert(!left_order.empty() &&
+           "[C91 §2.4(iii) tex 138]: normal-form requires ≥1 LEFT arc");
+    out_S.start_arc = arc_remap[left_order.front()];
+    out_S.end_arc   = arc_remap[left_order.back()];
+
+    auto remap_adj = [&](Chord::AdjArcs& adj) {
+        for (std::size_t k = 0; k < adj.count; ++k) {
+            assert(adj.arcs[k] != NONE);
+            adj.arcs[k] = arc_remap[adj.arcs[k]];
+        }
+    };
+    for (std::size_t pi = 0; pi < pending.size(); ++pi) {
+        const Pending& p = pending[pi];
+        ChordOut& co = chord_out[pi];
+        assert(co.first_seen && co.r_outer != NONE && co.r_inner != NONE &&
+               "[C91 §3.1]: every chord must be visited by the walk");
+        assert(co.left_adj.count + co.right_adj.count >= 2 &&
+               co.left_adj.count + co.right_adj.count <= 4 &&
+               "[C91 §2.4(ii) tex 137]: chord has 2, 3, or 4 adj arcs total");
+
+        Chord c;
+        c.region[0] = co.r_outer; c.region[1] = co.r_inner;
+        c.left_edge = p.left_edge_c;   c.left_side  = p.left_side;
+        c.right_edge = p.right_edge_c; c.right_side = p.right_side;
+        c.y = p.y.y; c.y_tag = p.y.tag;
+        c.is_null_length = p.is_null_length;
+        c.left_adj = co.left_adj; c.right_adj = co.right_adj;
+        remap_adj(c.left_adj); remap_adj(c.right_adj);
+        out_S.add_chord(c);
     }
 }
 

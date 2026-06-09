@@ -88,14 +88,28 @@ struct FusionState {
     std::vector<std::size_t> arc_for_seq_pos;
 
     // Chords discovered during the traversal — feed into the fused submap.
+    // [C91 §3.1 tex 224]: discovered chords connect ∂C₁ and ∂C₂ — endpoints
+    // live in DIFFERENT curve frames.  `left_on_c1` / `right_on_c1` mark
+    // which curve each slot's `edge` indexes into so rebuild_submap can
+    // translate to the merged-C frame.  (For the case (ii) startup chord both
+    // endpoints can sit on C₁; both flags would be true.)
     struct DiscoveredChord {
         SymbolicY y;
         std::size_t left_edge;
         Side left_side;
         std::size_t right_edge;
         Side right_side;
+        bool left_on_c1  = true;
+        bool right_on_c1 = true;
     };
     std::vector<DiscoveredChord> chords;
+
+    // [C91 §3.1 tex 224]: source-submap chord indices invalidated by a
+    // case (i)/(ii) discovery in this pass — dropped by rebuild_submap's
+    // visibility filter.  self = pass's walking submap (S₁ for s1_into_s2,
+    // S₂ for s2_into_s1); other = the shoot-target submap.
+    std::vector<bool> invalidated_self;
+    std::vector<bool> invalidated_other;
 };
 
 // [C91 §3.1]: The unique shoot direction at a ∂C point ("because of
@@ -106,11 +120,11 @@ Side shooting_direction(std::size_t edge, Side side,
 // [C91 §3.1 Start-Up]: Initialize p and the current S₂ region.
 //
 // Compute c₀ = the point of ∂C that a₀ sees, then:
-//   Case 1 (c₀ ∈ ∂C₂): p = a₀, current = S₂ region crossed by a₀c₀.
-//   Case 2 (c₀ ∈ ∂C₁): skip to c₀, p = c₀, current = S₂ region of a₀.
+//   case (i) (c₀ ∈ ∂C₂): p = a₀, current = S₂ region crossed by a₀c₀.
+//   case (ii) (c₀ ∈ ∂C₁): skip to c₀, p = c₀, current = S₂ region of a₀.
 //
 // Returns the index into state.sequence at which the main loop starts
-// (0 for Case 1, the index of c₀ for Case 2).
+// (0 for case (i), the index of c₀ for case (ii)).
 std::size_t fusion_startup(FusionState& state,
                             const Submap& S1, const Polygon& C1,
                             const Submap& S2, const Polygon& C2,
@@ -135,4 +149,22 @@ void fuse_s1_into_s2(FusionState& state,
 void build_fusion_sequence(FusionState& state, const Submap& S,
                            const Polygon& C);
 
+// [C91 §3.1 tex 226]: Set up the fused submap S in normal form from the
+// chord inventory.  Sorts chord endpoints along ∂C, builds the arc-sequence
+// table + region tree + chord-arc pointers.  Skips tree decomposition
+// (§3.2 restores conformality first).
+//
+// Time: O((n₁/γ₁ + n₂/γ₂ + 1) log(n₁+n₂)) per [tex 226]: dominated by the
+// endpoint sort; everything else is linear in the chord count.
+//
+// `state1.chords` and `state2.chords` carry the newly discovered chords
+// (with per-endpoint `left_on_c1` / `right_on_c1` flags for curve-frame
+// translation).  Old chords of S₁ and S₂ — filtered for V(C) visibility —
+// and null-length chords are gathered from S₁ and S₂ here.
+void rebuild_submap(Submap& out_S,
+                     const Polygon& C,
+                     const Submap& S1, const Polygon& C1,
+                     const Submap& S2, const Polygon& C2,
+                     const FusionState& state1,
+                     const FusionState& state2);
 } // namespace chazelle
