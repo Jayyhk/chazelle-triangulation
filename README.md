@@ -18,7 +18,7 @@ step.
   - [x] §2.5 — A Topological Lemma
 - [ ] §3 — Merging Two Submaps
   - [x] §3.0 — Merge Setup and Oracle Primitives
-  - [ ] §3.1 — Fusion of Two Submaps (startup done, main loop TODO)
+  - [ ] §3.1 — Fusion of Two Submaps (`merge.cpp::fuse` TODO)
   - [ ] §3.2 — Restoring Conformality
   - [ ] §3.3 — Maintaining Granularity
   - [ ] §3.4 — Implementing the Oracles
