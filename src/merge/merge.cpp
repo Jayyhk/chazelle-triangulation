@@ -21,7 +21,15 @@ static Polygon build_merged_curve(const Polygon& C1, const Polygon& C2) {
 }
 
 // [C91 §3.1]: Stage 1 — fuse S₁ and S₂ via discovered chords from the
-// fusion vertex traversal.  TODO: implement.
+// fusion vertex traversal.
+//
+// TODO: wire up the three calls (blocked on §3.4)
+//   1. fuse_submaps(state₁, S₁, C₁, S₂, C₂, ray1, ray2)  — S₁ into S₂
+//   2. fuse_submaps(state₂, S₂, C₂, S₁, C₁, ray2, ray1)  — [§3.1 tex 179] by symmetry
+//   3. rebuild_submap(out_S, C, S₁, C₁, S₂, C₂, state₁, state₂)
+// once §3.4 supplies a real ray-shooting oracle — fuse_submaps calls
+// local_shoot which trips [§3.1 tex 181]'s "local shoot must hit"
+// assertion under the no-op oracle stubs.
 static void fuse(Submap& /*S*/, const MergeInput& /*in*/,
                   const Polygon& /*C*/) {
 }
