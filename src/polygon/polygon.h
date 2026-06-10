@@ -64,4 +64,41 @@ private:
     void build_nonnull_prefix();
 };
 
+// [C91 §2 tex 47]: SoS-aware interpolation parameter on an edge.
+//
+// Returns t ∈ [0, 1] such that the (perturbed) horizontal line at
+// `target_y` crosses edge `edge_idx` at the convex combination
+// (1-t)·vs + t·ve.  When `target_y`'s SymbolicY matches an endpoint's
+// (same raw y and tag), the perturbed crossing IS that endpoint —
+// returns 0.0 or 1.0 exactly.  Otherwise raw y's strictly bracket
+// target_y (else SoS would have forced a tag-match), and standard
+// linear interpolation is exact.
+//
+// Required by the paper's "distinct y" relaxation under SoS: with
+// repeated raw y-coords a horizontal edge has `vs.y == ve.y` and
+// only the symbolic short-circuit produces a defined answer.
+inline double edge_t_at_y(const Polygon& C, std::size_t edge_idx,
+                          SymbolicY target_y) {
+    const auto& e = C.edge(edge_idx);
+    const Point& vs = C.vertex(e.start_idx);
+    const Point& ve = C.vertex(e.end_idx);
+    if (symbolic_y_equal(target_y, symbolic_y_of(vs))) return 0.0;
+    if (symbolic_y_equal(target_y, symbolic_y_of(ve))) return 1.0;
+    assert(vs.y != ve.y &&
+           "[C91 §2 tex 47]: horizontal edge requires SoS tag-match at "
+           "one endpoint; strictly-between target is unreachable");
+    return (target_y.y - vs.y) / (ve.y - vs.y);
+}
+
+// [C91 §2 tex 47]: SoS-aware x of where the perturbed horizontal line
+// at `target_y` crosses edge `edge_idx`.  Companion to `edge_t_at_y`.
+inline double edge_x_at_y(const Polygon& C, std::size_t edge_idx,
+                          SymbolicY target_y) {
+    const auto& e = C.edge(edge_idx);
+    const Point& vs = C.vertex(e.start_idx);
+    const Point& ve = C.vertex(e.end_idx);
+    double t = edge_t_at_y(C, edge_idx, target_y);
+    return vs.x + t * (ve.x - vs.x);
+}
+
 } // namespace chazelle

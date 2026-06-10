@@ -53,25 +53,6 @@ static Polygon random_polygon(std::mt19937& rng, std::size_t n) {
 //  [C91 §0]b. Brute-force helpers
 // ════════════════════════════════════════════════════════════════════
 
-// Compute the x-coordinate where horizontal line y=qy intersects edge e.
-// Returns false if the edge is horizontal or y is outside the edge's
-// y-range (strict).
-[[maybe_unused]]
-static bool edge_x_at_y(const Polygon& poly, std::size_t edge_idx,
-                         double qy, double& out_x) {
-    const auto& e = poly.edge(edge_idx);
-    double y0 = poly.vertex(e.start_idx).y;
-    double y1 = poly.vertex(e.end_idx).y;
-    double x0 = poly.vertex(e.start_idx).x;
-    double x1 = poly.vertex(e.end_idx).x;
-    if (y0 == y1) return false; // horizontal edge
-    double lo = std::min(y0, y1), hi = std::max(y0, y1);
-    if (qy <= lo || qy >= hi) return false; // outside strict range
-    double t = (qy - y0) / (y1 - y0);
-    out_x = x0 + t * (x1 - x0);
-    return true;
-}
-
 // Brute-force: find all arcs that contain a given (edge_idx, y) point.
 // Linear scan of all arcs — O(m).
 [[maybe_unused]]

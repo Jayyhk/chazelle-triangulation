@@ -413,6 +413,7 @@ std::size_t fusion_startup(FusionState& state,
         state.p = a0_point;
         state.p_edge = a0.edge;
         state.p_side = a0.side;
+        state.p_y = a0.y;
 
         // CW step from a₀ goes from junction_v to junction_v-1; its
         // y-direction is the topological "leaving p" vector.
@@ -429,6 +430,10 @@ std::size_t fusion_startup(FusionState& state,
         state.p = Point{c0.x, c0.y, NONE};
         state.p_edge = c0.edge;
         state.p_side = c0.side;
+        // [C91 §3.1 + §2 tex 47]: c₀ shares its perturbed y with a₀ (the
+        // horizontal visibility chord); it has no vertex tag of its own,
+        // so it borrows a₀'s tag for SoS comparisons.  See c0_y below.
+        state.p_y = a0.y;
 
         // Topological slope leaving c₀.
         assert(c0.edge < C1.num_edges());
@@ -566,12 +571,7 @@ void fuse_submaps(FusionState& state,
         auto fv_point = [&](const FusionVertex& v) -> Point {
             if (v.is_companion)
                 return C1.vertex(C1.num_vertices() - 1);
-            const auto& e = C1.edge(v.edge);
-            const Point& vs = C1.vertex(e.start_idx);
-            const Point& ve = C1.vertex(e.end_idx);
-            double y = v.y.y;
-            double t = (y - vs.y) / (ve.y - vs.y);
-            return Point{vs.x + t * (ve.x - vs.x), y, NONE};
+            return Point{edge_x_at_y(C1, v.edge, v.y), v.y.y, NONE};
         };
 
         // [C91 §3.1 tex 220]: case (i) test in O(f(γ₂)).
@@ -629,11 +629,7 @@ void fuse_submaps(FusionState& state,
                 const Chord& ch = S1.chord(aj_v.chord_idx);
                 std::size_t other_edge = aj_v.is_left_endpoint
                     ? ch.right_edge : ch.left_edge;
-                const auto& e = C1.edge(other_edge);
-                const Point& vs = C1.vertex(e.start_idx);
-                const Point& ve = C1.vertex(e.end_idx);
-                double t_param = (ch.y - vs.y) / (ve.y - vs.y);
-                t_x = vs.x + t_param * (ve.x - vs.x);
+                t_x = edge_x_at_y(C1, other_edge, ch.symbolic_y());
             } else {
                 // [C91 §3.1 tex 220] companion case: j ∈ {0, m+1}.
                 // a_0 sits on the RIGHT side of the junction (first RIGHT
@@ -658,28 +654,21 @@ void fuse_submaps(FusionState& state,
         };
 
         // Position of an S₂ chord endpoint: edge-interp at chord y.
-        auto s2_endpoint_point = [&](std::size_t edge, double y) -> Point {
-            const auto& e = C2.edge(edge);
-            const Point& vs = C2.vertex(e.start_idx);
-            const Point& ve = C2.vertex(e.end_idx);
-            double t = (y - vs.y) / (ve.y - vs.y);
-            return Point{vs.x + t * (ve.x - vs.x), y, NONE};
+        auto s2_endpoint_point = [&](std::size_t edge, SymbolicY y) -> Point {
+            return Point{edge_x_at_y(C2, edge, y), y.y, NONE};
         };
 
         // CW position on ∂C₁ as (trav_pos, within_edge); lex compare
         // gives the cw walk.  LEFT side: within = edge param t; RIGHT
         // side: 1−t (cw traversal is end→start).
-        auto cw_position = [&](double y, std::size_t edge, Side side)
+        auto cw_position = [&](SymbolicY y, std::size_t edge, Side side)
                            -> std::pair<std::size_t, double> {
             std::size_t junction_edge = C1.num_edges() - 1;
             std::size_t right_half_len = junction_edge + 1;
             std::size_t tp = (side == RIGHT)
                 ? (junction_edge - edge)
                 : (right_half_len + edge);
-            const auto& e = C1.edge(edge);
-            const Point& vs = C1.vertex(e.start_idx);
-            const Point& ve = C1.vertex(e.end_idx);
-            double t = (y - vs.y) / (ve.y - vs.y);
+            double t = edge_t_at_y(C1, edge, y);
             return {tp, (side == LEFT) ? t : (1.0 - t)};
         };
 
@@ -751,7 +740,7 @@ void fuse_submaps(FusionState& state,
                    "[C91 §3.1 tex 179]: A_j wraps only in the "
                    "RIGHT→LEFT direction (cw ordering)");
 
-            auto p_cw = cw_position(state.p.y, state.p_edge, state.p_side);
+            auto p_cw = cw_position(state.p_y, state.p_edge, state.p_side);
 
             // [C91 §3.1 tex 200]: case (ii) iterates exit chords of R;
             // null-length chords ([§2.1 tex 72]) count per tex 224.  No
@@ -762,10 +751,11 @@ void fuse_submaps(FusionState& state,
                 const Chord& chord_ab = S2.chord(ci);
                 if (chord_ab.dead) continue;
 
+                SymbolicY chord_ab_y = chord_ab.symbolic_y();
                 Point a_pt = s2_endpoint_point(chord_ab.left_edge,
-                                                chord_ab.y);
+                                                chord_ab_y);
                 Point b_pt = s2_endpoint_point(chord_ab.right_edge,
-                                                chord_ab.y);
+                                                chord_ab_y);
 
                 for (bool is_left : {true, false}) {
                     std::size_t q_edge = is_left ? chord_ab.left_edge
@@ -833,7 +823,9 @@ void fuse_submaps(FusionState& state,
                         if (!hit_side_ok) continue;
 
                         // "occurs before p along A_j": strict cw compare.
-                        auto hit_cw = cw_position(hit.y, hit.edge, hit.side);
+                        // hit.y inherits the ray's perturbed source y =
+                        // chord_ab's SymbolicY (RayHit carries only raw y).
+                        auto hit_cw = cw_position(chord_ab_y, hit.edge, hit.side);
                         if (hit_cw <= p_cw) continue;
 
                         // back-shot from s in its natural direction; q'
@@ -898,6 +890,7 @@ void fuse_submaps(FusionState& state,
                 state.p = aj_point;
                 state.p_edge = aj_v.edge;
                 state.p_side = aj_v.side;
+                state.p_y = aj_v.y;
                 k = j + 1;
                 break;
             }
@@ -909,9 +902,9 @@ void fuse_submaps(FusionState& state,
                                                   : chord_ab.right_edge;
                 Side q_side = r.q_is_left ? chord_ab.left_side
                                           : chord_ab.right_side;
-                Point q_point = s2_endpoint_point(q_edge, chord_ab.y);
-                Point p_prime{r.p_prime_hit.x, r.p_prime_hit.y, NONE};
                 SymbolicY chord_y = chord_ab.symbolic_y();
+                Point q_point = s2_endpoint_point(q_edge, chord_y);
+                Point p_prime{r.p_prime_hit.x, r.p_prime_hit.y, NONE};
 
                 // q on C₂ (S₂ exit chord endpoint); p' on C₁ (A_j of S₁).
                 if (q_point.x < p_prime.x)
@@ -931,6 +924,9 @@ void fuse_submaps(FusionState& state,
                 state.p = p_prime;
                 state.p_edge = r.p_prime_hit.edge;
                 state.p_side = r.p_prime_hit.side;
+                // p' = back-shot hit on ∂C₁ from a chord_ab endpoint;
+                // its perturbed y is chord_ab's (the ray's source).
+                state.p_y = chord_y;
                 // [C91 §3.1 tex 206]: "make current the region of S₂
                 // which we enter as we locally cross the exit chord."
                 // For a non-null chord, that's the chord's other side.
@@ -948,15 +944,12 @@ void fuse_submaps(FusionState& state,
                 // a back-shot hit on A_j's interior, which under SoS
                 // is disjoint from the {a_1..a_m} enumeration.
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
-                {
-                    SymbolicY pp_y{state.p.y, NONE};
-                    for (std::size_t l = 1; l + 1 < state.sequence.size(); ++l) {
-                        const auto& v = state.sequence[l];
-                        if (v.edge == state.p_edge && v.side == state.p_side)
-                            assert(!symbolic_y_equal(v.y, pp_y) &&
-                                   "[C91 §3.1 tex 199 + §2 tex 47]: "
-                                   "p' must not coincide with any a_l");
-                    }
+                for (std::size_t l = 1; l + 1 < state.sequence.size(); ++l) {
+                    const auto& v = state.sequence[l];
+                    if (v.edge == state.p_edge && v.side == state.p_side)
+                        assert(!symbolic_y_equal(v.y, state.p_y) &&
+                               "[C91 §3.1 tex 199 + §2 tex 47]: "
+                               "p' must not coincide with any a_l");
                 }
 #endif
                 k = j;

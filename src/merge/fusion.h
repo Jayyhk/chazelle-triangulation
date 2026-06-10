@@ -79,6 +79,12 @@ struct FusionState {
     Point p{0.0, 0.0, NONE};
     std::size_t p_edge = NONE;
     Side p_side = LEFT;
+    // [C91 §2 tex 47]: SoS tag identifying p.y's perturbed source —
+    // the polygon vertex or chord whose y-event placed p.  `Point.index`
+    // is NONE for mid-edge p, so we carry the SoS tag separately to
+    // keep downstream symbolic comparisons (cw_position, p ≠ a_l)
+    // tie-break-correct.
+    SymbolicY p_y{};
 
     // The region of S₂ that currently contains p.
     std::size_t s2_region = NONE;
