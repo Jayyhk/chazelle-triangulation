@@ -47,8 +47,10 @@ private:
     std::vector<TDNode> nodes_;
     std::size_t root_ = NONE;
 
-    // [C91 §2.3 tex 116]: O(m log m) via a shared region_local_buf
-    // (pre-allocated to submap.num_nodes(); cleaned per call).
+    // [C91 §2.3 tex 116]: O(m log m).  `region_local_buf` is the only
+    // vector reused across recursive calls.  Each call also allocates
+    // its own local vectors (adjacency, BFS state, partition outputs);
+    // summed across the whole recursion these still fit tex 116's bound.
     std::size_t decompose(
         const class Submap& submap,
         const std::vector<std::size_t>& chords_in_subtree,

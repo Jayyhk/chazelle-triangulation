@@ -62,7 +62,7 @@ inline void assert_merge_preconditions(const MergeInput& in) {
     }
 
     // [C91 §3 tex 166]: "each Sᵢ is given in normal form."  check_invariants
-    // verifies [C91 §2.4(i)–(iii)] + key_y monotonicity (tex 144) + edge_count
+    // verifies [C91 §2.4(i)–(iii)] + start-y monotonicity (tex 144) + edge_count
     // cache (tex 106).
     in.S1->check_invariants(*in.C1);
     in.S2->check_invariants(*in.C2);

@@ -33,8 +33,12 @@ struct ShieldingResult {
 // @param a_prime_eq_b_prime  true if a' = b' (single touch, no crossing);
 //                            only read when both exist.
 //
-// Precondition: (a_prime=false, b_prime=true) is impossible — cw d→c
-// arc cannot reach b without passing a (a, c, b clockwise, c ∈ H₁).
+// Preconditions (per [C91 §2.5 tex 156] lemma setup):
+//   - (a_prime=false, b_prime=true) is impossible — cw d→c arc cannot
+//     reach b without passing a (a, c, b clockwise, c ∈ H₁).
+//   - Both B₁ AND B₂ are nonempty.  Under that, the 1-piece return of
+//     "shielded from B₂" is unambiguous (A stays c-side = B₁-side).
+//     Callers must enforce this before invoking.
 inline ShieldingResult classify_shielding(bool a_prime,
                                            bool b_prime,
                                            bool a_prime_eq_b_prime

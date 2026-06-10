@@ -90,16 +90,12 @@ static Submap make_single_region_submap(const Polygon& poly) {
     a.last_side = LEFT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
-    a.key_y = poly.vertex(0).y;
-    a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     a.first_edge = poly.num_edges() - 1;
     a.last_edge = 0;
     a.first_side = RIGHT;
     a.last_side = RIGHT;
-    a.key_y = poly.vertex(poly.num_vertices() - 1).y;
-    a.key_y_tag = poly.num_vertices() - 1;
     std::size_t ai1 = s.add_arc(a);
 
     // [C91 §2.4 tex 144]: end_arc = last LEFT arc (left_right_boundary_ - 1).
@@ -267,10 +263,8 @@ static Submap make_segment_submap(const Polygon& C) {
     a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0;
     a.edge_count = C.count_nonnull_edges(0, 0);
-    a.key_y = C.vertex(0).y; a.key_y_tag = 100;
     std::size_t ai0 = s.add_arc(a);
     a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.key_y = C.vertex(1).y; a.key_y_tag = 101;
     s.add_arc(a);
     s.start_arc = ai0; s.end_arc = ai0;
     s.start_vertex = 0; s.end_vertex = 1;

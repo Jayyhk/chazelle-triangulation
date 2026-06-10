@@ -301,7 +301,8 @@ std::size_t fusion_startup(FusionState& state,
             // Returns true iff the arc's region is strictly ABOVE the
             // chord under SoS.  Looks at the polygon vertex adjacent to
             // the chord along the arc's traversal direction.
-            auto arc_region_above_chord = [&](const Arc& a) -> bool {
+            auto arc_region_above_chord = [&](std::size_t arc_idx) -> bool {
+                const Arc& a = S2.arc(arc_idx);
                 // Structural: does the arc START at the chord (first_edge
                 // matches the chord's slot) or END there (last_edge matches)?
                 bool first_matches =
@@ -316,12 +317,15 @@ std::size_t fusion_startup(FusionState& state,
                 } else if (!first_matches && last_matches) {
                     arc_starts_at_chord = false;
                 } else {
-                    // Single-edge arc on chord's edge — disambiguate via
-                    // key_y_tag (matches chord.y_tag ⟺ arc starts here).
+                    // [C91 §2.4 tex 133]: single-edge arc on chord's edge —
+                    // the arc that starts at the chord has start-y = chord.y
+                    // (derived from the bounding chord, not stored).
                     assert(first_matches && last_matches &&
                            "adj arc must touch the chord endpoint via "
                            "first_edge or last_edge");
-                    arc_starts_at_chord = (a.key_y_tag == ch.y_tag);
+                    arc_starts_at_chord = symbolic_y_equal(
+                        S2.arc_start_symbolic_y(arc_idx, C2),
+                        ch.symbolic_y());
                 }
 
                 // Vertex adjacent to the chord along the arc's traversal
@@ -348,8 +352,8 @@ std::size_t fusion_startup(FusionState& state,
                 // Mid-edge endpoint: the two adj arcs are on OPPOSITE
                 // sides of the chord (one above, one below per
                 // [C91 §2.2 tex 96]).  Classify each via the helper.
-                bool arc0_above = arc_region_above_chord(S2.arc(adj->arcs[0]));
-                bool arc1_above = arc_region_above_chord(S2.arc(adj->arcs[1]));
+                bool arc0_above = arc_region_above_chord(adj->arcs[0]);
+                bool arc1_above = arc_region_above_chord(adj->arcs[1]);
                 assert(arc0_above != arc1_above &&
                        "[C91 §2.2 tex 96]: the two adj arcs at a mid-edge "
                        "chord endpoint must lie on opposite sides of the chord");
@@ -367,7 +371,7 @@ std::size_t fusion_startup(FusionState& state,
             ch_edge_at_endpoint = ch.left_edge;
             ch_side_at_endpoint = ch.left_side;
             bool left_arc_above =
-                arc_region_above_chord(S2.arc(ch.left_adj.arcs[0]));
+                arc_region_above_chord(ch.left_adj.arcs[0]);
             std::size_t r_arc = S2.arc(ch.left_adj.arcs[0]).region_node;
             std::size_t r_other = (ch.region[0] == r_arc)
                                 ? ch.region[1] : ch.region[0];
@@ -840,7 +844,8 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     // is RIGHT then LEFT; we counting-sort endpoints by cw-arc position
     // in O(m).  Each endpoint is associated with one arc via adj_arcs:
     // vertex endpoint ⟹ the single adj arc; mid-edge endpoint ⟹ the
-    // "starting" adj arc whose key_y == chord.y.
+    // "starting" adj arc whose start-y (derived from its bounding chord
+    // per [C91 §2.4 tex 133]) matches chord.y.
 
     std::size_t num_arcs = S.num_arcs();
     std::size_t lrb = S.left_right_boundary();
@@ -872,14 +877,15 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
         return fv;
     };
 
-    // Mid-edge endpoint: of the two adj arcs, exactly one starts at the
-    // chord (its key_y matches the chord's y).
+    // [C91 §2.4 tex 133]: mid-edge endpoint — of the two adj arcs,
+    // exactly one starts at the chord (its start-y, derived from the
+    // bounding chord, matches the chord's y).
     auto starting_arc = [&](const Chord::AdjArcs& adj,
                              SymbolicY chord_y) -> std::size_t {
         assert(adj.count == 2);
-        if (symbolic_y_equal(S.arc(adj.arcs[0]).key_symbolic_y(), chord_y))
+        if (symbolic_y_equal(S.arc_start_symbolic_y(adj.arcs[0], C), chord_y))
             return adj.arcs[0];
-        assert(symbolic_y_equal(S.arc(adj.arcs[1]).key_symbolic_y(), chord_y) &&
+        assert(symbolic_y_equal(S.arc_start_symbolic_y(adj.arcs[1], C), chord_y) &&
                "[C91 §2.4]: one adj arc must start at the chord endpoint");
         return adj.arcs[1];
     };
@@ -1004,8 +1010,9 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
 
 // [C91 §3.1 tex 226]: set up S in normal form from the [tex 224] chord
 // inventory — sort endpoints along ∂C (edge name then y), build the
-// arc-sequence table + region tree (parenthesis sweep), wire adj-arc
-// pointers per [§2.4(ii) tex 137], skip tree decomposition (§3.2's job).
+// arc-sequence table + region tree (parenthesis sweep), fill in each
+// chord's adjacent-arc pointers per [§2.4(ii) tex 137], skip the tree
+// decomposition (§3.2's job).
 //
 // Time: O((n₁/γ₁ + n₂/γ₂ + 1) log(n₁+n₂)) — endpoint sort dominates.
 void rebuild_submap(Submap& out_S,
@@ -1171,16 +1178,22 @@ void rebuild_submap(Submap& out_S,
         Chord::AdjArcs left_adj{};
         Chord::AdjArcs right_adj{};
         bool first_seen = false;
-        // Mid-edge: defer the after-arc until next emit.  Vertex: unused.
+        // Mid-edge endpoint: the second adjacent arc is the one we emit
+        // next.  Set here at the first visit, filled in once that next
+        // arc exists.  Vertex endpoint: unused.
         std::size_t pending_after_left  = NONE;
         std::size_t pending_after_right = NONE;
-        // [C91 §2.4 tex 133]: own R_inner null-arc for null-length chords
-        // (nested null-lengths must not collide on `arcs.size() - 1`).
+        // [C91 §2.4 tex 133]: for null-length chords, the null-arc we
+        // emit in R_inner.  Recorded at the opening visit so that nested
+        // null-length chords at the same y-extremum don't accidentally
+        // reuse each other's null-arc as their closing adjacent arc.
         std::size_t r_inner_arc = NONE;
     };
     std::vector<ChordOut> chord_out(pending.size());
 
-    // Patched on every emit; bounded by the most-recent group → O(N) total.
+    // List of chords waiting for their second adjacent arc.  Cleared
+    // every time a new arc is emitted, so its size is at most the size
+    // of one endpoint group — total cost across the walk is O(N).
     std::vector<std::size_t> pending_chords;
 
     std::vector<Arc> arcs;
@@ -1189,10 +1202,10 @@ void rebuild_submap(Submap& out_S,
     const std::size_t r_start = out_S.add_node();
     std::size_t current_region = r_start;
 
-    struct Cursor { std::size_t edge; Side side; SymbolicY y; };
-    Cursor cursor{0, LEFT, symbolic_y_of(C.vertex(0))};
+    struct Cursor { std::size_t edge; Side side; };
+    Cursor cursor{0, LEFT};
 
-    auto emit_arc = [&](std::size_t end_edge, Side end_side, SymbolicY end_y,
+    auto emit_arc = [&](std::size_t end_edge, Side end_side,
                          std::size_t override_edge_count = NONE) {
         assert(cursor.side == end_side &&
                "[C91 §2.4(iii)]: arc must not straddle the L/R wrap");
@@ -1207,14 +1220,14 @@ void rebuild_submap(Submap& out_S,
             std::size_t hi = std::max(a.first_edge, a.last_edge);
             a.edge_count = C.count_nonnull_edges(lo, hi);
         }
-        a.key_y = cursor.y.y; a.key_y_tag = cursor.y.tag;
         std::size_t idx = arcs.size();
         arcs.push_back(a);
-        cursor = {end_edge, end_side, end_y};
+        cursor = {end_edge, end_side};
         return idx;
     };
 
-    // Patch mid-edge endpoints' second adj with the next emit.
+    // Fill in the waiting mid-edge endpoints' second adjacent arc with
+    // the arc we just emitted.
     auto patch_after_arcs = [&](std::size_t after_arc) {
         for (std::size_t pi : pending_chords) {
             ChordOut& co = chord_out[pi];
@@ -1235,12 +1248,10 @@ void rebuild_submap(Submap& out_S,
     };
 
     const std::size_t end_v_edge = n_edges - 1;
-    SymbolicY end_v_y = symbolic_y_of(C.vertex(C.num_vertices() - 1));
-    SymbolicY start_v_y = symbolic_y_of(C.vertex(0));
 
     auto process_group = [&](std::size_t i, std::size_t j) {
         // [tex 226]: emit the arc closing at this group's position.
-        std::size_t before_arc = emit_arc(eps[i].edge_c, eps[i].side, eps[i].y);
+        std::size_t before_arc = emit_arc(eps[i].edge_c, eps[i].side);
         patch_after_arcs(before_arc);
 
         // [C91 §2.2] tree + cw walk → proper parenthesis nesting.
@@ -1265,7 +1276,7 @@ void rebuild_submap(Submap& out_S,
                 // [C91 §2.4 tex 133]: synthesize R_inner-bounding null-arc.
                 if (pending[e.pending_idx].is_null_length) {
                     co.r_inner_arc = emit_arc(
-                        e.edge_c, e.side, e.y, /*edge_count=*/0);
+                        e.edge_c, e.side, /*edge_count=*/0);
                     assert(is_vert &&
                            "[C91 §2.1 tex 72]: null-length endpoints are "
                            "polygon-vertex companions");
@@ -1292,9 +1303,9 @@ void rebuild_submap(Submap& out_S,
     while (i < eps.size()) {
         // L→R wrap at end_vertex on first RIGHT endpoint.
         if (!wrap_done && eps[i].side == RIGHT) {
-            std::size_t a_idx = emit_arc(end_v_edge, LEFT, end_v_y);
+            std::size_t a_idx = emit_arc(end_v_edge, LEFT);
             patch_after_arcs(a_idx);
-            cursor = {end_v_edge, RIGHT, end_v_y};
+            cursor = {end_v_edge, RIGHT};
             wrap_done = true;
             continue;
         }
@@ -1310,11 +1321,11 @@ void rebuild_submap(Submap& out_S,
 
     // Trailing wrap (if no RIGHT endpoint) + final arc to vertex(0).
     if (!wrap_done) {
-        std::size_t a_idx = emit_arc(end_v_edge, LEFT, end_v_y);
+        std::size_t a_idx = emit_arc(end_v_edge, LEFT);
         patch_after_arcs(a_idx);
-        cursor = {end_v_edge, RIGHT, end_v_y};
+        cursor = {end_v_edge, RIGHT};
     }
-    std::size_t tail_arc = emit_arc(0, RIGHT, start_v_y);
+    std::size_t tail_arc = emit_arc(0, RIGHT);
     patch_after_arcs(tail_arc);
 
     // [C91 §3.1]: closed-loop ∂C + Jordan curve ⟹ sweep balances.

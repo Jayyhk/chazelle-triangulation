@@ -28,15 +28,6 @@ struct Arc {
     // [C91 §2.2]: Cached nonnull edge count for weight computation.
     std::size_t edge_count = 0;
 
-    // [C91 §2.4]: Symbolic y of the arc's starting position on ∂C.  Used by
-    // double_identify to disambiguate arcs sharing an edge.
-    double key_y = 0.0;
-    std::size_t key_y_tag = NONE;
-
-    SymbolicY key_symbolic_y() const noexcept {
-        return {key_y, key_y_tag};
-    }
-
     // [C91 §3]: Underlying range of C edges (ᾱ) — "the portion of C to which
     // an arc α of ∂C corresponds.  An arc may double-back around an
     // endpoint of C, so ᾱ may not always be as 'long' as α."

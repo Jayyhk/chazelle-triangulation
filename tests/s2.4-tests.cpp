@@ -53,11 +53,10 @@ static void test_double_identify_simple() {
 
     Arc a;
     a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 1; a.key_y = 0.0; a.key_y_tag = 0;
+    a.region_node = 0; a.edge_count = 1;
     std::size_t ai0 = s.add_arc(a);
 
     a.first_side = RIGHT; a.last_side = RIGHT;
-    a.key_y = 0.0; a.key_y_tag = 0;
     s.add_arc(a);
 
     // [C91 §2.4] (tex 144): end_arc = last LEFT arc (the turnaround point).
@@ -81,11 +80,10 @@ static void test_double_identify_multi_edge() {
 
     Arc a;
     a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 4; a.key_y = 0.0; a.key_y_tag = 0;
+    a.region_node = 0; a.edge_count = 4;
     std::size_t ai0 = s.add_arc(a);
 
     a.first_edge = 3; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.key_y = 3.0; a.key_y_tag = 3;
     s.add_arc(a);
 
     // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0 is the only LEFT arc).
@@ -110,36 +108,43 @@ static void test_double_identify_multi_edge() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_double_identify_same_edge() {
+    // [C91 §2.4 tex 133]: arc-structures don't store y; the arc inside an
+    // empty region bounded by a null-length chord inherits the chord's y.
+    // Setup: multi-edge LEFT arc in r0 covers edges 0,1; a null-length
+    // chord at edge 1 LEFT creates empty region r1 with one null-arc; the
+    // RIGHT side has one multi-edge arc in r0.  Edge 1 then carries two
+    // LEFT arcs (the r0 boundary + the r1 null-arc) — what the original
+    // "multiple arcs on same edge" intent exercises.
+    auto poly = test_polygon();
+
     Submap s;
-    s.add_node(); // r0
-    s.add_node(); // r1
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
 
     Arc a;
-    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 1; a.key_y = 0.0; a.key_y_tag = 0;
-    std::size_t ai0 = s.add_arc(a);
+    a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, 1);
+    std::size_t ai_L = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 1; a.key_y = 1.0; a.key_y_tag = 1;
+    a.region_node = r1; a.edge_count = 0;
+    std::size_t ai_null = s.add_arc(a); // last LEFT arc — [C91 §2.4] (tex 144)
+
+    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, 1);
     s.add_arc(a);
 
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 1; a.edge_count = 1; a.key_y = 2.0; a.key_y_tag = 2;
-    std::size_t ai_end_left = s.add_arc(a); // last LEFT arc — [C91 §2.4] (tex 144)
+    Chord c;
+    c = {}; c.region[0] = r0; c.region[1] = r1;
+    c.left_edge = 1; c.right_edge = 1; c.left_side = LEFT; c.right_side = LEFT;
+    c.y = 1.5; c.y_tag = 5; c.is_null_length = true;
+    c.left_adj = {{ai_L}, 1}; c.right_adj = {{ai_null}, 1};
+    s.add_chord(c);
 
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 0; a.edge_count = 1; a.key_y = 2.0; a.key_y_tag = 2;
-    s.add_arc(a);
-
-    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 0; a.edge_count = 1; a.key_y = 0.0; a.key_y_tag = 0;
-    s.add_arc(a);
-
-    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai_end_left).
-    s.start_arc = ai0; s.end_arc = ai_end_left;
+    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai_null).
+    s.start_arc = ai_L; s.end_arc = ai_null;
     s.start_vertex = 0; s.end_vertex = 2;
 
-    auto poly = test_polygon();
     auto r = s.double_identify(1, {1.5, 0}, poly);
     assert(r.count >= 2);
 
@@ -157,7 +162,6 @@ static void test_endpoint_pointers() {
     Arc a;
     a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
@@ -190,19 +194,15 @@ static void test_arc_sequence_ordering() {
     Arc a;
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
-    a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
-    a.key_y_tag = 0;
     std::size_t ai_end = s.add_arc(a);  // contains c_end_edge=1
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1;
-    a.key_y_tag = 0;
     s.add_arc(a);
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1;
-    a.key_y_tag = 0;
     s.add_arc(a);
 
     s.start_arc = ai0; s.end_arc = ai_end;
@@ -214,48 +214,65 @@ static void test_arc_sequence_ordering() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  6. double_identify — worst case: 6 arcs at y-extremum
+//  6. double_identify — null-length chord on each ∂C side
 // ════════════════════════════════════════════════════════════════
 
-static void test_double_identify_worst_case() {
+static void test_double_identify_null_chord_both_sides() {
+    // [C91 §2.4 tex 144]: minimal V(C)-valid setup with one null-length
+    // chord on each ∂C side at the same y.  ∂C is restricted to edge 1
+    // (start_vertex=1, end_vertex=2).  Query at the shared null-chord y
+    // returns 4 arcs (r0 LEFT, r1 null, r0 RIGHT, r2 null).
+    //
+    // (Not the paper's tight-6 worst case — that requires an interior
+    // y-extremum vertex with both null-length and non-null chords
+    // incident, a multi-edge multi-chord polygon out of scope here.
+    // The algorithm's internal `count <= 6` assertion enforces the
+    // paper's upper bound regardless of input.)
+    auto poly = test_polygon();
+
     Submap s;
-    s.add_node(); // r0
-    s.add_node(); // r1 (empty region inside LEFT null-length chord)
-    s.add_node(); // r2 (empty region inside RIGHT null-length chord)
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node(); // empty region inside LEFT null-length chord
+    std::size_t r2 = s.add_node(); // empty region inside RIGHT null-length chord
 
     Arc a;
-    // 3 LEFT arcs on edge 1.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 1; a.key_y = 0.5; a.key_y_tag = 0;
-    std::size_t ai0 = s.add_arc(a);
+    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
+    std::size_t ai_L = s.add_arc(a);
 
-    a.region_node = 1; a.edge_count = 0; a.key_y = 1.0; a.key_y_tag = 1;
-    s.add_arc(a);
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r1; a.edge_count = 0;
+    std::size_t ai_null_L = s.add_arc(a); // last LEFT arc — [C91 §2.4] (tex 144)
 
-    a.region_node = 0; a.edge_count = 1; a.key_y = 1.5; a.key_y_tag = 2;
-    std::size_t ai_end_left = s.add_arc(a); // last LEFT arc — [C91 §2.4] (tex 144)
-
-    // 3 RIGHT arcs on edge 1.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 0; a.edge_count = 1; a.key_y = 1.5; a.key_y_tag = 2;
-    s.add_arc(a);
+    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
+    std::size_t ai_R = s.add_arc(a);
 
-    a.region_node = 2; a.edge_count = 0; a.key_y = 1.0; a.key_y_tag = 1;
-    s.add_arc(a);
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r2; a.edge_count = 0;
+    std::size_t ai_null_R = s.add_arc(a);
 
-    a.region_node = 0; a.edge_count = 1; a.key_y = 0.5; a.key_y_tag = 0;
-    s.add_arc(a);
+    Chord c;
+    c = {}; c.region[0] = r0; c.region[1] = r1;
+    c.left_edge = 1; c.right_edge = 1; c.left_side = LEFT; c.right_side = LEFT;
+    c.y = 2.0; c.y_tag = 5; c.is_null_length = true;
+    c.left_adj = {{ai_L}, 1}; c.right_adj = {{ai_null_L}, 1};
+    s.add_chord(c);
 
-    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai_end_left = arc 2).
-    s.start_arc = ai0; s.end_arc = ai_end_left;
-    s.start_vertex = 0; s.end_vertex = 2;
+    c = {}; c.region[0] = r0; c.region[1] = r2;
+    c.left_edge = 1; c.right_edge = 1; c.left_side = RIGHT; c.right_side = RIGHT;
+    c.y = 2.0; c.y_tag = 5; c.is_null_length = true;
+    c.left_adj = {{ai_R}, 1}; c.right_adj = {{ai_null_R}, 1};
+    s.add_chord(c);
 
-    auto poly = test_polygon();
-    auto r = s.double_identify(1, {1.0, 1}, poly);
+    s.start_arc = ai_L; s.end_arc = ai_null_L;
+    s.start_vertex = 1; s.end_vertex = 2;
+
+    auto r = s.double_identify(1, {2.0, 5}, poly);
     assert(r.count >= 4 && r.count <= 6);
     assert(r.count <= Submap::DoubleIdentifyResult::MAX);
 
-    std::printf("  [PASS] double_identify_worst_case\n");
+    std::printf("  [PASS] double_identify_null_chord_both_sides\n");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -269,7 +286,6 @@ static void test_double_identify_miss() {
     Arc a;
     a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
-    a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     a.first_side = RIGHT; a.last_side = RIGHT;
@@ -292,7 +308,7 @@ static void test_double_identify_miss() {
 
 static void test_check_invariants_polygon_positive() {
     // [C91 §2.4(i)–(iii) + §2.2]: Polygon-aware overload accepts a
-    // well-formed normal-form submap (key_y monotonic + edge_count
+    // well-formed normal-form submap (start-y monotonic + edge_count
     // cache consistent with polygon).
     auto poly = test_polygon();
     Submap s;
@@ -302,13 +318,11 @@ static void test_check_invariants_polygon_positive() {
     a = {}; a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, 3);
-    a.key_y = poly.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     a = {}; a.first_edge = 3; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, 3);
-    a.key_y = poly.vertex(4).y; a.key_y_tag = 4;
     s.add_arc(a);
 
     s.start_arc = ai0; s.end_arc = ai0;
@@ -325,7 +339,7 @@ static void test_check_invariants_polygon_positive() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_check_invariants_polygon_size_3_run() {
-    // [C91 §2.4 tex 144]: arcs sharing first_edge must be key_y
+    // [C91 §2.4 tex 144]: arcs sharing first_edge must be start-y
     // monotonic.  Build a 3-arc run on edge 1 (LEFT side) separated
     // by 2 null-length chords; SoS tags 2/5/6 give descending perturbed y in array
     // order.  check_invariants(polygon) infers descending and verifies
@@ -341,22 +355,18 @@ static void test_check_invariants_polygon_size_3_run() {
     Arc a;
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
-    a.key_y = yv; a.key_y_tag = 2;
     std::size_t ai0 = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 0;
-    a.key_y = yv; a.key_y_tag = 5;
     std::size_t ai1 = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r2; a.edge_count = 0;
-    a.key_y = yv; a.key_y_tag = 6;
     std::size_t ai2 = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
-    a.key_y = yv; a.key_y_tag = 2;
     s.add_arc(a);
 
     Chord c;
@@ -400,7 +410,6 @@ static void test_check_invariants_polygon_wrapped_arc() {
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, 1);
-    a.key_y = poly.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     s.start_arc = ai0; s.end_arc = ai0;
@@ -412,15 +421,15 @@ static void test_check_invariants_polygon_wrapped_arc() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  11. Death: non-monotonic key_y in a same-first_edge run
+//  11. Death: non-monotonic start-y in a same-first_edge run
 //      ([C91 §2.4 tex 144])
 // ════════════════════════════════════════════════════════════════
 
 static void test_non_monotonic_run_fires() {
-    // [C91 §2.4 tex 144]: same-first_edge run must be key_y monotonic
-    // in the inferred direction.  Endpoints span tags 2..6 (descending
-    // inferred) but middle arc has tag 1 (HIGHER perturbed y than
-    // first) — non-monotonic.
+    // [C91 §2.4 tex 144]: same-first_edge run must be start-y monotonic
+    // in the inferred direction.  Tags 1 (start_vertex), 6 (c1), 5 (c2)
+    // give the sequence 1→6→5 — ascending then descending — which the
+    // run-direction inference flags as non-monotonic.
     assert(assert_fires([]{
         auto poly = test_polygon();
         Submap s;
@@ -432,34 +441,30 @@ static void test_non_monotonic_run_fires() {
         Arc a;
         a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
-        a.key_y = yv; a.key_y_tag = 2;
         std::size_t ai0 = s.add_arc(a);
 
         a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r1; a.edge_count = 0;
-        a.key_y = yv; a.key_y_tag = 1;            // ← OUT OF ORDER
         std::size_t ai1 = s.add_arc(a);
 
         a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r2; a.edge_count = 0;
-        a.key_y = yv; a.key_y_tag = 6;
         std::size_t ai2 = s.add_arc(a);
 
         a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
         a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
-        a.key_y = yv; a.key_y_tag = 2;
         s.add_arc(a);
 
         Chord c;
         c = {}; c.region[0] = r0; c.region[1] = r1;
         c.left_edge = 1; c.right_edge = 1; c.left_side = LEFT; c.right_side = LEFT;
-        c.y = yv; c.y_tag = 1; c.is_null_length = true;
+        c.y = yv; c.y_tag = 6; c.is_null_length = true;
         c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
         s.add_chord(c);
 
         c = {}; c.region[0] = r1; c.region[1] = r2;
         c.left_edge = 1; c.right_edge = 1; c.left_side = LEFT; c.right_side = LEFT;
-        c.y = yv; c.y_tag = 6; c.is_null_length = true;
+        c.y = yv; c.y_tag = 5; c.is_null_length = true;            // ← BREAKS MONOTONICITY
         c.left_adj = {{ai1}, 1}; c.right_adj = {{ai2}, 1};
         s.add_chord(c);
 
@@ -480,7 +485,7 @@ int main() {
     test_double_identify_same_edge();
     test_endpoint_pointers();
     test_arc_sequence_ordering();
-    test_double_identify_worst_case();
+    test_double_identify_null_chord_both_sides();
     test_double_identify_miss();
     test_check_invariants_polygon_positive();
     test_check_invariants_polygon_size_3_run();

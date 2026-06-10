@@ -39,7 +39,9 @@ void TreeDecomposition::build(const Submap& submap) {
         return;
     }
 
-    // [C91 §2.3 tex 116]: reusable buffer, O(m).
+    // [C91 §2.3 tex 116]: O(m) vector reused across recursive calls for
+    // the global→local region index remap.  Each recursive call allocates
+    // its own local vectors (adjacency, BFS state, partition outputs).
     std::vector<std::size_t> region_local_buf(submap.num_nodes(), NONE);
     root_ = decompose(submap, all_chords, all_regions, NONE, region_local_buf);
 
@@ -193,7 +195,8 @@ std::size_t TreeDecomposition::decompose(
     nodes_[new_idx].right_child = right_idx;
 
     // No cleanup of region_local: each recursive call rewrites entries
-    // for its own regions before reading, so stale values are never seen.
+    // for its own regions before reading, so leftover values from prior
+    // calls are never seen.
     return new_idx;
 }
 

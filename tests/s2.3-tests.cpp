@@ -48,35 +48,29 @@ static Submap build_conformal_submap() {
     // a0: r0, edge 0 only — count_nonnull(0,0) = 1.
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
-    a.key_y = 0.0; a.key_y_tag = 0; // C-start at vertex 0
     s.add_arc(a); // idx 0
     // a1: r1, edges 0..1 — count_nonnull(0,1) = 2.
     a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 1; a.edge_count = 2;
-    a.key_y = 0.5; a.key_y_tag = 2; // vertex 2 (y=0.5)
     s.add_arc(a); // idx 1
     // a2: r2, edges 1..2 (last LEFT arc reaches end_vertex=3) —
     //     count_nonnull(1,2) = 2.
     a = {}; a.first_edge = 1; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 2; a.edge_count = 2;
-    a.key_y = 1.5; a.key_y_tag = 3; // vertex 3 (y=1.5)
     s.add_arc(a); // idx 2
 
     // RIGHT half (descending first_edge in ∂C order):
     // a3: r2, edges 1..2 — count_nonnull(1,2) = 2.
     a = {}; a.first_edge = 2; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 2; a.edge_count = 2;
-    a.key_y = 1.5; a.key_y_tag = 3; // C-end at vertex 3
     s.add_arc(a); // idx 3
     // a4: r1, edges 0..1 — count_nonnull(0,1) = 2.
     a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 1; a.edge_count = 2;
-    a.key_y = 1.5; a.key_y_tag = 3; // r1 RIGHT arc starts at chord c1 (vertex 3 y)
     s.add_arc(a); // idx 4
     // a5: r0, edge 0 only — count_nonnull(0,0) = 1.
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1;
-    a.key_y = 0.5; a.key_y_tag = 2; // r0 RIGHT arc starts at chord c0 (vertex 2 y)
     s.add_arc(a); // idx 5
 
     Chord c;
@@ -192,7 +186,6 @@ static void test_is_granular() {
     single.add_node();
     Arc a; a.first_edge = 0; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 3;
-    a.key_y_tag = 0;
     single.add_arc(a);
     assert(single.is_granular(3, test_polygon()));
     assert(single.is_granular(5, test_polygon()));
@@ -218,25 +211,21 @@ static void test_is_granular_true() {
     // r0 LEFT arc: edges [0,1]
     a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y = 0.0; a.key_y_tag = 0; // C-start at vertex 0
     std::size_t ai0 = s.add_arc(a);
 
     // r1 LEFT arc: starts at c0 on edge 1, edges [1,2]
     a = {}; a.first_edge = 1; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 1; a.edge_count = 2;
-    a.key_y = 1.5; a.key_y_tag = 3; // chord c0 source at vertex 3
     std::size_t ai1 = s.add_arc(a);
 
     // r1 RIGHT arc: edges [2,1]
     a = {}; a.first_edge = 2; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 1; a.edge_count = 2;
-    a.key_y = 1.5; a.key_y_tag = 3; // C-end at vertex 3
     std::size_t ai2 = s.add_arc(a);
 
     // r0 RIGHT arc: starts at c0 on edge 1, edges [1,0]
     a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y = 1.5; a.key_y_tag = 3; // chord c0 source at vertex 3
     std::size_t ai3 = s.add_arc(a);
 
     Chord c;
@@ -271,7 +260,6 @@ static void test_is_granular_true() {
     single.add_node();
     a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y_tag = 0;
     single.add_arc(a);
     assert(single.is_granular(2, test_polygon()));
 
@@ -317,7 +305,6 @@ static void test_td_single_region() {
     s.add_node();
     Arc a; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 1;
-    a.key_y_tag = 0;
     s.add_arc(a);
 
     s.build_tree_decomposition();

@@ -29,12 +29,10 @@ static Submap make_S1(const Polygon& C) {
     a.first_edge = 0; a.last_edge = 1;
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y = C.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     a.first_edge = 1; a.last_edge = 3;
     a.region_node = 1; a.edge_count = 3;
-    a.key_y = C.vertex(2).y; a.key_y_tag = 2;
     std::size_t ai1 = s.add_arc(a);
 
     // RIGHT arcs
@@ -42,12 +40,10 @@ static Submap make_S1(const Polygon& C) {
     a.first_edge = 3; a.last_edge = 1;
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 1; a.edge_count = 3;
-    a.key_y = C.vertex(4).y; a.key_y_tag = 4;
     std::size_t ai2 = s.add_arc(a);
 
     a.first_edge = 1; a.last_edge = 0;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y = C.vertex(2).y; a.key_y_tag = 2;
     std::size_t ai3 = s.add_arc(a);
 
     Chord c{};
@@ -117,7 +113,6 @@ static void test_fusion_sequence_no_chords() {
     a.first_edge = 0; a.last_edge = 1;
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y_tag = 0;
     s.add_arc(a);
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
@@ -337,11 +332,9 @@ static void test_startup_case1() {
     a.first_edge = 0; a.last_edge = 1;
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y = C2.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = S2.add_arc(a);
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
-    a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
     S2.add_arc(a);
     // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
     S2.start_arc = ai0; S2.end_arc = ai0;
@@ -385,11 +378,9 @@ static void test_startup_case2() {
     a.first_edge = 0; a.last_edge = 1;
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y = C2.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = S2.add_arc(a);
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
-    a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
     S2.add_arc(a);
     // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
     S2.start_arc = ai0; S2.end_arc = ai0;
@@ -531,10 +522,8 @@ static void test_startup_d1_eq_d2_defaults_to_case1() {
     Arc a{};
     a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y = C2.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = S2.add_arc(a);
     a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
     S2.add_arc(a);
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
@@ -578,28 +567,23 @@ static void test_build_fusion_sequence_skips_null_length_chords() {
     Arc a{};
     a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 2;
-    a.key_y = C.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     // Null-length empty arc on LEFT at vertex 2 (y-max).
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r_null; a.edge_count = 0;   // null-length
-    a.key_y = C.vertex(2).y; a.key_y_tag = 2;
     std::size_t ai_null = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 3;
-    a.key_y = C.vertex(2).y; a.key_y_tag = 22;  // distinct tag
     std::size_t ai1 = s.add_arc(a);
 
     a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r1; a.edge_count = 3;
-    a.key_y = C.vertex(4).y; a.key_y_tag = 4;
     std::size_t ai2 = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r0; a.edge_count = 2;
-    a.key_y = C.vertex(2).y; a.key_y_tag = 22;
     std::size_t ai3 = s.add_arc(a);
 
     // Exit chord: r0 ↔ r1 at vertex 2's y level.
@@ -688,7 +672,6 @@ static void test_startup_vertex_to_vertex_tie_break() {
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r_loop;
     a.edge_count = 2;
-    a.key_y = C2.vertex(0).y; a.key_y_tag = C2.vertex(0).index; // = 3, tag=4
     std::size_t ai_left = S2.add_arc(a);
 
     // Big RIGHT-side arc covering edges 1 → 0 (descending: v6 → v5 → v4).
@@ -697,7 +680,6 @@ static void test_startup_vertex_to_vertex_tie_break() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r_loop;
     a.edge_count = 2;
-    a.key_y = C2.vertex(2).y; a.key_y_tag = C2.vertex(2).index; // = 3, tag=6
     std::size_t ai_right = S2.add_arc(a);
 
     // Matching chord at y=3, y_tag = junction's tag (4).
@@ -784,8 +766,6 @@ static void test_startup_mid_edge_tie_break() {
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r_above;
     a.edge_count = 1;
-    a.key_y = C2.vertex(1).y;          // 5 (starts at v_mid)
-    a.key_y_tag = C2.vertex(1).index;   // 5 (v_mid's tag — NOT chord.y_tag)
     std::size_t ai_above_L = S2.add_arc(a);
 
     // LEFT-side arc below the chord: from mid-edge crossing down edge 1
@@ -795,8 +775,6 @@ static void test_startup_mid_edge_tie_break() {
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r_below;
     a.edge_count = 1;
-    a.key_y = 3.0;            // chord's y
-    a.key_y_tag = 4;           // chord's y_tag (junction's tag)
     std::size_t ai_below_L = S2.add_arc(a);
 
     // RIGHT-side arc at v_junction_R (vertex endpoint at the junction).
@@ -807,8 +785,6 @@ static void test_startup_mid_edge_tie_break() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r_above;
     a.edge_count = 1;
-    a.key_y = C2.vertex(1).y;          // 5 (starts at v_mid_R)
-    a.key_y_tag = C2.vertex(1).index;   // 5
     std::size_t ai_right_at_junction = S2.add_arc(a);
 
     // Matching chord at y=3, y_tag=4 (junction's tag).
@@ -840,13 +816,15 @@ static void test_startup_mid_edge_tie_break() {
     // Tie-break: leaving_downward=true → elect region BELOW chord.
     //
     // Trace through resolve_s2_region's mid-edge branch:
-    //   - ai_above_L: single-edge on chord's edge.  key_y_tag=5 ≠
-    //     chord.y_tag=4 → ENDS at chord.  Previous vertex (LEFT,
+    //   - ai_above_L: single-edge on chord's edge.  arc_start_symbolic_y
+    //     hits the polygon-vertex case at vertex(first_edge=1) = v_mid
+    //     (y=5,tag=5) ≠ chord (y=3,tag=4) → ENDS at chord.  Previous vertex (LEFT,
     //     last_edge=1) = C₂.edge(1).start_idx = v_mid (y=5 > 3) →
     //     arc0_above = TRUE.
-    //   - ai_below_L: single-edge.  key_y_tag=4 == chord.y_tag=4 →
-    //     STARTS at chord.  Next vertex (LEFT, first_edge=1) =
-    //     C₂.edge(1).end_idx = v_end (y=1 < 3) → arc1_above = FALSE.
+    //   - ai_below_L: single-edge.  arc_start_symbolic_y finds chord via
+    //     c.left_adj.arcs[1] match → returns chord's (3,4) → STARTS at
+    //     chord.  Next vertex (LEFT, first_edge=1) = C₂.edge(1).end_idx
+    //     = v_end (y=1 < 3) → arc1_above = FALSE.
     //   - above_r = r_above, below_r = r_below.
     //   - leaving_downward=true → return below_r = r_below.
     assert(state.s2_region == r_below &&
@@ -905,11 +883,9 @@ static void test_fuse_main_loop_smoke() {
     a.first_edge = 0; a.last_edge = 1;
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    a.key_y = C2.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = S2.add_arc(a);
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
-    a.key_y = C2.vertex(2).y; a.key_y_tag = 2;
     S2.add_arc(a);
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
@@ -956,7 +932,6 @@ static void test_fuse_main_loop_case_ii_smoke() {
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r_above;
     a.edge_count = 1;
-    a.key_y = C2.vertex(1).y; a.key_y_tag = 1;
     std::size_t ai_above_L = S2.add_arc(a);
 
     a = {};
@@ -964,7 +939,6 @@ static void test_fuse_main_loop_case_ii_smoke() {
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r_below;
     a.edge_count = 1;
-    a.key_y = 3.0; a.key_y_tag = 4;  // chord's y/tag — arc STARTS at chord.
     std::size_t ai_below_L = S2.add_arc(a);
 
     a = {};
@@ -972,7 +946,6 @@ static void test_fuse_main_loop_case_ii_smoke() {
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r_above;
     a.edge_count = 1;
-    a.key_y = C2.vertex(1).y; a.key_y_tag = 1;
     std::size_t ai_right_at_junction = S2.add_arc(a);
 
     Chord c{};

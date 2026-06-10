@@ -3,6 +3,7 @@
 #include "polygon.h"
 
 #include <cassert>
+#include <cmath>
 #include <unordered_set>
 
 namespace chazelle {
@@ -13,11 +14,15 @@ Polygon::Polygon(std::vector<Point> vertices) {
     // [C91 §2 SoS / Edelsbrunner [10]]: vertex indices must be distinct.
     // This also implies "nonclosed" ([C91 §2.1]): front.index != back.index
     // ⟹ symbolically distinct, regardless of geometric coords.
+    // [C91 §2 tex 66]: spherical-plane reference point at (0, +∞) — the
+    // curve must avoid that point (Jordan-curve orientation argument).
     {
         std::unordered_set<std::size_t> seen;
         for (const auto& v : vertices) {
             assert(seen.insert(v.index).second &&
                    "[C91 §2 (SoS)]: vertex indices must be distinct");
+            assert(!(v.x == 0.0 && std::isinf(v.y) && v.y > 0.0) &&
+                   "[C91 §2 tex 66]: curve must avoid the reference point (0, +∞)");
         }
     }
 

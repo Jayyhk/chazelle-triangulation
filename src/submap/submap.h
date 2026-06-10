@@ -56,7 +56,7 @@ public:
 
     // Polygon-dependent invariants on top of `check_invariants()`:
     //   [C91 §2.4(iii) tex 138 + tex 144]: arcs sharing first_edge are
-    //     key_y-monotonic (required by double_identify Phase 2 bsearch).
+    //     start-y monotonic (required by double_identify Phase 2 bsearch).
     //   [C91 §2.2 tex 106]: every live arc's `edge_count` cache matches
     //     `polygon.count_nonnull_edges` over its underlying edge range.
     void check_invariants(const class Polygon& polygon) const;
@@ -96,8 +96,10 @@ public:
 
     // ── [C91 §2.4(iii)]: C endpoints ──────────────────────────────────
 
-    // [C91 §2.4(iii)]: input-table indices of C's endpoints + pointers to
-    // the arc-structures passing through them.
+    // [C91 §2.4(iii) tex 138]: "endpoints of C are identified by appropriate
+    // pointers into the input table" + arc-structures passing through them.
+    // We hold VERTEX-table indices instead of the paper's edge-table ones —
+    // equivalent via the edge-vertex bijection (edge i = vertex i→i+1).
     std::size_t start_vertex = NONE;
     std::size_t end_vertex   = NONE;
     std::size_t start_arc    = NONE;
@@ -167,22 +169,39 @@ public:
 
     // ── [C91 §2.4(iv)]: Tree decomposition ────────────────────────────
 
+    // [C91 §2.4 tex 133]: arc-structures don't store endpoint y per the
+    // paper ("we do not need to record the endpoints of the arc because
+    // chords take care of that").  Derive the symbolic y of the arc's
+    // starting position on ∂C on demand:
+    //  - chord-bounded arcs: chord.y via the region's incident_chords
+    //    adjacency ([C91 §2.4(ii) tex 137]);
+    //  - polygon-vertex-bounded arcs (outside-pair companion at an
+    //    interior y-extremum per [C91 §2.1 tex 72], or a junction after
+    //    a non-merging chord removal per [C91 §2.2 tex 94]): the input
+    //    table's vertex y ([C91 §2.4(iii) tex 138]).
+    // O(degree) per call; O(1) for conformal submaps (degree ≤ 4).
+    SymbolicY arc_start_symbolic_y(std::size_t arc_idx,
+                                    const class Polygon& polygon) const;
+
     // [C91 §2.4(iv)]: conformal ⟹ tree decomposition available.
     void build_tree_decomposition();
     const TreeDecomposition& tree_decomposition() const noexcept {
-        // [C91 §3.3 tex 276] needs mutators O(1).  Mutators flag dirty rather
-        // than rebuilding; a stale tree decomposition reads as empty so
-        // consumers fail fast (e.g. merge.h's !tree_decomposition().empty()
-        // precondition).
+        // [C91 §3.3 tex 276] requires mutators to run in O(1), so rather
+        // than rebuilding the tree decomposition every time a chord or
+        // arc changes, mutators just set a dirty flag.  When the flag is
+        // set, this accessor returns an empty TreeDecomposition so that
+        // any consumer requiring a fresh one (e.g. merge.h's
+        // `!tree_decomposition().empty()` precondition) fails fast
+        // instead of using the out-of-date one.
         static const TreeDecomposition empty_;
         return tree_decomp_dirty_ ? empty_ : tree_decomp_;
     }
 
 private:
     TreeDecomposition tree_decomp_;
-    // Set by every mutator; cleared by build_tree_decomposition().
-    // Stale tree_decomp_ destruction is absorbed by the next build()
-    // (which clears internally) or the Submap destructor.
+    // Set by every mutator; cleared by build_tree_decomposition().  The
+    // out-of-date contents stay until the next build() rebuilds from
+    // scratch (or the Submap destructor cleans up).
     bool tree_decomp_dirty_ = false;
 
     std::vector<SubmapNode> nodes_;     // [C91 §2.4(i)]: tree nodes.

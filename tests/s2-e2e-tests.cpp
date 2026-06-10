@@ -99,37 +99,10 @@ static std::vector<std::size_t> brute_double_identify(
 
         if (edge_idx < elo || edge_idx > ehi) continue;
 
-        // Edge is in range.  Check y-range.
-        // For single-edge arcs with multiple arcs on the same edge,
-        // we need to check key_y boundaries.  But for brute-force,
-        // we just check if this arc plausibly covers the y.
-        //
-        // An arc covers a point on edge e at y if:
-        //   - The arc spans multiple edges (edge is strictly interior), OR
-        //   - The arc starts/ends at this edge and y is within the
-        //     arc's y-range on that edge.
-        //
-        // For the brute-force reference, we use a simplified check:
-        // the arc contains the point if the edge is strictly interior
-        // to the arc's range, OR if the edge is at a boundary and
-        // the y is on the correct side of the arc's key_y.
-        bool edge_strictly_interior =
-            (edge_idx > elo && edge_idx < ehi);
-        if (edge_strictly_interior) {
-            result.push_back(i);
-            continue;
-        }
-
-        // Edge is at the boundary of the arc's range.
-        // For LEFT arcs: first_edge is the start (ascending).
-        //   Arc covers from key_y upward (or downward depending on edge dir).
-        // For RIGHT arcs: first_edge is the start (descending).
-        //
-        // Simplified: just include it — the optimized double_identify
-        // handles y-disambiguation, so we accept any arc whose edge
-        // range includes this edge.  This is a superset, but for
-        // property testing we verify the optimized result is a SUBSET
-        // of this.
+        // Edge is in range.  For brute-force, accept any arc whose edge
+        // range includes this edge — the optimized double_identify does
+        // y-disambiguation via arc_start_symbolic_y, so its result is a
+        // SUBSET of this conservative set.
         result.push_back(i);
     }
     return result;
@@ -263,8 +236,6 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
             a.last_side = LEFT;
             a.region_node = i;
             a.edge_count = poly.count_nonnull_edges(prev_edge, chord_edge);
-            a.key_y = poly.vertex(prev_edge).y; // start vertex y
-            a.key_y_tag = prev_edge;
             left_arc_indices[i] = s.add_arc(a);
             prev_edge = chord_edge; // next arc starts at same edge (shared)
         }
@@ -276,8 +247,6 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
         a.last_side = LEFT;
         a.region_node = num_chords;
         a.edge_count = poly.count_nonnull_edges(prev_edge, ne - 1);
-        a.key_y = poly.vertex(prev_edge).y;
-        a.key_y_tag = prev_edge;
         left_arc_indices[num_chords] = s.add_arc(a);
     }
 
@@ -301,8 +270,6 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
             a.edge_count = poly.count_nonnull_edges(
                 std::min(prev_edge, chord_edge),
                 std::max(prev_edge, chord_edge));
-            a.key_y = poly.vertex(prev_edge + 1).y; // end vertex of first edge
-            a.key_y_tag = prev_edge + 1;
             right_arc_indices[region] = s.add_arc(a);
             prev_edge = chord_edge; // next arc starts here
         }
@@ -314,8 +281,6 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
         a.last_side = RIGHT;
         a.region_node = 0;
         a.edge_count = poly.count_nonnull_edges(0, prev_edge);
-        a.key_y = poly.vertex(prev_edge + 1 < n ? prev_edge + 1 : prev_edge).y;
-        a.key_y_tag = prev_edge + 1 < n ? prev_edge + 1 : prev_edge;
         right_arc_indices[0] = s.add_arc(a);
     }
 
@@ -396,7 +361,6 @@ static Submap build_nonvertex_chord_submap(const Polygon& poly,
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, chord_edge);
-    a.key_y = poly.vertex(0).y; a.key_y_tag = 0;
     std::size_t ai0 = s.add_arc(a);
 
     a = {};
@@ -404,7 +368,6 @@ static Submap build_nonvertex_chord_submap(const Polygon& poly,
     a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = 1;
     a.edge_count = poly.count_nonnull_edges(chord_edge, ne - 1);
-    a.key_y = y_mid; a.key_y_tag = y_tag;
     std::size_t ai1 = s.add_arc(a);
 
     // RIGHT arcs: r1 from ne-1 to chord_edge, r0 from chord_edge to 0.
@@ -413,7 +376,6 @@ static Submap build_nonvertex_chord_submap(const Polygon& poly,
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 1;
     a.edge_count = poly.count_nonnull_edges(chord_edge, ne - 1);
-    a.key_y = poly.vertex(n - 1).y; a.key_y_tag = n - 1;
     std::size_t ai2 = s.add_arc(a);
 
     a = {};
@@ -421,7 +383,6 @@ static Submap build_nonvertex_chord_submap(const Polygon& poly,
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, chord_edge);
-    a.key_y = y_mid; a.key_y_tag = y_tag;
     std::size_t ai3 = s.add_arc(a);
 
     // Chord: non-vertex endpoint on both sides (same edge).
@@ -578,10 +539,11 @@ static void test_remove_chord(std::mt19937& rng, int iters) {
 
             // TODO: ([C91 §3.3]) After normalize() is implemented, verify
             // region_weight == brute_region_weight here between removals.
-            // Currently skipped: chord→arc adjacency is stale after
-            // cascaded removals (orphaned arcs), and normalize() — which
-            // rebuilds it — doesn't exist yet (it's part of [C91 §3.3]'s
-            // "put S in normal form" step).
+            // Currently skipped: cascaded removals leave orphaned arcs that
+            // are no longer reachable from any chord's adjacency list, so
+            // region_weight reads the wrong arcs.  normalize() (part of
+            // [C91 §3.3]'s "put S in normal form" step) would fix this,
+            // but it doesn't exist yet.
         }
 
         // After all removals: single region, no chords.
@@ -820,8 +782,9 @@ static void test_compact(std::mt19937& rng, int iters) {
         // compact() and verify:
         //   for (std::size_t i = 0; i < s.num_nodes(); ++i)
         //       assert(s.region_weight(i) == brute_region_weight(s, i));
-        // Currently skipped: chord→arc adjacency is stale after cascaded
-        // removals (orphaned arcs not in any chord's adj list).
+        // Currently skipped: after cascaded removals, some arcs are
+        // orphaned (no longer in any chord's adjacency list), so
+        // region_weight reads the wrong arcs.
         for (std::size_t i = 0; i < s.num_arcs(); ++i) {
             assert(s.arc(i).region_node < s.num_nodes());
         }
@@ -1095,10 +1058,8 @@ static void test_edge_cases() {
         a.first_edge = 0; a.last_edge = 0;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = 0; a.edge_count = 1;
-        a.key_y = 0.0; a.key_y_tag = 0;
         std::size_t ai0 = s.add_arc(a);
         a.first_side = RIGHT; a.last_side = RIGHT;
-        a.key_y = 1.0; a.key_y_tag = 1;
         s.add_arc(a);
         // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
         s.start_arc = ai0; s.end_arc = ai0;
@@ -1130,11 +1091,9 @@ static void test_edge_cases() {
         a.first_edge = 0; a.last_edge = 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = 0; a.edge_count = 2;
-        a.key_y = 0.0; a.key_y_tag = 0;
         std::size_t ai0 = s.add_arc(a);
         a.first_edge = 1; a.last_edge = 0;
         a.first_side = RIGHT; a.last_side = RIGHT;
-        a.key_y = 2.0; a.key_y_tag = 2;
         s.add_arc(a);
         // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
         s.start_arc = ai0; s.end_arc = ai0;
@@ -1241,7 +1200,6 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0;
         a.edge_count = poly.count_nonnull_edges(0, ext_v - 1);
-        a.key_y = poly.vertex(0).y; a.key_y_tag = 0;
         std::size_t ai0 = s.add_arc(a);
 
         // a1: r1, LEFT, zero-length at ext_v
@@ -1250,7 +1208,6 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r1;
         a.edge_count = 0;
-        a.key_y = poly.vertex(ext_v).y; a.key_y_tag = ext_v;
         std::size_t ai1 = s.add_arc(a);
 
         // a2: r0, LEFT, edges [ext_v, ne-1]
@@ -1260,9 +1217,7 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0;
         a.edge_count = poly.count_nonnull_edges(ext_v, ne - 1);
-        a.key_y = poly.vertex(ext_v).y;
         // Slightly different tag to distinguish from a1.
-        a.key_y_tag = ext_v + n;
         std::size_t ai2 = s.add_arc(a);
 
         // a3: r0, RIGHT, edges [ne-1, 0]
@@ -1271,7 +1226,6 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         a.first_side = RIGHT; a.last_side = RIGHT;
         a.region_node = r0;
         a.edge_count = poly.count_nonnull_edges(0, ne - 1);
-        a.key_y = poly.vertex(n - 1).y; a.key_y_tag = n - 1;
         [[maybe_unused]] std::size_t ai3 = s.add_arc(a);
 
         // Null-length chord.
