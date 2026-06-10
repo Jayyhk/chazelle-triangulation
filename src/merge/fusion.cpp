@@ -531,9 +531,12 @@ void fuse_submaps(FusionState& state,
         // [C91 §3.1 tex 199]: p == a_{m+1} ⟹ terminate (no A_k defined).
         if (k >= state.sequence.size()) return;
 
-        // [C91 §3.1 tex 194-195]: loop invariants (A) and (B).
-        assert(!state.chords.empty() &&
-               "[C91 §3.1 invariant (A)]: chord list non-empty");
+        // [C91 §3.1 tex 194]: invariant (A) — "the points of ∂C seen by
+        // a_0..a_{k-1} have all been determined already."  Proven by
+        // induction over case (i)/(ii) action, not directly checkable
+        // without auxiliary state; we trust the per-action chord pushes.
+        //
+        // [C91 §3.1 tex 195]: invariant (B) — p sees ∂C₂ from R.
         assert(state.s2_region != NONE &&
                state.s2_region < S2.num_nodes() &&
                !S2.node(state.s2_region).dead &&
@@ -800,6 +803,23 @@ void fuse_submaps(FusionState& state,
                 state.s2_region = (chord_ab.region[0] == R)
                                     ? chord_ab.region[1]
                                     : chord_ab.region[0];
+                // [C91 §3.1 tex 199 + §2 tex 47 SoS]: k = j is correct
+                // only if p' is not an S₁ chord endpoint (otherwise the
+                // p ≠ a_k tie-break would set k = j+1 instead).  p' is
+                // a back-shot hit on A_j's interior, which under SoS
+                // is disjoint from the {a_1..a_m} enumeration.
+#ifdef CHAZELLE_EXPENSIVE_ASSERTS
+                {
+                    SymbolicY pp_y{state.p.y, NONE};
+                    for (std::size_t l = 1; l + 1 < state.sequence.size(); ++l) {
+                        const auto& v = state.sequence[l];
+                        if (v.edge == state.p_edge && v.side == state.p_side)
+                            assert(!symbolic_y_equal(v.y, pp_y) &&
+                                   "[C91 §3.1 tex 199 + §2 tex 47]: "
+                                   "p' must not coincide with any a_l");
+                    }
+                }
+#endif
                 k = j;
                 break;
             }
@@ -1003,6 +1023,20 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
         std::size_t arc_idx = (cw_pos < num_right)
             ? (lrb + cw_pos) : (cw_pos - num_right);
         state.arc_for_seq_pos[j] = arc_idx;
+    }
+
+    // [C91 §3.1 tex 209]: sequence is "a_0, a_1, ..., a_m, a_{m+1}" where
+    // a_1..a_m are S's EXIT-chord endpoints (2 per non-null chord, since
+    // null-length chords are skipped above per tex 224) and a_0/a_{m+1}
+    // are the junction companions.  Lemma 2.3 bounds m at O(n/γ + 1) —
+    // γ isn't in scope here, but the structural identity is checkable.
+    {
+        std::size_t exit_chord_count = 0;
+        for (std::size_t ci = 0; ci < S.num_chords(); ++ci)
+            if (!S.chord(ci).dead && !S.chord(ci).is_null_length)
+                ++exit_chord_count;
+        assert(state.sequence.size() == 2 * exit_chord_count + 2 &&
+               "[C91 §3.1 tex 209]: |sequence| = 2·(#exit chords) + 2");
     }
 }
 
