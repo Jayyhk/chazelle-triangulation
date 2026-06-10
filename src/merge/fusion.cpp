@@ -114,7 +114,11 @@ RayHit local_shoot(Point p, Side direction,
                 // [C91 §2.1 tex 72]: Double-boundary disambiguation.  ∂C's two
                 // sides share geometric location but are topologically
                 // distinct; the ray hits the "first face" depending on its
-                // travel direction and the edge's orientation.
+                // travel direction and the edge's orientation.  Under SoS +
+                // exact arithmetic, true ties only arise from double-boundary
+                // alternation on the SAME edge; the heuristic here also
+                // covers floating-point coincidences across edges by giving
+                // a deterministic answer keyed on hit.edge's orientation.
                 assert(hit.edge < C.num_edges());
                 const auto& e = C.edge(hit.edge);
                 bool edge_ascending = symbolic_y_less(
@@ -191,10 +195,15 @@ std::size_t fusion_startup(FusionState& state,
            "[C91 §3.1 tex 179]: sequence.back() = a_{m+1} (LEFT companion)");
 
     // [C91 §3.1]: "Using local shooting, we find the point of ∂C₁ that a₀
-    // sees with respect to C₁."  a₀ is at c_end of C₁, RIGHT side.
-    assert(S1.end_arc != NONE &&
-           "[C91 §2.4(iii)]: S₁ must have end_arc set (normal form)");
-    std::size_t a0_region_s1 = S1.arc(S1.end_arc).region_node;
+    // sees with respect to C₁."  a₀ is the RIGHT companion at C₁'s
+    // end_vertex (the junction); the adjacent S₁ arc is the FIRST RIGHT
+    // arc (left_right_boundary), NOT the last LEFT arc (end_arc).
+    // Per [§2.1 tex 72] the junction's companion duplicates sit in
+    // different S₁ regions whenever the junction-incident chord is live.
+    assert(S1.left_right_boundary() < S1.num_arcs() &&
+           "[C91 §2.4(iii)]: S₁ must have a first RIGHT arc (normal form)");
+    std::size_t a0_region_s1 =
+        S1.arc(S1.left_right_boundary()).region_node;
     Side a0_dir = shooting_direction(a0.edge, a0.side, C1);
 
     // a₀ is the junction vertex; use its coords directly.
@@ -495,13 +504,15 @@ std::size_t fusion_startup(FusionState& state,
         assert(lo < state.sequence.size() &&
                "[C91 §3.1 tex 179, 188]: skip-to-c₀ must land within sequence");
 
-        // [C91 §3.1 case (ii) / Lemma 2.1]: skipped vertices see ∂C₁ — paper-
-        // guaranteed (their chord ends on ∂C₁ before c₀ in cw order).
+        // [C91 §3.1 tex 188]: skipped a_l's "exit chord endpoints see all
+        // belong to ∂C₁ and thus are available directly from S₁."  No new
+        // chord is recorded for them — their S₁ chords carry over via
+        // rebuild_submap's `ingest_old` pass.
         for (std::size_t skipped_i = 1; skipped_i < lo; ++skipped_i) {
             if (!state.sequence[skipped_i].is_companion) {
                 assert(state.sequence[skipped_i].chord_idx != NONE &&
-                       "[C91 §3.1 case (ii) (Lemma 2.1)]: skipped vertex must be a "
-                       "chord endpoint of S₁ (sees ∂C₁ by construction)");
+                       "[C91 §3.1 tex 188]: skipped vertex must be an S₁ "
+                       "chord endpoint (visibility available from S₁)");
             }
         }
 
@@ -575,11 +586,41 @@ void fuse_submaps(FusionState& state,
                                        /*require_hit=*/false);
             if (!s_hit.hit) return {false, {}};
 
-            // hit.side matches arc's stored Side ⟺ a_j ∈ R.
+            // [C91 §3.1 tex 220]: "Whether a_j lies in R can be directly
+            // inferred from the local orientation of the hit at s and
+            // which side of the double boundary is hit."  hit.side must
+            // match the arc's coverage at hit.edge — for non-wrapped
+            // arcs that's just first_side; for wrapped arcs ([§2.4 tex
+            // 142]) the side depends on which leg owns hit.edge.
             const Arc& s_arc = S2.arc(s_hit.hit_arc_idx);
-            if (s_hit.side != s_arc.first_side &&
-                s_hit.side != s_arc.last_side)
-                return {false, {}};
+            auto hit_on_arc_side = [&]() -> bool {
+                if (s_arc.first_side == s_arc.last_side)
+                    return s_hit.side == s_arc.first_side;
+                // Wrapped: legs meet at C₂'s endpoint per [§2.4 tex 142].
+                assert(S2.start_vertex != NONE && S2.end_vertex != NONE &&
+                       S2.end_vertex >= 1 &&
+                       "[C91 §2.4]: wrapped arc requires S₂ endpoints set");
+                if (s_arc.first_side == LEFT) {
+                    // LEFT→RIGHT wrap at end_vertex: LEFT leg covers
+                    // [first_edge, end-1]; RIGHT leg covers [last_edge, end-1].
+                    std::size_t turn = S2.end_vertex - 1;
+                    if (s_hit.side == LEFT)
+                        return s_hit.edge >= s_arc.first_edge &&
+                               s_hit.edge <= turn;
+                    return s_hit.edge >= s_arc.last_edge &&
+                           s_hit.edge <= turn;
+                } else {
+                    // RIGHT→LEFT wrap at start_vertex: RIGHT leg covers
+                    // [start, first_edge]; LEFT leg covers [start, last_edge].
+                    std::size_t turn = S2.start_vertex;
+                    if (s_hit.side == RIGHT)
+                        return s_hit.edge >= turn &&
+                               s_hit.edge <= s_arc.first_edge;
+                    return s_hit.edge >= turn &&
+                           s_hit.edge <= s_arc.last_edge;
+                }
+            };
+            if (!hit_on_arc_side()) return {false, {}};
 
             // t = ∂C₁ point a_j sees.  O(1) at S₁ chord endpoints
             // (other endpoint); local_shoot in S₁ for companions.
@@ -594,7 +635,16 @@ void fuse_submaps(FusionState& state,
                 double t_param = (ch.y - vs.y) / (ve.y - vs.y);
                 t_x = vs.x + t_param * (ve.x - vs.x);
             } else {
-                std::size_t aj_region_s1 = S1.arc(S1.end_arc).region_node;
+                // [C91 §3.1 tex 220] companion case: j ∈ {0, m+1}.
+                // a_0 sits on the RIGHT side of the junction (first RIGHT
+                // arc); a_{m+1} sits on the LEFT side (last LEFT arc =
+                // end_arc).  Per [§2.1 tex 72] these can be in different
+                // S₁ regions whenever S₁'s junction chord is live.
+                assert(aj_v.is_companion);
+                std::size_t s1_arc = (aj_v.side == RIGHT)
+                    ? S1.left_right_boundary()
+                    : S1.end_arc;
+                std::size_t aj_region_s1 = S1.arc(s1_arc).region_node;
                 t_x = local_shoot(aj_point, dir, aj_region_s1,
                                   S1, C1, oracle1).x;
             }
@@ -614,12 +664,6 @@ void fuse_submaps(FusionState& state,
             const Point& ve = C2.vertex(e.end_idx);
             double t = (y - vs.y) / (ve.y - vs.y);
             return Point{vs.x + t * (ve.x - vs.x), y, NONE};
-        };
-
-        // O(1) lookup of A_j's S₁ arc index (precomputed inverse map).
-        auto Aj_arc_idx = [&](std::size_t j) -> std::size_t {
-            return (j < state.arc_for_seq_pos.size())
-                ? state.arc_for_seq_pos[j] : NONE;
         };
 
         // CW position on ∂C₁ as (trav_pos, within_edge); lex compare
@@ -646,26 +690,77 @@ void fuse_submaps(FusionState& state,
             std::size_t chord_idx;
             bool q_is_left;
         };
+        // [C91 §3.1 tex 199]: A_j is the segment of ∂C₁ from a_{j-1} to
+        // a_j cw.  By [§2.4 tex 142] this segment can span up to two
+        // arc-structures via the C-endpoint wrap when no chord events
+        // sit on the wrap arc.  Compute the up-to-two spanning arcs
+        // (first = arc-after a_{j-1}, second = arc-before a_j) — they
+        // coincide for a single-arc A_j and differ only across a wrap.
+        auto Aj_arcs = [&](std::size_t j) -> std::array<std::size_t, 2> {
+            auto arc_after = [&](const FusionVertex& v) -> std::size_t {
+                if (v.is_companion)
+                    return (v.side == RIGHT) ? S1.left_right_boundary()
+                                             : NONE;  // a_{m+1}: no arc after
+                const Chord& c = S1.chord(v.chord_idx);
+                const Chord::AdjArcs& adj = v.is_left_endpoint
+                    ? c.left_adj : c.right_adj;
+                if (adj.count == 1) return adj.arcs[0];
+                // count==2: the starting arc is the one whose start-y matches chord.y.
+                return symbolic_y_equal(
+                        S1.arc_start_symbolic_y(adj.arcs[0], C1),
+                        c.symbolic_y())
+                    ? adj.arcs[0] : adj.arcs[1];
+            };
+            auto arc_before = [&](const FusionVertex& v) -> std::size_t {
+                if (v.is_companion)
+                    return (v.side == LEFT) ? S1.end_arc
+                                            : NONE;  // a_0: no arc before
+                const Chord& c = S1.chord(v.chord_idx);
+                const Chord::AdjArcs& adj = v.is_left_endpoint
+                    ? c.left_adj : c.right_adj;
+                if (adj.count == 1) return adj.arcs[0];
+                // count==2: arc-before is the one NOT matching chord.y.
+                return symbolic_y_equal(
+                        S1.arc_start_symbolic_y(adj.arcs[0], C1),
+                        c.symbolic_y())
+                    ? adj.arcs[1] : adj.arcs[0];
+            };
+            return {arc_after(state.sequence[j-1]),
+                    arc_before(state.sequence[j])};
+        };
+
         auto case_ii_test = [&](std::size_t j) -> CaseIIResult {
             CaseIIResult best{false, {}, NONE, false};
             auto best_cw = std::make_pair<std::size_t, double>(0, -1.0);
 
-            std::size_t aj_arc = Aj_arc_idx(j);
-            if (aj_arc == NONE) return best;
-            Subarc aj_sub{state.sequence[j-1].edge,
-                          state.sequence[j-1].side,
-                          state.sequence[j].edge,
-                          state.sequence[j].side};
+            auto aj_arcs_pair = Aj_arcs(j);
+            if (aj_arcs_pair[0] == NONE && aj_arcs_pair[1] == NONE)
+                return best;
 
             Side aj_left_side = state.sequence[j-1].side;
             Side aj_right_side = state.sequence[j].side;
             bool aj_non_wrapping = (aj_left_side == aj_right_side);
 
+            // [C91 §3.1 tex 179]: cw walk on ∂C₁ goes RIGHT side first
+            // (descending edges), then LEFT side (ascending) after wrap.
+            // The only way a_{j-1} and a_j land on different sides is
+            // RIGHT→LEFT (a_{j-1} RIGHT, a_j LEFT): LEFT→RIGHT would
+            // require a_j to come BEFORE a_{j-1} in cw order.
+            assert((aj_non_wrapping ||
+                    (aj_left_side == RIGHT && aj_right_side == LEFT)) &&
+                   "[C91 §3.1 tex 179]: A_j wraps only in the "
+                   "RIGHT→LEFT direction (cw ordering)");
+
             auto p_cw = cw_position(state.p.y, state.p_edge, state.p_side);
 
+            // [C91 §3.1 tex 200]: case (ii) iterates exit chords of R;
+            // null-length chords ([§2.1 tex 72]) count per tex 224.  No
+            // explicit is_null_length skip is paper-mandated — when one
+            // fires, the region-update branch below keeps state.s2_region
+            // = R since R_inner is a zero-area bubble.
             for (std::size_t ci : S2.node(R).incident_chords) {
                 const Chord& chord_ab = S2.chord(ci);
-                if (chord_ab.dead || chord_ab.is_null_length) continue;
+                if (chord_ab.dead) continue;
 
                 Point a_pt = s2_endpoint_point(chord_ab.left_edge,
                                                 chord_ab.y);
@@ -687,46 +782,82 @@ void fuse_submaps(FusionState& state,
                                           ? LEFT : RIGHT;
                     if (shoot_dir != dir_to_other) continue;
 
-                    // shoot from a toward A_j; no hit ⟹ disqualify.
-                    RayHit hit = oracle1.shoot(q_point, shoot_dir,
-                                                aj_arc, aj_sub);
-                    if (!hit.hit) continue;
+                    // [C91 §3.1 tex 222]: shoot toward A_j.  For a wrap
+                    // A_j (RIGHT leg + LEFT leg after C₁-endpoint wrap),
+                    // each leg's arc gets its own oracle call with a
+                    // leg-restricted subarc — paper bound is O(f(γ₁))
+                    // per A_j; sum of ≤2 leg calls remains O(f(γ₁)).
+                    for (std::size_t arc_slot = 0; arc_slot < 2; ++arc_slot) {
+                        std::size_t aj_arc = aj_arcs_pair[arc_slot];
+                        if (aj_arc == NONE) continue;
+                        if (arc_slot == 1 &&
+                            aj_arcs_pair[0] == aj_arcs_pair[1])
+                            continue;  // single-arc: no second call
 
-                    // "proper orientation": hit.Side matches A_j's Side
-                    // at hit.edge.  Wrapping A_j (only the RIGHT→LEFT
-                    // transition) splits into edge-range zones.
-                    bool hit_side_ok = aj_non_wrapping
-                        ? (hit.side == aj_left_side)
-                        : (hit.side == RIGHT
-                            ? hit.edge <= state.sequence[j-1].edge
-                            : hit.edge <= state.sequence[j].edge);
-                    if (!hit_side_ok) continue;
+                        const Arc& aj_arc_struct = S1.arc(aj_arc);
+                        Subarc aj_sub;
+                        if (aj_arcs_pair[0] == aj_arcs_pair[1]) {
+                            // Single-arc A_j: full span from a_{j-1} to a_j.
+                            aj_sub = Subarc{state.sequence[j-1].edge,
+                                            state.sequence[j-1].side,
+                                            state.sequence[j].edge,
+                                            state.sequence[j].side};
+                        } else if (arc_slot == 0) {
+                            // RIGHT leg: a_{j-1} → arc's last endpoint
+                            // (= last RIGHT edge before the wrap).
+                            aj_sub = Subarc{state.sequence[j-1].edge,
+                                            state.sequence[j-1].side,
+                                            aj_arc_struct.last_edge,
+                                            aj_arc_struct.last_side};
+                        } else {
+                            // LEFT leg: arc's first endpoint
+                            // (= first LEFT edge after wrap) → a_j.
+                            aj_sub = Subarc{aj_arc_struct.first_edge,
+                                            aj_arc_struct.first_side,
+                                            state.sequence[j].edge,
+                                            state.sequence[j].side};
+                        }
 
-                    // "occurs before p along A_j": strict cw compare.
-                    auto hit_cw = cw_position(hit.y, hit.edge, hit.side);
-                    if (hit_cw <= p_cw) continue;
+                        RayHit hit = oracle1.shoot(q_point, shoot_dir,
+                                                    aj_arc, aj_sub);
+                        if (!hit.hit) continue;
 
-                    // back-shot from s in its natural direction; q' must
-                    // lie between s and t for s↔a visibility.
-                    Side s_back_dir = shooting_direction(hit.edge, hit.side,
-                                                         C1);
-                    Point s_point{hit.x, hit.y, NONE};
-                    RayHit t_hit = local_shoot(
-                        s_point, s_back_dir,
-                        S1.arc(aj_arc).region_node,
-                        S1, C1, oracle1);
-                    double s_to_q = (s_back_dir == LEFT)
-                        ? (s_point.x - q_point.x)
-                        : (q_point.x - s_point.x);
-                    double s_to_t = (s_back_dir == LEFT)
-                        ? (s_point.x - t_hit.x)
-                        : (t_hit.x - s_point.x);
-                    if (s_to_q < 0.0 || s_to_q > s_to_t) continue;
+                        // "proper orientation": hit.Side matches A_j's
+                        // Side at hit.edge.  Wrapping A_j (only the
+                        // RIGHT→LEFT transition) splits into edge-range zones.
+                        bool hit_side_ok = aj_non_wrapping
+                            ? (hit.side == aj_left_side)
+                            : (hit.side == RIGHT
+                                ? hit.edge <= state.sequence[j-1].edge
+                                : hit.edge <= state.sequence[j].edge);
+                        if (!hit_side_ok) continue;
 
-                    // [C91 §3.1 tex 206]: pick LAST p' cw from p.
-                    if (hit_cw > best_cw) {
-                        best = {true, hit, ci, is_left};
-                        best_cw = hit_cw;
+                        // "occurs before p along A_j": strict cw compare.
+                        auto hit_cw = cw_position(hit.y, hit.edge, hit.side);
+                        if (hit_cw <= p_cw) continue;
+
+                        // back-shot from s in its natural direction; q'
+                        // must lie between s and t for s↔a visibility.
+                        Side s_back_dir = shooting_direction(hit.edge,
+                                                             hit.side, C1);
+                        Point s_point{hit.x, hit.y, NONE};
+                        RayHit t_hit = local_shoot(
+                            s_point, s_back_dir,
+                            aj_arc_struct.region_node,
+                            S1, C1, oracle1);
+                        double s_to_q = (s_back_dir == LEFT)
+                            ? (s_point.x - q_point.x)
+                            : (q_point.x - s_point.x);
+                        double s_to_t = (s_back_dir == LEFT)
+                            ? (s_point.x - t_hit.x)
+                            : (t_hit.x - s_point.x);
+                        if (s_to_q < 0.0 || s_to_q > s_to_t) continue;
+
+                        // [C91 §3.1 tex 206]: pick LAST p' cw from p.
+                        if (hit_cw > best_cw) {
+                            best = {true, hit, ci, is_left};
+                            best_cw = hit_cw;
+                        }
                     }
                 }
             }
@@ -800,9 +931,17 @@ void fuse_submaps(FusionState& state,
                 state.p = p_prime;
                 state.p_edge = r.p_prime_hit.edge;
                 state.p_side = r.p_prime_hit.side;
-                state.s2_region = (chord_ab.region[0] == R)
-                                    ? chord_ab.region[1]
-                                    : chord_ab.region[0];
+                // [C91 §3.1 tex 206]: "make current the region of S₂
+                // which we enter as we locally cross the exit chord."
+                // For a non-null chord, that's the chord's other side.
+                // For a null-length chord, [C91 Lemma 2.1] says it
+                // "isolates an empty region" (R_inner); p' on ∂C₁ has
+                // finite distance from the bubble's degenerate point,
+                // so p' is geometrically still in R — no crossing.
+                state.s2_region = chord_ab.is_null_length
+                    ? R
+                    : ((chord_ab.region[0] == R) ? chord_ab.region[1]
+                                                 : chord_ab.region[0]);
                 // [C91 §3.1 tex 199 + §2 tex 47 SoS]: k = j is correct
                 // only if p' is not an S₁ chord endpoint (otherwise the
                 // p ≠ a_k tie-break would set k = j+1 instead).  p' is
@@ -1014,17 +1153,6 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     for (std::size_t i = 0; i < num_arcs; ++i)
         state.arc_starts[i] = bucket_starts[i] + 1;
 
-    // Inverse: arc_for_seq_pos[j] = S₁ arc index for A_j.  O(num_arcs)
-    // one-time cost so the case (ii) per-test lookup is O(1).
-    state.arc_for_seq_pos.assign(state.sequence.size(), NONE);
-    for (std::size_t cw_pos = 0; cw_pos < num_arcs; ++cw_pos) {
-        std::size_t j = state.arc_starts[cw_pos];
-        if (j >= state.arc_for_seq_pos.size()) continue;
-        std::size_t arc_idx = (cw_pos < num_right)
-            ? (lrb + cw_pos) : (cw_pos - num_right);
-        state.arc_for_seq_pos[j] = arc_idx;
-    }
-
     // [C91 §3.1 tex 209]: sequence is "a_0, a_1, ..., a_m, a_{m+1}" where
     // a_1..a_m are S's EXIT-chord endpoints (2 per non-null chord, since
     // null-length chords are skipped above per tex 224) and a_0/a_{m+1}
@@ -1125,9 +1253,16 @@ void rebuild_submap(Submap& out_S,
         for (std::size_t ci = 0; ci < S.num_chords(); ++ci) {
             const Chord& c = S.chord(ci);
             if (c.dead) continue;
-            // [C91 §3.1 tex 224]: drop junction-wrap chord ([§2.1 tex 72
-            // case 3] gone in V(C)) or one superseded by case (i)/(ii).
-            if (!c.is_null_length && c.y_tag == junction_tag &&
+            // [C91 §3.1 tex 224]: non-null junction-incident chords carry
+            // over — in V(Cᵢ) the junction is a C-endpoint per [§2.1 tex
+            // 72 case 3] with duplicate companions; in V(C) it's interior
+            // but the (edge_name, side) encoding still resolves to the
+            // same polygon vertex.  V(Cᵢ) doesn't generate null-length
+            // chords at C-endpoints (case 3 isn't case 2), so the
+            // defensive null-length drop below catches malformed input
+            // only; V(C)'s own y-extremum check at junction_vidx_in_c
+            // synthesizes the inside-pair null-length below.
+            if (c.is_null_length && c.y_tag == junction_tag &&
                 (c.left_edge == junction_edge ||
                  c.right_edge == junction_edge)) continue;
             if (is_invalid(ci)) continue;

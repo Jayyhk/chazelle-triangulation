@@ -87,12 +87,6 @@ struct FusionState {
     // for context propagation during the traversal.
     std::vector<std::size_t> arc_starts;
 
-    // Inverse of arc_starts: arc_for_seq_pos[j] = S₁ arc index for A_j
-    // (the arc between sequence[j-1] and sequence[j]).  Precomputed in
-    // build_fusion_sequence so case (ii)'s `oracle1.shoot toward A_j` per
-    // [C91 §3.1 tex 222] runs in the paper-mandated O(f(γ₁)) per test.
-    std::vector<std::size_t> arc_for_seq_pos;
-
     // Chords discovered during the traversal — feed into the fused submap.
     // [C91 §3.1 tex 224]: discovered chords connect ∂C₁ and ∂C₂ — endpoints
     // live in DIFFERENT curve frames.  `left_on_c1` / `right_on_c1` mark
