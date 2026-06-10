@@ -835,7 +835,7 @@ static void test_startup_mid_edge_tie_break() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  15. fuse_s1_into_s2 — main loop smoke test, case (i) path.
+//  15. fuse_submaps — main loop smoke test, case (i) path.
 // ════════════════════════════════════════════════════════════════
 //
 // Forward-distance oracle: hit_x is always at `forward_dist` from p in
@@ -896,7 +896,7 @@ static void test_fuse_main_loop_smoke() {
     ForwardOracle oracle2(&C2, 1.0);
 
     FusionState state;
-    fuse_s1_into_s2(state, S1, C1, S2, C2, oracle1, oracle2);
+    fuse_submaps(state, S1, C1, S2, C2, oracle1, oracle2);
 
     // At minimum, fusion_startup recorded a₀c₀ chord.
     assert(!state.chords.empty());
@@ -905,7 +905,7 @@ static void test_fuse_main_loop_smoke() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  16. fuse_s1_into_s2 — case (ii) path exercises the loop body.
+//  16. fuse_submaps — case (ii) path exercises the loop body.
 // ════════════════════════════════════════════════════════════════
 //
 // Adapts test_startup_mid_edge_tie_break's S₂ (which has a chord and
@@ -967,7 +967,7 @@ static void test_fuse_main_loop_case_ii_smoke() {
     ForwardOracle oracle2(&C2, 1.5);
 
     FusionState state;
-    fuse_s1_into_s2(state, S1, C1, S2, C2, oracle1, oracle2);
+    fuse_submaps(state, S1, C1, S2, C2, oracle1, oracle2);
 
     assert(!state.chords.empty());
     std::printf("  [PASS] fuse_main_loop_case_ii_smoke (chords=%zu)\n",

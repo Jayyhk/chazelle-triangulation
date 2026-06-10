@@ -190,9 +190,9 @@ public:
         // than rebuilding the tree decomposition every time a chord or
         // arc changes, mutators just set a dirty flag.  When the flag is
         // set, this accessor returns an empty TreeDecomposition so that
-        // any consumer requiring a fresh one (e.g. merge.h's
-        // `!tree_decomposition().empty()` precondition) fails fast
-        // instead of using the out-of-date one.
+        // callers requiring a fresh one (e.g. merge.h's
+        // `!tree_decomposition().empty()` precondition) hit that assert
+        // instead of reading an out-of-date one.
         static const TreeDecomposition empty_;
         return tree_decomp_dirty_ ? empty_ : tree_decomp_;
     }

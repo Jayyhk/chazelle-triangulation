@@ -1,9 +1,10 @@
 #pragma once
 
-// [C91 §3.1]: Fuse S₁ into S₂ — "determining the points of ∂C that are
-// seen by the endpoints of the exit chords of S₁ and by the companion
-// vertices resulting from the duplication of C₁ ∩ C₂."  By symmetry,
-// covers the reverse direction too.
+// [C91 §3.1]: Fusion of two submaps — "determining the points of ∂C
+// that are seen by the endpoints of the exit chords of S₁ and by the
+// companion vertices resulting from the duplication of C₁ ∩ C₂."  The
+// reverse direction (fuse S₂ into S₁) is the same algorithm with
+// arguments swapped per tex 179 "by symmetry."
 
 #include "../polygon/polygon.h"
 #include "../polygon/perturbation.h"
@@ -66,6 +67,11 @@ RayHit local_shoot(Point p, Side direction,
 // [C91 §3.1]: Traversal state.  "We let a variable p run through ∂C₁
 // in clockwise order, stopping at a₀, ..., a_{m+1} ... determining what
 // p sees while keeping track of the current region of S₂."
+//
+// fuse_submaps is called twice — once for S₁→S₂, once for S₂→S₁ — with
+// arguments swapped at the call site per [C91 §3.1 tex 179] "by symmetry."
+// The function body always treats its first submap arg as S₁ (the
+// walked one) and its second as S₂ (the target).
 struct FusionState {
     std::vector<FusionVertex> sequence;
     std::size_t current_stop = 0;
@@ -104,10 +110,10 @@ struct FusionState {
     };
     std::vector<DiscoveredChord> chords;
 
-    // [C91 §3.1 tex 224]: source-submap chord indices invalidated by a
-    // case (i)/(ii) discovery in this pass — dropped by rebuild_submap's
-    // visibility filter.  self = pass's walking submap (S₁ for s1_into_s2,
-    // S₂ for s2_into_s1); other = the shoot-target submap.
+    // [C91 §3.1 tex 224]: chord indices invalidated by a case (i)/(ii)
+    // discovery in this pass — dropped by rebuild_submap's visibility
+    // filter.  `invalidated_self` indexes the walked submap (S₁) and
+    // `invalidated_other` indexes the target (S₂).
     std::vector<bool> invalidated_self;
     std::vector<bool> invalidated_other;
 };
@@ -120,7 +126,7 @@ Side shooting_direction(std::size_t edge, Side side,
 // [C91 §3.1 Start-Up]: Initialize p and the current S₂ region.
 //
 // Compute c₀ = the point of ∂C that a₀ sees, then:
-//   case (i) (c₀ ∈ ∂C₂): p = a₀, current = S₂ region crossed by a₀c₀.
+//   case (i)  (c₀ ∈ ∂C₂): p = a₀, current = S₂ region crossed by a₀c₀.
 //   case (ii) (c₀ ∈ ∂C₁): skip to c₀, p = c₀, current = S₂ region of a₀.
 //
 // Returns the index into state.sequence at which the main loop starts
@@ -131,14 +137,18 @@ std::size_t fusion_startup(FusionState& state,
                             const RayShootingOracle& oracle1,
                             const RayShootingOracle& oracle2);
 
-// [C91 §3.1]: Main loop — traverse ∂C₁ clockwise, shooting into S₂ at
-// each stop to discover new chords.  [C91 §3.1 Lemma 3.1]: runs in
-// O((n₁/γ₁ + n₂/γ₂ + 1)(f(γ₂) + log(n₁+n₂))) time.
-void fuse_s1_into_s2(FusionState& state,
-                      const Submap& S1, const Polygon& C1,
-                      const Submap& S2, const Polygon& C2,
-                      const RayShootingOracle& oracle1,
-                      const RayShootingOracle& oracle2);
+// [C91 §3.1]: Fuse S₁ into S₂ — walk ∂C₁ clockwise, shoot into S₂ at
+// each stop to discover the chords seen.  [C91 §3.1 tex 179] "by
+// symmetry" the reverse pass (fuse S₂ into S₁) runs the same algorithm
+// with parameters swapped — callers invoke this function twice with
+// (S₁,C₁,S₂,C₂,oracle1,oracle2) then (S₂,C₂,S₁,C₁,oracle2,oracle1).
+// [C91 §3.1 Lemma 3.1]: each pass runs in
+// O((n₁/γ₁ + n₂/γ₂ + 1)(f(γ₂) + log(n₁+n₂))).
+void fuse_submaps(FusionState& state,
+                const Submap& S1, const Polygon& C1,
+                const Submap& S2, const Polygon& C2,
+                const RayShootingOracle& oracle1,
+                const RayShootingOracle& oracle2);
 
 // [C91 §3.1]: Build the fusion vertex sequence for S₁→S₂.
 //

@@ -509,9 +509,9 @@ std::size_t fusion_startup(FusionState& state,
     }
 }
 
-// ── fuse_s1_into_s2 ─────────────────────────────────────────────
+// ── fuse_submaps ─────────────────────────────────────────────
 
-void fuse_s1_into_s2(FusionState& state,
+void fuse_submaps(FusionState& state,
                       const Submap& S1, const Polygon& C1,
                       const Submap& S2, const Polygon& C2,
                       const RayShootingOracle& oracle1,

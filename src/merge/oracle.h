@@ -96,8 +96,8 @@ struct ArcCuttingOracle {
 //   first piece's first endpoint = α'.first;
 //   last piece's last endpoint   = α'.last.
 //
-// Callers in [C91 §3.2 / §3.3] must invoke this on every `cut` result to ensure
-// the oracle's contract holds before consuming the pieces.
+// Callers in [C91 §3.2 / §3.3] must invoke this on every `cut` result to
+// verify the §3.0(ii) tex 170 post-conditions before consuming the pieces.
 inline void assert_cut_postconditions(
         const Subarc& target,
         const ArcPiece* pieces, std::size_t count,
