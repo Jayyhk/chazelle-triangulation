@@ -28,6 +28,25 @@ struct Subarc {
     Side last_side;
 };
 
+// [C91 §2.4 tex 138]: Assert a Subarc respects clockwise ∂C ordering —
+// LEFT side ascends in edge, RIGHT side descends.  Wrap subarcs
+// (first_side ≠ last_side) inherit α's orientation per [C91 §2.4 tex 142];
+// no edge-index check is well-defined in that case.  Paper-proven for any
+// "subarc of α" where α is a region arc in normal form.
+inline void assert_subarc_clockwise(const Subarc& s) {
+    if (s.first_side == s.last_side) {
+        if (s.first_side == LEFT) {
+            assert(s.first_edge <= s.last_edge &&
+                   "[C91 §2.4 tex 138]: LEFT subarc must ascend in edge");
+        } else {
+            assert(s.first_edge >= s.last_edge &&
+                   "[C91 §2.4 tex 138]: RIGHT subarc must descend in edge");
+        }
+    }
+    // Wrap subarc: orientation encoded by side pair; per [C91 §2.4 tex 142]
+    // LEFT→RIGHT wraps at C₁'s end_vertex, RIGHT→LEFT at start_vertex.
+}
+
 // [C91 §3.0(i) tex 169]: Ray-hit report — point + edge of P containing it.
 struct RayHit {
     bool hit = false;
@@ -145,6 +164,18 @@ inline void assert_cut_postconditions(
                    "[C91 §3.0(ii)(3) tex 170]: non-boundary piece requires a submap");
             assert(p.curve != nullptr &&
                    "[C91 §3.0(ii)(3) tex 170]: non-boundary piece requires its curve");
+            // (3): "vertex-to-vertex subchains ... do not stop in the middle of
+            // an edge."  ᾱⱼ = p.curve must cover exactly the piece's polygon
+            // edge range.  (2) above guarantees first_side == last_side, so the
+            // piece is single-side and its edge count is |last - first| + 1.
+            {
+                std::size_t lo = std::min(p.subarc.first_edge, p.subarc.last_edge);
+                std::size_t hi = std::max(p.subarc.first_edge, p.subarc.last_edge);
+                assert(p.curve->num_edges() == hi - lo + 1 &&
+                       "[C91 §3.0(ii)(3) tex 170]: non-boundary piece is "
+                       "vertex-to-vertex; p.curve must cover exactly the "
+                       "piece's polygon edge range");
+            }
             // [C91 §2.4(iv) tex 139]: conformal ⟹ tree decomposition available.
             assert(!p.submap->tree_decomposition().empty() &&
                    "[C91 §2.4(iv) tex 139]: normal-form conformal submap "

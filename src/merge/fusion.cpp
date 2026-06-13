@@ -83,6 +83,7 @@ RayHit local_shoot(Point p, Side direction,
         sub.first_side = a.first_side;
         sub.last_edge = a.last_edge;
         sub.last_side = a.last_side;
+        assert_subarc_clockwise(sub);
 
         RayHit hit = oracle.shoot(p, direction, ai, sub);
         if (!hit.hit) continue;
@@ -187,12 +188,19 @@ std::size_t fusion_startup(FusionState& state,
     // and ends at a_{m+1} (LEFT companion) — the cw tour of ∂C₁.
     assert(state.sequence.size() >= 2 &&
            "[C91 §3.1]: fusion sequence needs at least a₀ and a_{m+1}");
+    const std::size_t junction_edge = C1.num_edges() - 1;
     const auto& a0 = state.sequence[0];
     assert(a0.is_companion && a0.side == RIGHT &&
            "[C91 §3.1 tex 179]: sequence[0] = a₀ (RIGHT companion at junction)");
+    assert(a0.edge == junction_edge &&
+           "[C91 §3.1 tex 179]: a₀ duplicates C₁ ∩ C₂ = C₁'s endpoint, so a₀.edge "
+           "= junction_edge (the boundary edge incident at C₁'s last vertex)");
     const auto& a_m1 = state.sequence.back();
     assert(a_m1.is_companion && a_m1.side == LEFT &&
            "[C91 §3.1 tex 179]: sequence.back() = a_{m+1} (LEFT companion)");
+    assert(a_m1.edge == junction_edge &&
+           "[C91 §3.1 tex 179]: a_{m+1} duplicates C₁ ∩ C₂ = C₁'s endpoint, so "
+           "a_{m+1}.edge = junction_edge");
 
     // [C91 §3.1]: "Using local shooting, we find the point of ∂C₁ that a₀
     // sees with respect to C₁."  a₀ is the RIGHT companion at C₁'s
@@ -631,15 +639,17 @@ void fuse_submaps(FusionState& state,
                     ? ch.right_edge : ch.left_edge;
                 t_x = edge_x_at_y(C1, other_edge, ch.symbolic_y());
             } else {
-                // [C91 §3.1 tex 220] companion case: j ∈ {0, m+1}.
-                // a_0 sits on the RIGHT side of the junction (first RIGHT
-                // arc); a_{m+1} sits on the LEFT side (last LEFT arc =
-                // end_arc).  Per [§2.1 tex 72] these can be in different
-                // S₁ regions whenever S₁'s junction chord is live.
+                // [C91 §3.1 tex 220] companion case: j == m+1 only.
+                // (j == 0 is consumed by fusion_startup, which always
+                // returns k ≥ 1; main-loop j starts at k.)  a_{m+1} sits
+                // on the LEFT side of the junction (last LEFT arc =
+                // end_arc).  Per [§2.1 tex 72] a_{m+1} and a₀ can be in
+                // different S₁ regions whenever S₁'s junction chord is live.
                 assert(aj_v.is_companion);
-                std::size_t s1_arc = (aj_v.side == RIGHT)
-                    ? S1.left_right_boundary()
-                    : S1.end_arc;
+                assert(aj_v.side == LEFT &&
+                       "[C91 §3.1]: only a_{m+1} reaches the companion branch "
+                       "(a₀ is consumed by fusion_startup)");
+                std::size_t s1_arc = S1.end_arc;
                 std::size_t aj_region_s1 = S1.arc(s1_arc).region_node;
                 t_x = local_shoot(aj_point, dir, aj_region_s1,
                                   S1, C1, oracle1).x;
@@ -808,6 +818,7 @@ void fuse_submaps(FusionState& state,
                                             state.sequence[j].side};
                         }
 
+                        assert_subarc_clockwise(aj_sub);
                         RayHit hit = oracle1.shoot(q_point, shoot_dir,
                                                     aj_arc, aj_sub);
                         if (!hit.hit) continue;
