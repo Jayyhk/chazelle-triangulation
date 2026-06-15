@@ -206,7 +206,7 @@ std::size_t fusion_startup(FusionState& state,
     // sees with respect to C₁."  a₀ is the RIGHT companion at C₁'s
     // end_vertex (the junction); the adjacent S₁ arc is the FIRST RIGHT
     // arc (left_right_boundary), NOT the last LEFT arc (end_arc).
-    // Per [§2.1 tex 72] the junction's companion duplicates sit in
+    // Per [C91 §2.1 tex 72] the junction's companion duplicates sit in
     // different S₁ regions whenever the junction-incident chord is live.
     assert(S1.left_right_boundary() < S1.num_arcs() &&
            "[C91 §2.4(iii)]: S₁ must have a first RIGHT arc (normal form)");
@@ -598,13 +598,13 @@ void fuse_submaps(FusionState& state,
             // inferred from the local orientation of the hit at s and
             // which side of the double boundary is hit."  hit.side must
             // match the arc's coverage at hit.edge — for non-wrapped
-            // arcs that's just first_side; for wrapped arcs ([§2.4 tex
+            // arcs that's just first_side; for wrapped arcs ([C91 §2.4 tex
             // 142]) the side depends on which leg owns hit.edge.
             const Arc& s_arc = S2.arc(s_hit.hit_arc_idx);
             auto hit_on_arc_side = [&]() -> bool {
                 if (s_arc.first_side == s_arc.last_side)
                     return s_hit.side == s_arc.first_side;
-                // Wrapped: legs meet at C₂'s endpoint per [§2.4 tex 142].
+                // Wrapped: legs meet at C₂'s endpoint per [C91 §2.4 tex 142].
                 assert(S2.start_vertex != NONE && S2.end_vertex != NONE &&
                        S2.end_vertex >= 1 &&
                        "[C91 §2.4]: wrapped arc requires S₂ endpoints set");
@@ -643,7 +643,7 @@ void fuse_submaps(FusionState& state,
                 // (j == 0 is consumed by fusion_startup, which always
                 // returns k ≥ 1; main-loop j starts at k.)  a_{m+1} sits
                 // on the LEFT side of the junction (last LEFT arc =
-                // end_arc).  Per [§2.1 tex 72] a_{m+1} and a₀ can be in
+                // end_arc).  Per [C91 §2.1 tex 72] a_{m+1} and a₀ can be in
                 // different S₁ regions whenever S₁'s junction chord is live.
                 assert(aj_v.is_companion);
                 assert(aj_v.side == LEFT &&
@@ -690,7 +690,7 @@ void fuse_submaps(FusionState& state,
             bool q_is_left;
         };
         // [C91 §3.1 tex 199]: A_j is the segment of ∂C₁ from a_{j-1} to
-        // a_j cw.  By [§2.4 tex 142] this segment can span up to two
+        // a_j cw.  By [C91 §2.4 tex 142] this segment can span up to two
         // arc-structures via the C-endpoint wrap when no chord events
         // sit on the wrap arc.  Compute the up-to-two spanning arcs
         // (first = arc-after a_{j-1}, second = arc-before a_j) — they
@@ -753,7 +753,7 @@ void fuse_submaps(FusionState& state,
             auto p_cw = cw_position(state.p_y, state.p_edge, state.p_side);
 
             // [C91 §3.1 tex 200]: case (ii) iterates exit chords of R;
-            // null-length chords ([§2.1 tex 72]) count per tex 224.  No
+            // null-length chords ([C91 §2.1 tex 72]) count per tex 224.  No
             // explicit is_null_length skip is paper-mandated — when one
             // fires, the region-update branch below keeps state.s2_region
             // = R since R_inner is a zero-area bubble.
@@ -1177,7 +1177,7 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
 // [C91 §3.1 tex 226]: set up S in normal form from the [tex 224] chord
 // inventory — sort endpoints along ∂C (edge name then y), build the
 // arc-sequence table + region tree (parenthesis sweep), fill in each
-// chord's adjacent-arc pointers per [§2.4(ii) tex 137], skip the tree
+// chord's adjacent-arc pointers per [C91 §2.4(ii) tex 137], skip the tree
 // decomposition (§3.2's job).
 //
 // Time: O((n₁/γ₁ + n₂/γ₂ + 1) log(n₁+n₂)) — endpoint sort dominates.
@@ -1258,7 +1258,7 @@ void rebuild_submap(Submap& out_S,
             const Chord& c = S.chord(ci);
             if (c.dead) continue;
             // [C91 §3.1 tex 224]: non-null junction-incident chords carry
-            // over — in V(Cᵢ) the junction is a C-endpoint per [§2.1 tex
+            // over — in V(Cᵢ) the junction is a C-endpoint per [C91 §2.1 tex
             // 72 case 3] with duplicate companions; in V(C) it's interior
             // but the (edge_name, side) encoding still resolves to the
             // same polygon vertex.  V(Cᵢ) doesn't generate null-length
@@ -1338,7 +1338,7 @@ void rebuild_submap(Submap& out_S,
 
     // [C91 §2.4(ii) tex 137 + §2.2 tex 94]: mid-edge endpoint → 2 adj
     // (arc splits); polygon-vertex endpoint → 1 adj (no split).
-    // Identification via SoS y match per [§2 tex 47].
+    // Identification via SoS y match per [C91 §2 tex 47].
     auto is_vertex_endpoint = [&](std::size_t edge_c, SymbolicY y) -> bool {
         const auto& e = C.edge(edge_c);
         return symbolic_y_equal(y, symbolic_y_of(C.vertex(e.start_idx))) ||

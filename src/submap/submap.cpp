@@ -101,7 +101,7 @@ std::size_t Submap::add_chord(Chord chord) {
         // [C91 §2.2 tex 96]: at a mid-edge endpoint the chord splits the
         // edge's ∂C arcs into two halves — one per side of the chord; the
         // two adj arcs must therefore live in DIFFERENT regions of the
-        // chord.  (Vertex endpoints aren't split per [§2.2 tex 94].)
+        // chord.  (Vertex endpoints aren't split per [C91 §2.2 tex 94].)
         if (adj.count == 2) {
             assert(arc_sequence_[adj.arcs[0]].region_node !=
                        arc_sequence_[adj.arcs[1]].region_node &&
@@ -1195,7 +1195,7 @@ std::size_t Submap::simulated_contraction_weight(
                "[C91 §2.2 tex 94]: adj arcs share junction edge");
         // [C91 §2.2 tex 106]: simulate the merge and count over the
         // post-merge underlying P-edge range — the additive `a+b−shared`
-        // would over-count when either input wraps ([§2.4 tex 142]).
+        // would over-count when either input wraps ([C91 §2.4 tex 142]).
         Arc merged_arc;
         merged_arc.first_edge = arc_sequence_[ai].first_edge;
         merged_arc.first_side = arc_sequence_[ai].first_side;
