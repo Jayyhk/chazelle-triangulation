@@ -24,6 +24,15 @@ Polygon::Polygon(std::vector<Point> vertices) {
             assert(!(v.x == 0.0 && std::isinf(v.y) && v.y > 0.0) &&
                    "[C91 §2 tex 66]: curve must avoid the reference point (0, +∞)");
         }
+        // [C91 §2.4 tex 133]: every curve is a contiguous subchain of the
+        // input P (whose vertices carry consecutive SoS indices v₁..vₙ),
+        // so a curve's indices are consecutive from vertices[0].index.
+        // Callers rely on this to translate SoS tags → table positions.
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            assert(vertices[i].index == vertices[0].index + i &&
+                   "[C91 §2.4 tex 133]: curve must be a contiguous "
+                   "subchain of P (consecutive SoS indices)");
+        }
     }
 
     vertices_ = std::move(vertices);

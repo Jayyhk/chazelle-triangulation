@@ -6,8 +6,31 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
+#include <csignal>
+#include <functional>
+#include <sys/prctl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 using namespace chazelle;
+
+namespace {
+// Death-test helper: forks; child runs `fn` with stderr silenced and core
+// dumps disabled.  Returns true iff the child terminated by SIGABRT.
+bool assert_fires(std::function<void()> fn) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        prctl(PR_SET_DUMPABLE, 0);
+        if (freopen("/dev/null", "w", stderr) == nullptr) std::_Exit(2);
+        fn();
+        std::_Exit(0);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return false;
+    return WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT;
+}
+}
 
 // ════════════════════════════════════════════════════════════════
 //  Helpers
@@ -998,6 +1021,294 @@ static void test_fuse_main_loop_case_ii_smoke() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  17. rebuild_submap — [C91 §3.1 tex 226] normal-form assembly
+// ════════════════════════════════════════════════════════════════
+
+// Minimal single-region conformal submap (no chords) over `poly`.
+static Submap make_chordless(const Polygon& poly) {
+    Submap s;
+    s.add_node();
+    Arc a{};
+    a.first_edge = 0; a.last_edge = poly.num_edges() - 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0;
+    a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
+    std::size_t ai0 = s.add_arc(a);
+    a.first_edge = poly.num_edges() - 1; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    s.add_arc(a);
+    s.start_arc = ai0; s.end_arc = ai0;
+    s.start_vertex = 0; s.end_vertex = poly.num_vertices() - 1;
+    return s;
+}
+
+static void test_rebuild_no_chords() {
+    // Non-extremum junction, empty chord inventory: the fused submap is a
+    // single region with one full arc per ∂C side, in normal form.
+    Polygon C1({{0,0,0}, {1,1,1}});
+    Polygon C2({{1,1,1}, {2,2,2}});
+    Polygon C ({{0,0,0}, {1,1,1}, {2,2,2}});
+    Submap S1 = make_chordless(C1);
+    Submap S2 = make_chordless(C2);
+
+    FusionState st1, st2;
+    Submap out;
+    rebuild_submap(out, C, S1, C1, S2, C2, st1, st2);
+
+    assert(out.num_nodes() == 1);
+    assert(out.num_chords() == 0);
+    assert(out.num_arcs() == 2);
+    out.assert_tree_property();
+    out.check_invariants(C);
+
+    std::printf("  [PASS] rebuild_no_chords\n");
+}
+
+static void test_rebuild_junction_extremum_inside_right() {
+    // [C91 §2.1 tex 72 case 2 + §3.1 tex 224]: the junction (0,1) is a
+    // y-max of C; the previous branch descends to the LEFT (x = -1), the
+    // next to the RIGHT (x = +1), so the "inside of the turn" is the
+    // RIGHT face of C's edge 1 — and the synthesized null-length chord
+    // carries the junction vertex's own SoS tag ([C91 §2 tex 47]).
+    Polygon C1({{-1,0,0}, {0,1,1}});
+    Polygon C2({{0,1,1}, {1,0,2}});
+    Polygon C ({{-1,0,0}, {0,1,1}, {1,0,2}});
+    Submap S1 = make_chordless(C1);
+    Submap S2 = make_chordless(C2);
+
+    FusionState st1, st2;
+    Submap out;
+    rebuild_submap(out, C, S1, C1, S2, C2, st1, st2);
+
+    assert(out.num_nodes() == 2);
+    assert(out.num_chords() == 1);
+    const Chord& nc = out.chord(0);
+    assert(nc.is_null_length);
+    assert(nc.y_tag == 1 &&
+           "[C91 §2 tex 47]: inside pair duplicates the junction vertex — "
+           "its symbolic y IS the vertex's (y, index)");
+    assert(nc.left_edge == 1 && nc.right_edge == 1);
+    assert(nc.left_side == RIGHT && nc.right_side == RIGHT &&
+           "[C91 §2.1 tex 72]: inside of the turn is the RIGHT face here");
+    assert(out.region_weight(nc.region[1]) == 0 &&
+           "[C91 §2.2 tex 106]: null-length chord's inner region is empty");
+    out.assert_tree_property();
+    out.check_invariants(C);
+
+    std::printf("  [PASS] rebuild_junction_extremum_inside_right\n");
+}
+
+static void test_rebuild_junction_extremum_inside_left() {
+    // Mirror of the previous test: previous branch on the RIGHT (x = +1),
+    // next branch to the LEFT (x = -1) — inside is the LEFT face.
+    Polygon C1({{1,0,0}, {0,1,1}});
+    Polygon C2({{0,1,1}, {-1,0,2}});
+    Polygon C ({{1,0,0}, {0,1,1}, {-1,0,2}});
+    Submap S1 = make_chordless(C1);
+    Submap S2 = make_chordless(C2);
+
+    FusionState st1, st2;
+    Submap out;
+    rebuild_submap(out, C, S1, C1, S2, C2, st1, st2);
+
+    assert(out.num_nodes() == 2);
+    assert(out.num_chords() == 1);
+    const Chord& nc = out.chord(0);
+    assert(nc.is_null_length);
+    assert(nc.y_tag == 1);
+    assert(nc.left_edge == 1 && nc.right_edge == 1);
+    assert(nc.left_side == LEFT && nc.right_side == LEFT &&
+           "[C91 §2.1 tex 72]: inside of the turn is the LEFT face here");
+    assert(out.region_weight(nc.region[1]) == 0);
+    out.assert_tree_property();
+    out.check_invariants(C);
+
+    std::printf("  [PASS] rebuild_junction_extremum_inside_left\n");
+}
+
+static void test_rebuild_discovered_chord_frames() {
+    // [C91 §3.1 tex 224]: DiscoveredChord flags are WALKER-frame.  The
+    // same physical chord — sourced at C₁'s vertex 1 (y = 2, its own SoS
+    // tag per [C91 §2 tex 47]), from C₁'s edge 0 (vertex endpoint) to a
+    // mid-edge crossing on C₂'s edge 0 (= C's edge 2) — must translate
+    // identically whether discovered by pass 1 (walker = C₁) or pass 2
+    // (walker = C₂).
+    Polygon C1({{0,0,0}, {1,2,1}, {2,1,2}});
+    Polygon C2({{2,1,2}, {3,3,3}});
+    Polygon C ({{0,0,0}, {1,2,1}, {2,1,2}, {3,3,3}});
+    Submap S1 = make_chordless(C1);
+    Submap S2 = make_chordless(C2);
+
+    auto run = [&](bool via_state1) -> Submap {
+        FusionState st1, st2;
+        FusionState::DiscoveredChord dc;
+        dc.y = SymbolicY{2.0, 1};                 // C₁'s vertex 1
+        dc.left_edge = 0;  dc.left_side = LEFT;   // on C₁ (C-edge 0)
+        dc.right_edge = 0; dc.right_side = LEFT;  // on C₂ (C-edge 2)
+        if (via_state1) {
+            dc.left_on_walker = true;    // walker = C₁
+            dc.right_on_walker = false;
+            st1.chords.push_back(dc);
+        } else {
+            dc.left_on_walker = false;   // walker = C₂
+            dc.right_on_walker = true;
+            st2.chords.push_back(dc);
+        }
+        Submap out;
+        rebuild_submap(out, C, S1, C1, S2, C2, st1, st2);
+        return out;
+    };
+
+    for (bool via_state1 : {true, false}) {
+        Submap out = run(via_state1);
+        // The junction (2,1) is also a y-min of C, so rebuild synthesizes
+        // its inside-pair null-length chord alongside the discovered one:
+        // 3 regions, 2 chords ([C91 §2.1 tex 72 case 2 + §3.1 tex 224]).
+        assert(out.num_nodes() == 3);
+        assert(out.num_chords() == 2);
+        std::size_t discovered = NONE, null_c = NONE;
+        for (std::size_t ci = 0; ci < out.num_chords(); ++ci)
+            (out.chord(ci).is_null_length ? null_c : discovered) = ci;
+        assert(discovered != NONE && null_c != NONE);
+
+        const Chord& c = out.chord(discovered);
+        assert(c.left_edge == 0 &&
+               "walker-frame translation: C₁ endpoint → C's edge 0");
+        assert(c.right_edge == 2 &&
+               "walker-frame translation: C₂ endpoint → C's edge 2");
+        assert(c.y_tag == 1);
+        // [C91 §2.4(ii) tex 137]: vertex endpoint → 1 adj arc; mid-edge
+        // endpoint → 2.
+        assert(c.left_adj.count == 1 && c.right_adj.count == 2);
+
+        const Chord& nc = out.chord(null_c);
+        assert(nc.y_tag == 2 &&
+               "[C91 §2 tex 47]: junction null chord carries the junction "
+               "vertex's own SoS tag");
+        assert(nc.left_edge == 2 && nc.left_side == LEFT &&
+               "[C91 §2.1 tex 72]: inside of the min turn is the LEFT "
+               "face here (previous branch to the left)");
+        assert(out.region_weight(nc.region[1]) == 0);
+
+        out.assert_tree_property();
+        out.check_invariants(C);
+    }
+
+    std::printf("  [PASS] rebuild_discovered_chord_frames\n");
+}
+
+static void test_rebuild_junction_null_in_input_fires() {
+    // [C91 §2.1 tex 72 case 3]: the junction is a C-endpoint of each Cᵢ
+    // and C-endpoints are never y-extrema, so Sᵢ cannot contain a
+    // null-length chord sourced at the junction vertex.
+    assert(assert_fires([]{
+        Polygon C1({{0,0,0}, {1,1,1}});
+        Polygon C2({{1,1,1}, {2,2,2}});
+        Polygon C ({{0,0,0}, {1,1,1}, {2,2,2}});
+        Submap S1 = make_chordless(C1);
+
+        Submap S2;
+        std::size_t r0 = S2.add_node();
+        std::size_t r1 = S2.add_node();
+        Arc a{};
+        a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
+        a.region_node = r0; a.edge_count = 1;
+        std::size_t a0 = S2.add_arc(a);
+        a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
+        a.region_node = r1; a.edge_count = 0;
+        std::size_t a_null = S2.add_arc(a);
+        a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+        a.region_node = r0; a.edge_count = 1;
+        S2.add_arc(a);
+        Chord nc{};
+        nc.region[0] = r0; nc.region[1] = r1;
+        nc.left_edge = 0; nc.right_edge = 0;
+        nc.left_side = LEFT; nc.right_side = LEFT;
+        nc.is_null_length = true;
+        nc.y = 1.0; nc.y_tag = 1;                 // ← junction's tag
+        nc.left_adj = {{a0}, 1}; nc.right_adj = {{a_null}, 1};
+        S2.add_chord(nc);
+        S2.start_arc = a0; S2.end_arc = a_null;
+        S2.start_vertex = 0; S2.end_vertex = 1;
+
+        FusionState st1, st2;
+        Submap out;
+        rebuild_submap(out, C, S1, C1, S2, C2, st1, st2);  // ← must fire
+    }));
+    std::printf("  [PASS] rebuild_junction_null_in_input_fires\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  18. case (ii) — [C91 §3.1 tex 222] "hit does not lie on ab"
+// ════════════════════════════════════════════════════════════════
+
+static void test_case_ii_hit_beyond_ab_disqualified() {
+    // Same geometry as test 16 (fuse_main_loop_case_ii_smoke), but the
+    // S₁ oracle reports hits far beyond the S₂ chord's other endpoint.
+    // [C91 §3.1 tex 222]: such a hit "does not lie on ab" — the sightline
+    // would pass through the other endpoint (a point of ∂C₂) — so the
+    // candidate must be disqualified and no case (ii) chord recorded.
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+    Polygon C2({{4,3,4}, {3,5,5}, {2,1,6}});
+
+    Submap S2;
+    std::size_t r_above = S2.add_node();
+    std::size_t r_below = S2.add_node();
+    Arc a{};
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_above; a.edge_count = 1;
+    std::size_t ai_above_L = S2.add_arc(a);
+    a = {};
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_below; a.edge_count = 1;
+    std::size_t ai_below_L = S2.add_arc(a);
+    a = {};
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r_above; a.edge_count = 1;
+    std::size_t ai_right_at_junction = S2.add_arc(a);
+    Chord c{};
+    c.region[0] = r_above; c.region[1] = r_below;
+    c.left_edge = 1; c.left_side = LEFT;
+    c.right_edge = 0; c.right_side = RIGHT;
+    c.y = 3.0; c.y_tag = 4;
+    c.left_adj = {{ai_above_L, ai_below_L}, 2};
+    c.right_adj = {{ai_right_at_junction}, 1};
+    S2.add_chord(c);
+    S2.start_arc = ai_above_L; S2.end_arc = ai_above_L;
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // The S₂ chord spans x ∈ [~2.5, 4] (length ~1.5).  ForwardOracle
+    // with forward_dist = 100 puts every S₁ hit far beyond the other
+    // endpoint → all case (ii) candidates disqualified by the on-ab test.
+    ForwardOracle oracle1(&C1, 100.0);
+    ForwardOracle oracle2(&C2, 1.5);
+
+    FusionState state;
+    fuse_submaps(state, S1, C1, S2, C2, oracle1, oracle2);
+
+    // Exactly two chords: the startup a₀c₀ and a_{m+1}'s case (i)
+    // discovery (walker endpoint at the junction edge 3, LEFT side).
+    // Without the on-ab disqualification, the S₂ chord endpoints' far
+    // hits (distance 100 ≫ |ab| ≈ 1.5) pass the back-shot test (both
+    // synthetic distances equal 100) and would record spurious case (ii)
+    // chords / derail the walk.
+    assert(state.chords.size() == 2 &&
+           "[C91 §3.1 tex 222]: hits beyond ab must be disqualified — "
+           "only startup + a_{m+1} case (i) may record");
+    assert(state.chords[1].left_on_walker != state.chords[1].right_on_walker);
+    assert((state.chords[1].left_on_walker
+                ? state.chords[1].left_edge
+                : state.chords[1].right_edge) == 3 &&
+           "second chord must be a_{m+1}'s case (i), not a case (ii) product");
+
+    std::printf("  [PASS] case_ii_hit_beyond_ab_disqualified\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -1019,6 +1330,12 @@ int main() {
     test_startup_mid_edge_tie_break();
     test_fuse_main_loop_smoke();
     test_fuse_main_loop_case_ii_smoke();
+    test_rebuild_no_chords();
+    test_rebuild_junction_extremum_inside_right();
+    test_rebuild_junction_extremum_inside_left();
+    test_rebuild_discovered_chord_frames();
+    test_rebuild_junction_null_in_input_fires();
+    test_case_ii_hit_beyond_ab_disqualified();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }

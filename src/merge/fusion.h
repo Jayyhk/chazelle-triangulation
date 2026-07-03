@@ -68,10 +68,14 @@ RayHit local_shoot(Point p, Side direction,
 // in clockwise order, stopping at a₀, ..., a_{m+1} ... determining what
 // p sees while keeping track of the current region of S₂."
 //
-// fuse_submaps is called twice — once for S₁→S₂, once for S₂→S₁ — with
-// arguments swapped at the call site per [C91 §3.1 tex 179] "by symmetry."
-// The function body always treats its first submap arg as S₁ (the
-// walked one) and its second as S₂ (the target).
+// [C91 §3.1 tex 179] "by symmetry" requires a second pass fusing S₂
+// into S₁.  NOTE (limitation): the current implementation supports only
+// walks whose junction (C₁ ∩ C₂) is the walked curve's LAST vertex —
+// the S₁→S₂ direction.  The symmetric pass walks ∂C₂, whose junction is
+// C₂'s FIRST vertex, and needs the mirrored tour (a₀ = LEFT companion
+// at vertex 0, LEFT half first); build_fusion_sequence / fusion_startup
+// / fuse_submaps do not implement that orientation yet.  This is one of
+// the blockers recorded at merge.cpp::fuse.
 struct FusionState {
     std::vector<FusionVertex> sequence;
     std::size_t current_stop = 0;
@@ -95,18 +99,20 @@ struct FusionState {
 
     // Chords discovered during the traversal — feed into the fused submap.
     // [C91 §3.1 tex 224]: discovered chords connect ∂C₁ and ∂C₂ — endpoints
-    // live in DIFFERENT curve frames.  `left_on_c1` / `right_on_c1` mark
-    // which curve each slot's `edge` indexes into so rebuild_submap can
-    // translate to the merged-C frame.  (For the case (ii) startup chord both
-    // endpoints can sit on C₁; both flags would be true.)
+    // live in DIFFERENT curve frames.  Flags are WALKER-frame: `true` means
+    // the slot's `edge` indexes into the curve this pass WALKED (the first
+    // curve argument of fuse_submaps), `false` the target curve.
+    // rebuild_submap translates to the merged-C frame per pass.  (For the
+    // case (ii) startup chord both endpoints can sit on the walked curve;
+    // both flags would be true.)
     struct DiscoveredChord {
         SymbolicY y;
         std::size_t left_edge;
         Side left_side;
         std::size_t right_edge;
         Side right_side;
-        bool left_on_c1  = true;
-        bool right_on_c1 = true;
+        bool left_on_walker  = true;
+        bool right_on_walker = true;
     };
     std::vector<DiscoveredChord> chords;
 
@@ -138,12 +144,13 @@ std::size_t fusion_startup(FusionState& state,
                             const RayShootingOracle& oracle2);
 
 // [C91 §3.1]: Fuse S₁ into S₂ — walk ∂C₁ clockwise, shoot into S₂ at
-// each stop to discover the chords seen.  [C91 §3.1 tex 179] "by
-// symmetry" the reverse pass (fuse S₂ into S₁) runs the same algorithm
-// with parameters swapped — callers invoke this function twice with
-// (S₁,C₁,S₂,C₂,oracle1,oracle2) then (S₂,C₂,S₁,C₁,oracle2,oracle1).
-// [C91 §3.1 Lemma 3.1]: each pass runs in
-// O((n₁/γ₁ + n₂/γ₂ + 1)(f(γ₂) + log(n₁+n₂))).
+// each stop to discover the chords seen.  [C91 §3.1 Lemma 3.1]: each
+// pass runs in O((n₁/γ₁ + n₂/γ₂ + 1)(f(γ₂) + log(n₁+n₂))).
+//
+// LIMITATION: only the S₁→S₂ direction (junction = walked curve's LAST
+// vertex) is implemented; see the FusionState note above.  The
+// [C91 §3.1 tex 179] symmetric pass (S₂→S₁, junction = walked curve's
+// FIRST vertex) is pending — tracked at merge.cpp::fuse.
 void fuse_submaps(FusionState& state,
                 const Submap& S1, const Polygon& C1,
                 const Submap& S2, const Polygon& C2,

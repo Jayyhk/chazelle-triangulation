@@ -767,12 +767,17 @@ void Submap::check_invariants(const Polygon& polygon) const {
         if (c.is_null_length) continue;
 
         // [C91 §2.1 tex 70]: a non-null-length chord is horizontal at its
-        // source vertex's y, with y_tag = that vertex's index.
-        assert(c.y_tag < polygon.num_vertices() &&
-               "[C91 §2.1 tex 70]: exit chord y_tag must be a polygon vertex index");
+        // source vertex's y, with y_tag = that vertex's SoS index.
+        // [C91 §2.4 tex 133]: C is a contiguous subchain of P, so its
+        // vertex indices are consecutive from vertex(0).index (asserted
+        // by the Polygon constructor) — translate tag → table position.
+        const std::size_t first_tag = polygon.vertex(0).index;
+        assert(c.y_tag >= first_tag &&
+               c.y_tag - first_tag < polygon.num_vertices() &&
+               "[C91 §2.1 tex 70]: exit chord y_tag must be a vertex of C");
         SymbolicY chord_y{c.y, c.y_tag};
         assert(symbolic_y_equal(chord_y,
-                                symbolic_y_of(polygon.vertex(c.y_tag))) &&
+                   symbolic_y_of(polygon.vertex(c.y_tag - first_tag))) &&
                "[C91 §2.1 tex 70]: exit chord must be horizontal at its source vertex");
 
         assert((c.left_adj.count == 1) == matches_an_endpoint(c.left_edge, chord_y) &&
