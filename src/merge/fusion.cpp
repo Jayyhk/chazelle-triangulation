@@ -184,38 +184,49 @@ std::size_t fusion_startup(FusionState& state,
                             const Submap& S2, const Polygon& C2,
                             const RayShootingOracle& oracle1,
                             const RayShootingOracle& oracle2) {
-    // [C91 §3.1 tex 179]: sequence starts at a₀ (RIGHT companion of junction)
-    // and ends at a_{m+1} (LEFT companion) — the cw tour of ∂C₁.
+    // [C91 §3.1 tex 179]: sequence starts at a₀ and ends at a_{m+1} — the
+    // junction companions delimiting the cw tour of the walked ∂C.
     assert(state.sequence.size() >= 2 &&
            "[C91 §3.1]: fusion sequence needs at least a₀ and a_{m+1}");
-    const std::size_t junction_edge = C1.num_edges() - 1;
+    const bool at_end = state.junction_at_end;
+    const std::size_t junction_edge = at_end ? C1.num_edges() - 1 : 0;
+    const Side a0_side  = at_end ? RIGHT : LEFT;
+    const Side am1_side = at_end ? LEFT : RIGHT;
     const auto& a0 = state.sequence[0];
-    assert(a0.is_companion && a0.side == RIGHT &&
-           "[C91 §3.1 tex 179]: sequence[0] = a₀ (RIGHT companion at junction)");
+    assert(a0.is_companion && a0.side == a0_side &&
+           "[C91 §3.1 tex 179]: sequence[0] = a₀ (tour-start companion)");
     assert(a0.edge == junction_edge &&
-           "[C91 §3.1 tex 179]: a₀ duplicates C₁ ∩ C₂ = C₁'s endpoint, so a₀.edge "
-           "= junction_edge (the boundary edge incident at C₁'s last vertex)");
+           "[C91 §3.1 tex 179]: a₀ duplicates C₁ ∩ C₂ = the walked curve's "
+           "endpoint, so a₀.edge = the junction-incident boundary edge");
     const auto& a_m1 = state.sequence.back();
-    assert(a_m1.is_companion && a_m1.side == LEFT &&
-           "[C91 §3.1 tex 179]: sequence.back() = a_{m+1} (LEFT companion)");
+    assert(a_m1.is_companion && a_m1.side == am1_side &&
+           "[C91 §3.1 tex 179]: sequence.back() = a_{m+1} (tour-end companion)");
     assert(a_m1.edge == junction_edge &&
-           "[C91 §3.1 tex 179]: a_{m+1} duplicates C₁ ∩ C₂ = C₁'s endpoint, so "
-           "a_{m+1}.edge = junction_edge");
+           "[C91 §3.1 tex 179]: a_{m+1} duplicates C₁ ∩ C₂, so "
+           "a_{m+1}.edge = the junction-incident boundary edge");
 
     // [C91 §3.1]: "Using local shooting, we find the point of ∂C₁ that a₀
-    // sees with respect to C₁."  a₀ is the RIGHT companion at C₁'s
-    // end_vertex (the junction); the adjacent S₁ arc is the FIRST RIGHT
-    // arc (left_right_boundary), NOT the last LEFT arc (end_arc).
+    // sees with respect to C₁."  Junction at the end: a₀ = RIGHT companion
+    // at C₁'s end vertex → its arc is the FIRST RIGHT arc
+    // (left_right_boundary).  Junction at the start: a₀ = LEFT companion
+    // at vertex 0 → its arc is start_arc ([C91 §2.4(iii) tex 138]).
     // Per [C91 §2.1 tex 72] the junction's companion duplicates sit in
     // different S₁ regions whenever the junction-incident chord is live.
-    assert(S1.left_right_boundary() < S1.num_arcs() &&
-           "[C91 §2.4(iii)]: S₁ must have a first RIGHT arc (normal form)");
-    std::size_t a0_region_s1 =
-        S1.arc(S1.left_right_boundary()).region_node;
+    std::size_t a0_arc;
+    if (at_end) {
+        assert(S1.left_right_boundary() < S1.num_arcs() &&
+               "[C91 §2.4(iii)]: S₁ must have a first RIGHT arc (normal form)");
+        a0_arc = S1.left_right_boundary();
+    } else {
+        assert(S1.start_arc != NONE &&
+               "[C91 §2.4(iii) tex 138]: S₁ must have start_arc set (normal form)");
+        a0_arc = S1.start_arc;
+    }
+    std::size_t a0_region_s1 = S1.arc(a0_arc).region_node;
     Side a0_dir = shooting_direction(a0.edge, a0.side, C1);
 
     // a₀ is the junction vertex; use its coords directly.
-    std::size_t junction_v = C1.num_vertices() - 1;
+    std::size_t junction_v = at_end ? C1.num_vertices() - 1 : 0;
     Point a0_point = C1.vertex(junction_v);
 
     RayHit hit_c1 = local_shoot(a0_point, a0_dir, a0_region_s1,
@@ -226,10 +237,15 @@ std::size_t fusion_startup(FusionState& state,
     // a unique symbolic y, so visibility is well-defined either way.
     //
     // [C91 §3.1]: "the normal-form representation of S₂ ... lets us find,
-    // in constant time, in which region of S₂ the point a₀ lies."
-    assert(S2.start_arc != NONE &&
-           "[C91 §2.4(iii) tex 138]: S₂ must have start_arc set (normal form)");
-    std::size_t a0_region_s2 = S2.arc(S2.start_arc).region_node;
+    // in constant time, in which region of S₂ the point a₀ lies."  The
+    // junction is at the OPPOSITE end of the target curve ([C91 §3 tex
+    // 160]): the target's FIRST vertex when the walker's junction is at
+    // its end, and its LAST vertex otherwise.
+    std::size_t target_junction_arc = at_end ? S2.start_arc : S2.end_arc;
+    assert(target_junction_arc != NONE &&
+           "[C91 §2.4(iii) tex 138]: S₂'s C-endpoint arc pointer must be "
+           "set (normal form)");
+    std::size_t a0_region_s2 = S2.arc(target_junction_arc).region_node;
 
     RayHit hit_c2 = local_shoot(a0_point, a0_dir, a0_region_s2,
                                  S2, C2, oracle2);
@@ -279,15 +295,19 @@ std::size_t fusion_startup(FusionState& state,
             if (!symbolic_y_equal(ch.symbolic_y(), a0y))
                 continue;
 
-            // [C91 §2.1 tex 72]: junction has TWO ∂C₂ companions, each
-            // incident on one chord → up to two distinct S₂ chords share
-            // a₀'s symbolic y.  Pick the SPECIFIC chord that a₀c₀ lies on:
-            // one endpoint at a₀'s position on a₀'s ∂C side.  In C₂'s
-            // frame, junction is C₂.vertex(0), so its edge is C₂.edge(0).
-            // (a0.edge is in C₁'s frame — that's why we hardcode 0 here.)
+            // [C91 §2.1 tex 72]: junction has TWO target-frame companions,
+            // each incident on one chord → up to two distinct S₂ chords
+            // share a₀'s symbolic y.  Pick the SPECIFIC chord that a₀c₀
+            // lies on: one endpoint at a₀'s position on a₀'s ∂C side.  In
+            // the target's frame the junction sits at the OPPOSITE end
+            // ([C91 §3 tex 160]) — edge 0 when the walker's junction is at
+            // its end, the target's last edge otherwise.  (a₀'s side label
+            // carries across the junction: the snake's left/right faces
+            // are continuous through an interior vertex of C.)
+            const std::size_t tj_edge = at_end ? 0 : C2.num_edges() - 1;
             const bool incident_on_a0 =
-                (ch.left_edge  == 0 && ch.left_side  == a0.side) ||
-                (ch.right_edge == 0 && ch.right_side == a0.side);
+                (ch.left_edge  == tj_edge && ch.left_side  == a0.side) ||
+                (ch.right_edge == tj_edge && ch.right_side == a0.side);
             if (!incident_on_a0) continue;
 
             // [C91 §3.1 tex 191]: a₀c₀ lies on this S₂ chord.  Elect "the
@@ -423,10 +443,14 @@ std::size_t fusion_startup(FusionState& state,
         state.p_side = a0.side;
         state.p_y = a0.y;
 
-        // CW step from a₀ goes from junction_v to junction_v-1; its
-        // y-direction is the topological "leaving p" vector.
+        // The cw step from a₀ walks the junction-incident edge away from
+        // the junction: to vertex junction_v − 1 (RIGHT half first) when
+        // the junction is at the end, to vertex 1 (LEFT half first) when
+        // it is at the start.  Its y-direction is the topological
+        // "leaving p" vector.
+        std::size_t next_v = at_end ? junction_v - 1 : junction_v + 1;
         SymbolicY y_here = symbolic_y_of(C1.vertex(junction_v));
-        SymbolicY y_next = symbolic_y_of(C1.vertex(junction_v - 1));
+        SymbolicY y_next = symbolic_y_of(C1.vertex(next_v));
         bool a0_leaving_downward = symbolic_y_less(y_next, y_here);
 
         state.s2_region = resolve_s2_region(a0_region_s2, a0_leaving_downward);
@@ -459,12 +483,16 @@ std::size_t fusion_startup(FusionState& state,
         // Skip to c₀: find first fusion vertex at or past c₀'s ∂C₁ position.
         // O(1) via arc_starts (local_shoot's hit arc → sequence block) plus
         // a constant within-bucket scan (degree ≤ 4 ⟹ O(1) endpoints/bucket).
-        std::size_t junction_edge = C1.num_edges() - 1;
-        std::size_t right_half_len = junction_edge + 1;
+        std::size_t n_edges = C1.num_edges();
         auto trav_pos = [&](std::size_t edge, Side side) -> std::size_t {
-            // CW traversal: RIGHT half descends in edge, LEFT half ascends.
-            return (side == RIGHT) ? junction_edge - edge
-                                   : right_half_len + edge;
+            // CW tour from the junction ([C91 §3.1 tex 179]): junction at
+            // the end → RIGHT half (descending edges) then LEFT half
+            // (ascending); junction at the start → LEFT then RIGHT.
+            if (at_end)
+                return (side == RIGHT) ? (n_edges - 1) - edge
+                                       : n_edges + edge;
+            return (side == LEFT) ? edge
+                                  : 2 * n_edges - 1 - edge;
         };
 
         // c₀ shares its raw y with a₀ (horizontal visibility chord), but
@@ -497,13 +525,17 @@ std::size_t fusion_startup(FusionState& state,
         assert(hit_c1.hit_arc_idx != NONE && "[C91 §3.1]: c0 must carry hit context");
         std::size_t c0_arc_idx = hit_c1.hit_arc_idx;
         
+        // Arc-table index → cw tour position (must mirror
+        // build_fusion_sequence's cw_pos for the same orientation).
         std::size_t cw_key = 0;
-        {
+        if (at_end) {
             std::size_t lrb = S1.left_right_boundary();
             std::size_t num_right = S1.num_arcs() - lrb;
             cw_key = (c0_arc_idx >= lrb) ? (c0_arc_idx - lrb) : (num_right + c0_arc_idx);
+        } else {
+            cw_key = c0_arc_idx;
         }
-        
+
         std::size_t lo = state.arc_starts[cw_key];
 
         // The exact match within the arc's block (degree <= 4 → O(1) iteration).
@@ -551,6 +583,10 @@ void fuse_submaps(FusionState& state,
     // A_{m+1} = a_m→a_{m+1}).
     std::size_t k = fusion_startup(state, S1, C1, S2, C2, oracle1, oracle2);
 
+    // [C91 §3.1 tex 179]: tour orientation (see FusionState).
+    const bool at_end = state.junction_at_end;
+    const std::size_t junction_v = at_end ? C1.num_vertices() - 1 : 0;
+
     while (true) {
         // [C91 §3.1 tex 199]: p == a_{m+1} ⟹ terminate (no A_k defined).
         if (k >= state.sequence.size()) return;
@@ -578,7 +614,7 @@ void fuse_submaps(FusionState& state,
         // for companions.
         auto fv_point = [&](const FusionVertex& v) -> Point {
             if (v.is_companion)
-                return C1.vertex(C1.num_vertices() - 1);
+                return C1.vertex(junction_v);
             return Point{edge_x_at_y(C1, v.edge, v.y), v.y.y, NONE};
         };
 
@@ -641,15 +677,19 @@ void fuse_submaps(FusionState& state,
             } else {
                 // [C91 §3.1 tex 220] companion case: j == m+1 only.
                 // (j == 0 is consumed by fusion_startup, which always
-                // returns k ≥ 1; main-loop j starts at k.)  a_{m+1} sits
-                // on the LEFT side of the junction (last LEFT arc =
-                // end_arc).  Per [C91 §2.1 tex 72] a_{m+1} and a₀ can be in
-                // different S₁ regions whenever S₁'s junction chord is live.
+                // returns k ≥ 1; main-loop j starts at k.)  a_{m+1} is the
+                // tour-END companion; its arc is the tour's last arc —
+                // end_arc (last LEFT) when the junction is at the walked
+                // curve's end, the last RIGHT arc (final table entry) when
+                // it is at the start.  Per [C91 §2.1 tex 72] a_{m+1} and
+                // a₀ can be in different S₁ regions whenever S₁'s
+                // junction chord is live.
                 assert(aj_v.is_companion);
-                assert(aj_v.side == LEFT &&
+                assert(aj_v.side == (at_end ? LEFT : RIGHT) &&
                        "[C91 §3.1]: only a_{m+1} reaches the companion branch "
                        "(a₀ is consumed by fusion_startup)");
-                std::size_t s1_arc = S1.end_arc;
+                std::size_t s1_arc = at_end ? S1.end_arc
+                                            : S1.num_arcs() - 1;
                 std::size_t aj_region_s1 = S1.arc(s1_arc).region_node;
                 t_x = local_shoot(aj_point, dir, aj_region_s1,
                                   S1, C1, oracle1).x;
@@ -670,14 +710,18 @@ void fuse_submaps(FusionState& state,
 
         // CW position on ∂C₁ as (trav_pos, within_edge); lex compare
         // gives the cw walk.  LEFT side: within = edge param t; RIGHT
-        // side: 1−t (cw traversal is end→start).
+        // side: 1−t (cw traversal is end→start).  trav_pos mirrors
+        // build_fusion_sequence's tour for the pass's orientation.
         auto cw_position = [&](SymbolicY y, std::size_t edge, Side side)
                            -> std::pair<std::size_t, double> {
-            std::size_t junction_edge = C1.num_edges() - 1;
-            std::size_t right_half_len = junction_edge + 1;
-            std::size_t tp = (side == RIGHT)
-                ? (junction_edge - edge)
-                : (right_half_len + edge);
+            std::size_t n_edges = C1.num_edges();
+            std::size_t tp;
+            if (at_end)
+                tp = (side == RIGHT) ? (n_edges - 1) - edge
+                                     : n_edges + edge;
+            else
+                tp = (side == LEFT) ? edge
+                                    : 2 * n_edges - 1 - edge;
             double t = edge_t_at_y(C1, edge, y);
             return {tp, (side == LEFT) ? t : (1.0 - t)};
         };
@@ -697,22 +741,34 @@ void fuse_submaps(FusionState& state,
         // coincide for a single-arc A_j and differ only across a wrap.
         auto Aj_arcs = [&](std::size_t j) -> std::array<std::size_t, 2> {
             // Clockwise successor of an arc in S₁'s arc-sequence table.
-            // cw ∂C₁ tour (junction at C₁'s end): RIGHT half [lrb, n) in
-            // table order, wrap at C₁'s start vertex, then LEFT half
-            // [0, lrb).  Arcs tile ∂C ([C91 §2.4(iii) tex 138]), so the
-            // successor is the arc starting where `ai` ends.
+            // Arcs tile ∂C ([C91 §2.4(iii) tex 138]), so the successor is
+            // the arc starting where `ai` ends.  Junction at the end:
+            // tour = RIGHT half [lrb, n) in table order, wrap at C₁'s
+            // start vertex to LEFT half [0, lrb).  Junction at the start:
+            // the table order IS the tour (LEFT then RIGHT).
             auto cw_successor = [&](std::size_t ai) -> std::size_t {
                 std::size_t lrb = S1.left_right_boundary();
-                if (ai == S1.num_arcs() - 1) return 0;  // last RIGHT → first LEFT
-                assert(ai + 1 != lrb &&
-                       "[C91 §3.1 tex 179]: no arc follows end_arc before "
-                       "a_{m+1} (companions handled separately)");
+                if (at_end) {
+                    if (ai == S1.num_arcs() - 1) return 0;  // last RIGHT → first LEFT
+                    assert(ai + 1 != lrb &&
+                           "[C91 §3.1 tex 179]: no arc follows end_arc "
+                           "before a_{m+1} (companions handled separately)");
+                    return ai + 1;
+                }
+                (void)lrb;
+                assert(ai + 1 < S1.num_arcs() &&
+                       "[C91 §3.1 tex 179]: no arc follows the last RIGHT "
+                       "arc before a_{m+1} (companions handled separately)");
                 return ai + 1;
             };
+            // Tour-start / tour-end companion sides and their arcs
+            // (see FusionState).
+            const Side a0_side  = at_end ? RIGHT : LEFT;
             auto arc_after = [&](const FusionVertex& v) -> std::size_t {
                 if (v.is_companion)
-                    return (v.side == RIGHT) ? S1.left_right_boundary()
-                                             : NONE;  // a_{m+1}: no arc after
+                    return (v.side == a0_side)
+                        ? (at_end ? S1.left_right_boundary() : 0)
+                        : NONE;  // a_{m+1}: no arc after
                 const Chord& c = S1.chord(v.chord_idx);
                 const Chord::AdjArcs& adj = v.is_left_endpoint
                     ? c.left_adj : c.right_adj;
@@ -728,8 +784,9 @@ void fuse_submaps(FusionState& state,
             };
             auto arc_before = [&](const FusionVertex& v) -> std::size_t {
                 if (v.is_companion)
-                    return (v.side == LEFT) ? S1.end_arc
-                                            : NONE;  // a_0: no arc before
+                    return (v.side != a0_side)
+                        ? (at_end ? S1.end_arc : S1.num_arcs() - 1)
+                        : NONE;  // a_0: no arc before
                 const Chord& c = S1.chord(v.chord_idx);
                 const Chord::AdjArcs& adj = v.is_left_endpoint
                     ? c.left_adj : c.right_adj;
@@ -758,15 +815,17 @@ void fuse_submaps(FusionState& state,
             Side aj_right_side = state.sequence[j].side;
             bool aj_non_wrapping = (aj_left_side == aj_right_side);
 
-            // [C91 §3.1 tex 179]: cw walk on ∂C₁ goes RIGHT side first
-            // (descending edges), then LEFT side (ascending) after wrap.
-            // The only way a_{j-1} and a_j land on different sides is
-            // RIGHT→LEFT (a_{j-1} RIGHT, a_j LEFT): LEFT→RIGHT would
-            // require a_j to come BEFORE a_{j-1} in cw order.
+            // [C91 §3.1 tex 179]: the cw walk visits one ∂C half then the
+            // other, so A_j can straddle sides only across the mid-tour
+            // wrap — RIGHT→LEFT (at C₁'s start vertex) when the junction
+            // is at the end, LEFT→RIGHT (at C₁'s end vertex) when it is
+            // at the start.  The reverse transition would require a_j to
+            // come BEFORE a_{j-1} in cw order.
             assert((aj_non_wrapping ||
-                    (aj_left_side == RIGHT && aj_right_side == LEFT)) &&
-                   "[C91 §3.1 tex 179]: A_j wraps only in the "
-                   "RIGHT→LEFT direction (cw ordering)");
+                    (at_end ? (aj_left_side == RIGHT && aj_right_side == LEFT)
+                            : (aj_left_side == LEFT && aj_right_side == RIGHT))) &&
+                   "[C91 §3.1 tex 179]: A_j wraps only across the "
+                   "mid-tour side transition (cw ordering)");
 
             auto p_cw = cw_position(state.p_y, state.p_edge, state.p_side);
 
@@ -817,15 +876,16 @@ void fuse_submaps(FusionState& state,
                                             state.sequence[j].edge,
                                             state.sequence[j].side};
                         } else if (arc_slot == 0) {
-                            // RIGHT leg: a_{j-1} → arc's last endpoint
-                            // (= last RIGHT edge before the wrap).
+                            // First leg: a_{j-1} → its arc's last
+                            // endpoint (the side reached before the
+                            // mid-tour wrap).
                             aj_sub = Subarc{state.sequence[j-1].edge,
                                             state.sequence[j-1].side,
                                             aj_arc_struct.last_edge,
                                             aj_arc_struct.last_side};
                         } else {
-                            // LEFT leg: arc's first endpoint
-                            // (= first LEFT edge after wrap) → a_j.
+                            // Second leg: its arc's first endpoint
+                            // (just after the wrap) → a_j.
                             aj_sub = Subarc{aj_arc_struct.first_edge,
                                             aj_arc_struct.first_side,
                                             state.sequence[j].edge,
@@ -858,13 +918,26 @@ void fuse_submaps(FusionState& state,
                         if (q_to_hit > q_to_other) continue;
 
                         // "proper orientation": hit.Side matches A_j's
-                        // Side at hit.edge.  Wrapping A_j (only the
-                        // RIGHT→LEFT transition) splits into edge-range zones.
-                        bool hit_side_ok = aj_non_wrapping
-                            ? (hit.side == aj_left_side)
-                            : (hit.side == RIGHT
+                        // Side at hit.edge.  A wrapping A_j splits into
+                        // per-side edge-range zones around the wrap:
+                        //   junction at end (RIGHT→LEFT at C₁'s start
+                        //   vertex): each leg covers edges DOWN to the
+                        //   start, i.e. edge ≤ its delimiter;
+                        //   junction at start (LEFT→RIGHT at C₁'s end
+                        //   vertex): each leg covers edges UP to the end,
+                        //   i.e. edge ≥ its delimiter.
+                        bool hit_side_ok;
+                        if (aj_non_wrapping) {
+                            hit_side_ok = (hit.side == aj_left_side);
+                        } else if (at_end) {
+                            hit_side_ok = (hit.side == RIGHT)
                                 ? hit.edge <= state.sequence[j-1].edge
-                                : hit.edge <= state.sequence[j].edge);
+                                : hit.edge <= state.sequence[j].edge;
+                        } else {
+                            hit_side_ok = (hit.side == LEFT)
+                                ? hit.edge >= state.sequence[j-1].edge
+                                : hit.edge >= state.sequence[j].edge;
+                        }
                         if (!hit_side_ok) continue;
 
                         // "occurs before p along A_j": strict cw compare.
@@ -1013,19 +1086,24 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
                            const Polygon& C) {
     std::size_t n = C.num_vertices();
     assert(n >= 2);
+    const bool at_end = state.junction_at_end;
 
-    // Junction = C₁ ∩ C₂ = last vertex of C₁.
-    std::size_t junction_v = n - 1;
-    std::size_t junction_edge = junction_v - 1;
+    // [C91 §3.1 tex 179]: junction = C₁ ∩ C₂ in the walked curve's frame —
+    // its LAST vertex for pass 1, its FIRST for the symmetric pass.  The
+    // junction's incident edge is the walked curve's last / first edge.
+    std::size_t junction_v    = at_end ? n - 1 : 0;
+    std::size_t junction_edge = at_end ? n - 2 : 0;
 
-    // [C91 §3.1]: a₀ = RIGHT companion at junction (start of cw tour);
-    // a_{m+1} = LEFT companion (end).  Both inherit junction's symbolic y.
+    // [C91 §3.1 tex 179]: a₀ / a_{m+1} = junction companions at the start
+    // / end of the cw ∂C tour.  Junction at the end: tour = RIGHT half
+    // then LEFT half, so a₀ is the RIGHT companion.  Junction at the
+    // start: tour = LEFT half then RIGHT half, a₀ is the LEFT companion.
     SymbolicY junction_y = symbolic_y_of(C.vertex(junction_v));
 
     FusionVertex a_0;
     a_0.y = junction_y;
     a_0.edge = junction_edge;
-    a_0.side = RIGHT;
+    a_0.side = at_end ? RIGHT : LEFT;
     a_0.chord_idx = NONE;
     a_0.is_left_endpoint = false;
     a_0.is_companion = true;
@@ -1033,29 +1111,33 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
     FusionVertex a_m1;
     a_m1.y = junction_y;
     a_m1.edge = junction_edge;
-    a_m1.side = LEFT;
+    a_m1.side = at_end ? LEFT : RIGHT;
     a_m1.chord_idx = NONE;
     a_m1.is_left_endpoint = false;
     a_m1.is_companion = true;
 
-    // [C91 §3.1]: a₁, ..., aₘ = canonical enumeration of S₁'s exit chord
-    // endpoints in cw ∂C₁ order.  [C91 §2.4(iii) tex 138]: arc-sequence is in
-    // ∂C order (LEFT ascending, then RIGHT descending).  cw ∂C₁ from a₀
-    // is RIGHT then LEFT; we counting-sort endpoints by cw-arc position
-    // in O(m).  Each endpoint is associated with one arc via adj_arcs:
-    // vertex endpoint ⟹ the single adj arc; mid-edge endpoint ⟹ the
-    // "starting" adj arc whose start-y (derived from its bounding chord
-    // per [C91 §2.4 tex 133]) matches chord.y.
+    // [C91 §3.1]: a₁, ..., aₘ = canonical enumeration of the walked
+    // submap's exit chord endpoints in cw ∂C order from the junction.
+    // [C91 §2.4(iii) tex 138]: the arc-sequence table is already in ∂C
+    // order (LEFT ascending, then RIGHT descending); we counting-sort
+    // endpoints by cw-arc position in O(m).  Each endpoint is associated
+    // with one arc via adj_arcs: vertex endpoint ⟹ the single adj arc;
+    // mid-edge endpoint ⟹ the "starting" adj arc whose start-y (derived
+    // from its bounding chord per [C91 §2.4 tex 133]) matches chord.y.
 
     std::size_t num_arcs = S.num_arcs();
     std::size_t lrb = S.left_right_boundary();
     std::size_t num_right = num_arcs - lrb;
 
-    // Arc-table index → cw position.  RIGHT arcs [lrb..end) come first,
-    // then LEFT arcs [0..lrb).
+    // Arc-table index → cw tour position.  Junction at the end: RIGHT
+    // arcs [lrb..end) come first, then LEFT arcs [0..lrb).  Junction at
+    // the start: the table order IS the tour ([C91 §2.4(iii) tex 138] —
+    // the canonical traversal begins at the start vertex).
     auto cw_pos = [&](std::size_t arc_idx) -> std::size_t {
-        return (arc_idx >= lrb) ? arc_idx - lrb
-                                : num_right + arc_idx;
+        if (at_end)
+            return (arc_idx >= lrb) ? arc_idx - lrb
+                                    : num_right + arc_idx;
+        return arc_idx;
     };
 
     struct KeyedVertex {
@@ -1135,12 +1217,13 @@ void build_fusion_sequence(FusionState& state, const Submap& S,
 
     // Within each bucket (same arc): O(1) elements (conformal degree ≤ 4).
     // Insertion-sort by y along the arc's traversal direction; O(m) total.
-    std::size_t right_half_len = junction_edge + 1;
+    std::size_t n_edges = C.num_edges();
     auto trav_pos = [&](std::size_t edge, Side side) -> std::size_t {
-        if (side == RIGHT)
-            return junction_edge - edge;
-        else
-            return right_half_len + edge;
+        if (at_end)
+            return (side == RIGHT) ? junction_edge - edge
+                                   : n_edges + edge;
+        return (side == LEFT) ? edge
+                              : 2 * n_edges - 1 - edge;
     };
     auto vertex_before = [&](const FusionVertex& u, const FusionVertex& v) -> bool {
         std::size_t u_pos = trav_pos(u.edge, u.side);
@@ -1361,6 +1444,42 @@ void rebuild_submap(Submap& out_S,
         p.left_side = p.right_side = inside;
         p.is_null_length = true;
         pending.push_back(p);
+    }
+
+    // ── Step 1b: Deduplicate the inventory ──────────────────────
+    //
+    // [C91 §3.1 tex 224]: each visible pair must appear ONCE in S —
+    // Lemma 2.2's tree structure admits no duplicate chords.  The same
+    // chord can legitimately enter the inventory twice:
+    //   - the junction-companion chords are shared between the two
+    //     passes (pass 1's a_{m+1} is the same ∂C point as pass 2's a₀,
+    //     so one pass's startup record can coincide with the other
+    //     pass's case (i) record);
+    //   - a startup chord can coincide with a surviving old chord when
+    //     a₀ / a_{m+1} "are already part of the sequence"
+    //     ([C91 §3.1 tex 179]).
+    // Sort + adjacent-unique on the full chord key: O(M log M), within
+    // the [tex 226-227] sorting budget.
+    {
+        auto key_less = [](const Pending& a, const Pending& b) {
+            if (a.y.y != b.y.y) return a.y.y < b.y.y;
+            if (a.y.tag != b.y.tag) return a.y.tag < b.y.tag;
+            if (a.left_edge_c != b.left_edge_c)
+                return a.left_edge_c < b.left_edge_c;
+            if (a.left_side != b.left_side)
+                return a.left_side < b.left_side;
+            if (a.right_edge_c != b.right_edge_c)
+                return a.right_edge_c < b.right_edge_c;
+            if (a.right_side != b.right_side)
+                return a.right_side < b.right_side;
+            return a.is_null_length < b.is_null_length;
+        };
+        auto key_eq = [&](const Pending& a, const Pending& b) {
+            return !key_less(a, b) && !key_less(b, a);
+        };
+        std::sort(pending.begin(), pending.end(), key_less);
+        pending.erase(std::unique(pending.begin(), pending.end(), key_eq),
+                      pending.end());
     }
 
     // ── Step 2: Sort endpoints along ∂C ────────────────────────

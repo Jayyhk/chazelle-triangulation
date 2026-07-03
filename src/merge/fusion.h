@@ -68,17 +68,22 @@ RayHit local_shoot(Point p, Side direction,
 // in clockwise order, stopping at a₀, ..., a_{m+1} ... determining what
 // p sees while keeping track of the current region of S₂."
 //
-// [C91 §3.1 tex 179] "by symmetry" requires a second pass fusing S₂
-// into S₁.  NOTE (limitation): the current implementation supports only
-// walks whose junction (C₁ ∩ C₂) is the walked curve's LAST vertex —
-// the S₁→S₂ direction.  The symmetric pass walks ∂C₂, whose junction is
-// C₂'s FIRST vertex, and needs the mirrored tour (a₀ = LEFT companion
-// at vertex 0, LEFT half first); build_fusion_sequence / fusion_startup
-// / fuse_submaps do not implement that orientation yet.  This is one of
-// the blockers recorded at merge.cpp::fuse.
+// [C91 §3.1 tex 179] "by symmetry": the second pass fuses S₂ into S₁ by
+// running the same algorithm with the walked curve's junction at its
+// FIRST vertex instead of its LAST.  `junction_at_end` selects the tour:
+//   true  (pass 1, walk C₁): a₀ = RIGHT companion at the last vertex;
+//         cw tour = RIGHT half (descending edges), wrap at the start
+//         vertex, LEFT half (ascending), ends at a_{m+1} = LEFT companion.
+//   false (pass 2, walk C₂): a₀ = LEFT companion at vertex 0; cw tour =
+//         LEFT half (ascending), wrap at the end vertex, RIGHT half
+//         (descending), ends at a_{m+1} = RIGHT companion.
+// Set it before build_fusion_sequence / fuse_submaps.
 struct FusionState {
     std::vector<FusionVertex> sequence;
     std::size_t current_stop = 0;
+
+    // [C91 §3.1 tex 179]: where C₁ ∩ C₂ sits in the WALKED curve's frame.
+    bool junction_at_end = true;
 
     Point p{0.0, 0.0, NONE};
     std::size_t p_edge = NONE;
@@ -147,22 +152,24 @@ std::size_t fusion_startup(FusionState& state,
 // each stop to discover the chords seen.  [C91 §3.1 Lemma 3.1]: each
 // pass runs in O((n₁/γ₁ + n₂/γ₂ + 1)(f(γ₂) + log(n₁+n₂))).
 //
-// LIMITATION: only the S₁→S₂ direction (junction = walked curve's LAST
-// vertex) is implemented; see the FusionState note above.  The
-// [C91 §3.1 tex 179] symmetric pass (S₂→S₁, junction = walked curve's
-// FIRST vertex) is pending — tracked at merge.cpp::fuse.
+// [C91 §3.1 tex 179] "by symmetry": the reverse pass (fuse S₂ into S₁)
+// is this same function with the arguments swapped AND
+// state.junction_at_end = false (the junction is the walked curve's
+// FIRST vertex there):
+//   pass 1: st1.junction_at_end = true;  fuse_submaps(st1, S₁,C₁, S₂,C₂, o1,o2)
+//   pass 2: st2.junction_at_end = false; fuse_submaps(st2, S₂,C₂, S₁,C₁, o2,o1)
 void fuse_submaps(FusionState& state,
                 const Submap& S1, const Polygon& C1,
                 const Submap& S2, const Polygon& C2,
                 const RayShootingOracle& oracle1,
                 const RayShootingOracle& oracle2);
 
-// [C91 §3.1]: Build the fusion vertex sequence for S₁→S₂.
+// [C91 §3.1]: Build the fusion vertex sequence for the walked submap.
 //
-// a₀ and a_{m+1} are the two junction companions; a₁, ..., aₘ are S₁'s
-// canonical vertex enumeration in clockwise ∂C₁ order.  The cw tour from
-// the junction goes RIGHT side first (c_end→c_start, descending edges),
-// then LEFT side (c_start→c_end, ascending edges).
+// a₀ and a_{m+1} are the two junction companions; a₁, ..., aₘ are the
+// walked submap's canonical vertex enumeration in clockwise ∂C order,
+// starting and ending at the junction.  `state.junction_at_end` selects
+// the tour orientation (see FusionState).
 void build_fusion_sequence(FusionState& state, const Submap& S,
                            const Polygon& C);
 

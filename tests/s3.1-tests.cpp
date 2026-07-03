@@ -1309,6 +1309,202 @@ static void test_case_ii_hit_beyond_ab_disqualified() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  19. [C91 §3.1 tex 179] symmetric pass — junction at the FIRST vertex
+// ════════════════════════════════════════════════════════════════
+
+static void test_fusion_sequence_junction_at_start() {
+    // Same submap as test 1, but walked as the SECOND pass: the junction
+    // is the walked curve's FIRST vertex, so the cw tour starts at the
+    // LEFT companion at edge 0, walks the LEFT half first (ascending),
+    // then the RIGHT half, ending at the RIGHT companion.
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+
+    FusionState state;
+    state.junction_at_end = false;
+    build_fusion_sequence(state, S1, C1);
+    const auto& seq = state.sequence;
+
+    assert(seq.size() == 4);
+    assert(seq.front().is_companion && seq.front().side == LEFT &&
+           "[C91 §3.1 tex 179]: junction-at-start tour begins at the "
+           "LEFT companion");
+    assert(seq.front().edge == 0);
+    assert(seq.back().is_companion && seq.back().side == RIGHT &&
+           "[C91 §3.1 tex 179]: junction-at-start tour ends at the "
+           "RIGHT companion");
+    assert(seq.back().edge == 0);
+    // Both companions carry the junction (= vertex 0) symbolic y.
+    SymbolicY jy = symbolic_y_of(C1.vertex(0));
+    assert(symbolic_y_equal(seq.front().y, jy));
+    assert(symbolic_y_equal(seq.back().y, jy));
+
+    // LEFT half comes first: the chord's LEFT endpoint (edge 1, LEFT,
+    // tour pos 1) precedes its RIGHT endpoint (edge 1, RIGHT, pos 6) —
+    // the mirror image of the pass-1 ordering (test 3).
+    assert(seq[1].side == LEFT);
+    assert(seq[2].side == RIGHT);
+
+    std::printf("  [PASS] fusion_sequence_junction_at_start\n");
+}
+
+static void test_startup_case1_junction_at_start() {
+    // Walked curve W's FIRST vertex (4,3,4) is the junction; the target
+    // T's LAST vertex is the same point ([C91 §3 tex 160]).
+    Polygon W({{4,3,4}, {5,5,5}, {6,1,6}});
+    auto T = make_C1();                 // {(0,0,0), ..., (4,3,4)}
+    auto S_T = make_S1(T);
+
+    Submap S_W;
+    S_W.add_node();
+    Arc a{};
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0; a.edge_count = 2;
+    std::size_t ai0 = S_W.add_arc(a);
+    a.first_edge = 1; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    S_W.add_arc(a);
+    S_W.start_arc = ai0; S_W.end_arc = ai0;
+    S_W.start_vertex = 0; S_W.end_vertex = 2;
+
+    // a₀ = LEFT companion at W's vertex 0 = (4,3).  W's edge 0 ascends
+    // (3→5), so a₀ shoots RIGHT (+x).  Walker hit far (x=20, d=16);
+    // target hit near (x=5, d=1) → c₀ ∈ ∂C_target → Case 1.
+    StartupOracle oracleW(&W, 20.0);
+    StartupOracle oracleT(&T, 5.0);
+
+    FusionState state;
+    state.junction_at_end = false;
+    build_fusion_sequence(state, S_W, W);
+    std::size_t start = fusion_startup(state, S_W, W, S_T, T,
+                                        oracleW, oracleT);
+
+    assert(start == 1);
+    // [C91 §3.1 tex 185]: a₀'s target region comes from the target's
+    // C-endpoint pointers — the junction is the TARGET's LAST vertex,
+    // so end_arc's region (make_S1: ai1 → region 1).
+    assert(state.s2_region == S_T.arc(S_T.end_arc).region_node);
+    assert(state.s2_region == 1);
+    assert(!state.chords.empty());
+    // Startup chord flags are walker-frame; the a₀ endpoint is on W.
+    const auto& dc = state.chords[0];
+    assert(dc.left_on_walker || dc.right_on_walker);
+
+    std::printf("  [PASS] startup_case1_junction_at_start\n");
+}
+
+static void test_fuse_main_loop_smoke_junction_at_start() {
+    // Full main loop in the mirrored orientation with the honest
+    // ForwardOracle.  W (walked) has the junction (0,0,10) FIRST; the
+    // target T ends at it.  Indices are consecutive per [C91 §2.4 tex 133]
+    // (contiguous subchains of P).
+    Polygon T({{-2,5,8}, {-1,1,9}, {0,0,10}});
+    Polygon W({{0,0,10}, {1,2,11}, {2,4,12}, {3,1,13}, {4,3,14}});
+
+    // make_S1-shaped 2-region submap over W (chord at W's vertex 2,
+    // whose SoS index is 12).
+    Submap S_W;
+    S_W.add_node();
+    S_W.add_node();
+    Arc a{};
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0; a.edge_count = 2;
+    std::size_t ai0 = S_W.add_arc(a);
+    a.first_edge = 1; a.last_edge = 3;
+    a.region_node = 1; a.edge_count = 3;
+    std::size_t ai1 = S_W.add_arc(a);
+    a = {};
+    a.first_edge = 3; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = 1; a.edge_count = 3;
+    std::size_t ai2 = S_W.add_arc(a);
+    a.first_edge = 1; a.last_edge = 0;
+    a.region_node = 0; a.edge_count = 2;
+    std::size_t ai3 = S_W.add_arc(a);
+    Chord c{};
+    c.region[0] = 0; c.region[1] = 1;
+    c.left_edge = 1; c.right_edge = 1;
+    c.left_side = LEFT; c.right_side = RIGHT;
+    c.y = W.vertex(2).y; c.y_tag = W.vertex(2).index;
+    c.left_adj = {{ai0, ai1}, 2};
+    c.right_adj = {{ai2, ai3}, 2};
+    S_W.add_chord(c);
+    S_W.start_arc = ai0; S_W.end_arc = ai1;
+    S_W.start_vertex = 0; S_W.end_vertex = 4;
+
+    Submap S_T;
+    S_T.add_node();
+    a = {};
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = 0; a.edge_count = 2;
+    std::size_t t0 = S_T.add_arc(a);
+    a.first_edge = 1; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    S_T.add_arc(a);
+    S_T.start_arc = t0; S_T.end_arc = t0;
+    S_T.start_vertex = 0; S_T.end_vertex = 2;
+
+    ForwardOracle oracleW(&W, 5.0);
+    ForwardOracle oracleT(&T, 1.0);
+
+    FusionState state;
+    state.junction_at_end = false;
+    fuse_submaps(state, S_W, W, S_T, T, oracleW, oracleT);
+
+    assert(!state.chords.empty());
+    std::printf("  [PASS] fuse_main_loop_smoke_junction_at_start "
+                "(chords=%zu)\n", state.chords.size());
+}
+
+// ════════════════════════════════════════════════════════════════
+//  20. rebuild_submap — [C91 §3.1 tex 224] inventory deduplication
+// ════════════════════════════════════════════════════════════════
+
+static void test_rebuild_dedup() {
+    // The junction-companion chords are shared between the two passes
+    // ([C91 §3.1 tex 179]: pass 1's a_{m+1} is pass 2's a₀ as a point of
+    // ∂C), so both passes can record the SAME chord.  Lemma 2.2's tree
+    // structure admits each visible pair once — rebuild must dedup.
+    // Same fixture as test_rebuild_discovered_chord_frames, but the
+    // chord is fed through BOTH states.
+    Polygon C1({{0,0,0}, {1,2,1}, {2,1,2}});
+    Polygon C2({{2,1,2}, {3,3,3}});
+    Polygon C ({{0,0,0}, {1,2,1}, {2,1,2}, {3,3,3}});
+    Submap S1 = make_chordless(C1);
+    Submap S2 = make_chordless(C2);
+
+    FusionState st1, st2;
+    st2.junction_at_end = false;
+    FusionState::DiscoveredChord dc;
+    dc.y = SymbolicY{2.0, 1};
+    dc.left_edge = 0;  dc.left_side = LEFT;   // on C₁ (C-edge 0)
+    dc.right_edge = 0; dc.right_side = LEFT;  // on C₂ (C-edge 2)
+    dc.left_on_walker = true;                 // pass 1: walker = C₁
+    dc.right_on_walker = false;
+    st1.chords.push_back(dc);
+    dc.left_on_walker = false;                // pass 2: walker = C₂
+    dc.right_on_walker = true;
+    st2.chords.push_back(dc);
+
+    Submap out;
+    rebuild_submap(out, C, S1, C1, S2, C2, st1, st2);
+
+    // Identical output to the single-record run: the duplicate is
+    // dropped; only the discovered chord + the junction's synthesized
+    // null-length chord remain.
+    assert(out.num_chords() == 2 &&
+           "[C91 §3.1 tex 224]: duplicate chords must be deduplicated");
+    assert(out.num_nodes() == 3);
+    out.assert_tree_property();
+    out.check_invariants(C);
+
+    std::printf("  [PASS] rebuild_dedup\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -1336,6 +1532,10 @@ int main() {
     test_rebuild_discovered_chord_frames();
     test_rebuild_junction_null_in_input_fires();
     test_case_ii_hit_beyond_ab_disqualified();
+    test_fusion_sequence_junction_at_start();
+    test_startup_case1_junction_at_start();
+    test_fuse_main_loop_smoke_junction_at_start();
+    test_rebuild_dedup();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }
