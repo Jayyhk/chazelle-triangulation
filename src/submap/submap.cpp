@@ -190,6 +190,17 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
                !arc_sequence_[ai].dead && !arc_sequence_[aj].dead &&
                "[C91 §2.4(ii)]: adj_arc must be valid + live");
 
+        // [C91 §2.2 tex 94 + §2.1 tex 72]: the two arcs glued at an
+        // endpoint are always distinct.  ai == aj would require this
+        // chord's two endpoints to be the ONLY subdivision points of ∂C
+        // (both regions leaf-with-single-arc), which cannot happen in a
+        // submap of V(C): C's endpoints give rise to ∂C vertices (tex 72
+        // case 3) that are vertices of C, and removals never glue ∂C at
+        // vertices of C (tex 94) — so the arc boundaries at C's endpoints
+        // persist under every chord removal.
+        assert(ai != aj &&
+               "[C91 §2.2 tex 94]: glued arc pair must be distinct");
+
         auto& a_keep = arc_sequence_[ai];
         auto& a_dead = arc_sequence_[aj];
 
@@ -217,15 +228,22 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         if (start_arc == aj) start_arc = ai;
         if (end_arc == aj)   end_arc = ai;
 
-        // Update adj arcs of neighboring chords to point to the
-        // surviving arc.  O(degree) = O(1) for conformal submaps.
+        // Update adj arcs of chords incident on either region to point to
+        // the surviving arc.  O(degree) = O(1) for conformal submaps.
+        //
+        // The removed chord itself must NOT be skipped here: when a leaf
+        // region is bounded by this chord and a single arc (the degree-1
+        // node targeted by [C91 §2.3 tex 121]'s contraction), that arc is
+        // adjacent to the chord at BOTH endpoints.  If it is killed by
+        // the first glue, the second endpoint's pair must be rewritten to
+        // the survivor so that "glueing back ∂C at those points"
+        // ([C91 §2.2 tex 94]) chains all three arcs into one.
         auto replace_arc = [&](Chord::AdjArcs& adj) {
             for (std::size_t k = 0; k < adj.count; ++k)
                 if (adj.arcs[k] == aj) adj.arcs[k] = ai;
         };
         for (std::size_t ri : {r0, r1}) {
             for (std::size_t ci : nodes_[ri].incident_chords) {
-                if (ci == chord_idx) continue;
                 auto& other = chords_[ci];
                 if (other.dead) continue;
                 replace_arc(other.left_adj);
@@ -265,27 +283,15 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     }
 
     // Reassign r1's arcs to r0 by walking r1's incident chords' adj arcs
-    // ([C91 §2.4(ii) tex 137]).  Two cases:
-    //   (a) Other chords' adj arcs: replace_arc kept them pointing to
-    //       live arcs, so all are guaranteed live.
-    //   (b) The removed chord's own adj arcs: do_merge may have killed
-    //       one per non-vertex endpoint, so check for dead.
+    // ([C91 §2.4(ii) tex 137]).  All entries are live: do_merge's
+    // replace_arc rewrote every reference to a killed arc — including
+    // the removed chord's own slots — to the surviving arc.
     auto reassign_live = [&](const Chord::AdjArcs& adj) {
         for (std::size_t k = 0; k < adj.count; ++k) {
             std::size_t ai = adj.arcs[k];
             assert(ai != NONE && ai < arc_sequence_.size() &&
                    !arc_sequence_[ai].dead &&
-                   "[C91 §2.4(ii)]: other chords' adj arcs must be live");
-            if (arc_sequence_[ai].region_node == r1)
-                arc_sequence_[ai].region_node = r0;
-        }
-    };
-    auto reassign_maybe_dead = [&](const Chord::AdjArcs& adj) {
-        for (std::size_t k = 0; k < adj.count; ++k) {
-            std::size_t ai = adj.arcs[k];
-            assert(ai != NONE && ai < arc_sequence_.size() &&
-                   "[C91 §2.4(ii)]: adj_arc index must be valid");
-            if (arc_sequence_[ai].dead) continue;
+                   "[C91 §2.4(ii)]: adj arcs must be live after glueing");
             if (arc_sequence_[ai].region_node == r1)
                 arc_sequence_[ai].region_node = r0;
         }
@@ -297,8 +303,8 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         reassign_live(ch.left_adj);
         reassign_live(ch.right_adj);
     }
-    reassign_maybe_dead(c.left_adj);
-    reassign_maybe_dead(c.right_adj);
+    reassign_live(c.left_adj);
+    reassign_live(c.right_adj);
 
     // Move r1's other incident chords to r0, and rewrite their region
     // pointers from r1 → r0.
@@ -1186,31 +1192,70 @@ std::size_t Submap::simulated_contraction_weight(
     bool left_is_vertex  = endpoint_is_vertex(c.left_edge, c.y, c.y_tag);
     bool right_is_vertex = endpoint_is_vertex(c.right_edge, c.y, c.y_tag);
 
-    auto try_merge_pair = [&](std::size_t ai, std::size_t aj) {
-        assert(ai < arc_sequence_.size() && !arc_sequence_[ai].dead &&
-               aj < arc_sequence_.size() && !arc_sequence_[aj].dead &&
+    auto try_merge_chain = [&](std::size_t a_first, std::size_t a_last) {
+        assert(a_first < arc_sequence_.size() && !arc_sequence_[a_first].dead &&
+               a_last < arc_sequence_.size() && !arc_sequence_[a_last].dead &&
                "[C91 §2.4(ii)]: adj_arcs must be valid + live");
-        // [C91 §2.2 tex 94]: adj arcs at chord endpoint share the junction edge.
-        assert(arc_sequence_[ai].last_edge == arc_sequence_[aj].first_edge &&
-               "[C91 §2.2 tex 94]: adj arcs share junction edge");
         // [C91 §2.2 tex 106]: simulate the merge and count over the
         // post-merge underlying P-edge range — the additive `a+b−shared`
         // would over-count when either input wraps ([C91 §2.4 tex 142]).
         Arc merged_arc;
-        merged_arc.first_edge = arc_sequence_[ai].first_edge;
-        merged_arc.first_side = arc_sequence_[ai].first_side;
-        merged_arc.last_edge  = arc_sequence_[aj].last_edge;
-        merged_arc.last_side  = arc_sequence_[aj].last_side;
+        merged_arc.first_edge = arc_sequence_[a_first].first_edge;
+        merged_arc.first_side = arc_sequence_[a_first].first_side;
+        merged_arc.last_edge  = arc_sequence_[a_last].last_edge;
+        merged_arc.last_side  = arc_sequence_[a_last].last_side;
         auto [lo, hi] = merged_arc.underlying_edge_range(start_vertex, end_vertex);
         std::size_t merged = polygon.count_nonnull_edges(lo, hi);
         if (merged > max_count)
             max_count = merged;
     };
+    auto assert_pair = [&](const Chord::AdjArcs& adj) {
+        // [C91 §2.2 tex 94]: non-vertex endpoint ⟹ exactly 2 adj arcs,
+        // sharing the junction edge (arcs[0] ends at the chord, arcs[1]
+        // starts — ∂C traversal order).
+        assert(adj.count == 2 &&
+               "[C91 §2.2 tex 94]: non-vertex endpoint needs 2 adj arcs");
+        assert(arc_sequence_[adj.arcs[0]].last_edge ==
+                   arc_sequence_[adj.arcs[1]].first_edge &&
+               "[C91 §2.2 tex 94]: adj arcs share junction edge");
+    };
 
-    if (!left_is_vertex && c.left_adj.count == 2)
-        try_merge_pair(c.left_adj.arcs[0], c.left_adj.arcs[1]);
-    if (!right_is_vertex && c.right_adj.count == 2)
-        try_merge_pair(c.right_adj.arcs[0], c.right_adj.arcs[1]);
+    if (!left_is_vertex)  assert_pair(c.left_adj);
+    if (!right_is_vertex) assert_pair(c.right_adj);
+
+    if (!left_is_vertex && !right_is_vertex) {
+        // [C91 §2.3 tex 121 + §2.2 tex 94]: if one region is a leaf bounded
+        // by this chord and a single arc, that arc is adjacent at BOTH
+        // endpoints; gluing at both chains three arcs into one, and the
+        // contracted weight must reflect the full chain — pairwise merges
+        // would under-count it.
+        bool shared_lr = (c.left_adj.arcs[1] == c.right_adj.arcs[0]);
+        bool shared_rl = (c.right_adj.arcs[1] == c.left_adj.arcs[0]);
+        // An arc has one end per endpoint: it cannot END (slot 0) or
+        // START (slot 1) at both endpoints of the chord.
+        assert(c.left_adj.arcs[0] != c.right_adj.arcs[0] &&
+               c.left_adj.arcs[1] != c.right_adj.arcs[1] &&
+               "[C91 §2.2 tex 94]: an arc cannot occupy the same slot at "
+               "both chord endpoints");
+        // Both sharings at once ⟺ ∂C has only these two subdivision
+        // points — impossible; see the matching assert in remove_chord.
+        assert(!(shared_lr && shared_rl) &&
+               "[C91 §2.2 tex 94]: chord endpoints cannot be the only "
+               "subdivision points of ∂C");
+        if (shared_lr) {
+            try_merge_chain(c.left_adj.arcs[0], c.right_adj.arcs[1]);
+            return max_count;
+        }
+        if (shared_rl) {
+            try_merge_chain(c.right_adj.arcs[0], c.left_adj.arcs[1]);
+            return max_count;
+        }
+    }
+
+    if (!left_is_vertex)
+        try_merge_chain(c.left_adj.arcs[0], c.left_adj.arcs[1]);
+    if (!right_is_vertex)
+        try_merge_chain(c.right_adj.arcs[0], c.right_adj.arcs[1]);
 
     return max_count;
 }

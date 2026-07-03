@@ -84,6 +84,21 @@ inline double edge_t_at_y(const Polygon& C, std::size_t edge_idx,
     const Point& ve = C.vertex(e.end_idx);
     if (symbolic_y_equal(target_y, symbolic_y_of(vs))) return 0.0;
     if (symbolic_y_equal(target_y, symbolic_y_of(ve))) return 1.0;
+    // [C91 §2 tex 47]: with no tag-match, the perturbed horizontal line
+    // crosses the OPEN edge, i.e. target_y lies symbolically strictly
+    // between the endpoint ys.  (A raw-y tie with an endpoint is fine —
+    // the crossing is infinitesimally beside that vertex and the linear
+    // interpolation below returns the exact limit point.)
+    assert(((symbolic_y_less(symbolic_y_of(vs), target_y) &&
+             symbolic_y_less(target_y, symbolic_y_of(ve))) ||
+            (symbolic_y_less(symbolic_y_of(ve), target_y) &&
+             symbolic_y_less(target_y, symbolic_y_of(vs)))) &&
+           "[C91 §2 tex 47]: query must lie strictly inside the edge's "
+           "perturbed y-range (no crossing otherwise)");
+    // Raw-horizontal edge: its endpoints are consecutive vertices of C
+    // carrying consecutive SoS indices, so no third tag can fall
+    // symbolically strictly between them — unreachable given the assert
+    // above.
     assert(vs.y != ve.y &&
            "[C91 §2 tex 47]: horizontal edge requires SoS tag-match at "
            "one endpoint; strictly-between target is unreachable");

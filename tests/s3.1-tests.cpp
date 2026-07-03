@@ -842,6 +842,12 @@ static void test_startup_mid_edge_tie_break() {
 // the shoot direction.  hit.side is derived geometrically.  Unlike
 // StartupOracle (absolute hit_x), this works for any p — the main loop
 // shifts p across iterations.
+//
+// [C91 §3.0 tex 166]: the oracle reports the true location of the hit
+// on the target arc, so the reported edge must actually span the ray's
+// (perturbed) y — a horizontal ray cannot hit an edge whose y-range
+// excludes it.  hit.x is still synthetic (forward_dist), which is fine
+// for the smoke tests' distance comparisons.
 struct ForwardOracle : RayShootingOracle {
     const Polygon* C;
     double forward_dist;
@@ -849,15 +855,32 @@ struct ForwardOracle : RayShootingOracle {
     RayHit shoot(Point p, Side dir,
                  std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
+        assert(target.first_side == target.last_side &&
+               "ForwardOracle: wrapped subarc targets not modeled");
         RayHit h;
-        h.hit = true;
-        h.y = p.y;
-        h.x = (dir == LEFT) ? (p.x - forward_dist) : (p.x + forward_dist);
-        h.edge = target.first_edge;
-        const auto& e = C->edge(target.first_edge);
-        bool asc = symbolic_y_less(symbolic_y_of(C->vertex(e.start_idx)),
-                                    symbolic_y_of(C->vertex(e.end_idx)));
-        h.side = asc ? (dir == LEFT ? RIGHT : LEFT) : dir;
+        // Walk the subarc's edges in traversal order; hit the first one
+        // whose symbolic y-range contains the ray's y.
+        SymbolicY py{p.y, p.index};
+        std::size_t e = target.first_edge;
+        for (;;) {
+            const auto& ed = C->edge(e);
+            SymbolicY y0 = symbolic_y_of(C->vertex(ed.start_idx));
+            SymbolicY y1 = symbolic_y_of(C->vertex(ed.end_idx));
+            SymbolicY lo = symbolic_y_less(y0, y1) ? y0 : y1;
+            SymbolicY hi = symbolic_y_less(y0, y1) ? y1 : y0;
+            if (symbolic_y_leq(lo, py) && symbolic_y_leq(py, hi)) {
+                h.hit = true;
+                h.y = p.y;
+                h.x = (dir == LEFT) ? (p.x - forward_dist)
+                                    : (p.x + forward_dist);
+                h.edge = e;
+                h.side = target.first_side;
+                return h;
+            }
+            if (e == target.last_edge) break;
+            e = (target.last_edge > target.first_edge) ? e + 1 : e - 1;
+        }
+        h.hit = false;
         return h;
     }
 };

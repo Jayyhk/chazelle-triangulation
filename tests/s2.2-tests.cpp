@@ -308,6 +308,10 @@ static void test_remove_chord_4_adj_arcs() {
 
 static void test_remove_chord_no_merge_at_vertex() {
     // Chord endpoint IS a polygon vertex → arcs should NOT merge.
+    // [C91 §2.2 tex 94 + §2.4(ii)]: vertex endpoints carry ONE adj arc
+    // (the arc ending at the endpoint, in ∂C traversal order) — the
+    // convention enforced by check_invariants(polygon) and produced by
+    // fusion's rebuild_submap.
     Submap s;
     s.add_node(); // r0
     s.add_node(); // r1
@@ -324,17 +328,24 @@ static void test_remove_chord_no_merge_at_vertex() {
     std::size_t ai2 = s.add_arc(a);
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 1;
-    std::size_t ai3 = s.add_arc(a);
+    s.add_arc(a);
 
     Chord c;
     c.region[0] = 0; c.region[1] = 1;
-    c.left_adj = {{ai0, ai1}, 2}; c.right_adj = {{ai3, ai2}, 2};
+    // Vertex endpoints: 1 adj arc per side, the before-arc.
+    c.left_adj = {{ai0}, 1}; c.right_adj = {{ai2}, 1};
     // Chord at y=1.0, tag=1 — matches polygon vertex 1 at (1,1,1).
     c.left_edge = 0; c.right_edge = 0;
     c.y = 1.0; c.y_tag = 1;
     s.add_chord(c);
 
+    s.start_arc = ai0; s.end_arc = ai1;
+    s.start_vertex = 0; s.end_vertex = 2;
+
     auto poly = test_polygon();
+    // Pre-removal: full normal-form validation (endpoint↔count rule).
+    s.check_invariants(poly);
+
     s.remove_chord(0, poly);
 
     // No arcs should have been killed (vertex endpoint → no merge).
@@ -345,6 +356,11 @@ static void test_remove_chord_no_merge_at_vertex() {
         if (s.arc(i).dead) continue;
         assert(s.arc(i).edge_count == 1);
     }
+
+    // compact()'s region-forwarding must repoint ai1 (orphaned in the
+    // dead region — it was not adjacent to any surviving chord).
+    s.compact();
+    s.check_invariants(poly);
 
     std::printf("  [PASS] remove_chord_no_merge_at_vertex\n");
 }
@@ -492,6 +508,182 @@ static void test_remove_chord_3_adj_arcs() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  8e. remove_chord — leaf region with a single arc adjacent at BOTH
+//      (non-vertex) endpoints ([C91 §2.2 tex 94] + [C91 §2.3 tex 121])
+// ════════════════════════════════════════════════════════════════
+
+static void test_remove_chord_shared_arc_left() {
+    // [C91 §2.3 tex 121]: granularity condition (ii) contracts edges
+    // incident on degree-<3 nodes; a degree-1 leaf region bounded by one
+    // chord and ONE arc is the canonical target.  With both chord
+    // endpoints mid-edge (non-vertex), [C91 §2.2 tex 94] glues ∂C at
+    // BOTH points, chaining three arcs into one.
+    //
+    // ∂C traversal: X (r0, ends at chord) → A (r1, spans between the
+    // chord's endpoints) → Y (r0, starts at chord).
+    Submap s;
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
+
+    Arc a;
+    a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 2;
+    std::size_t X = s.add_arc(a);
+    a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r1; a.edge_count = 3;
+    std::size_t A = s.add_arc(a);
+    a = {}; a.first_edge = 3; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 1;
+    std::size_t Y = s.add_arc(a);
+    a = {}; a.first_edge = 3; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = 4;
+    s.add_arc(a);
+
+    Chord c;
+    c.region[0] = r0; c.region[1] = r1;
+    c.left_edge = 1;  c.left_side = LEFT;
+    c.right_edge = 3; c.right_side = LEFT;
+    c.y = 1.5; c.y_tag = 99;          // matches no vertex → both non-vertex
+    c.left_adj  = {{X, A}, 2};        // X ends at chord, A starts
+    c.right_adj = {{A, Y}, 2};        // A ends at chord, Y starts
+    s.add_chord(c);
+
+    s.start_arc = X; s.end_arc = Y;
+    s.start_vertex = 0; s.end_vertex = 4;
+
+    auto poly = test_polygon();
+
+    // [C91 §2.3 tex 121]: contraction weight must reflect the full
+    // X+A+Y chain (4 nonnull edges), not a pairwise merge.
+    assert(s.simulated_contraction_weight(0, poly) == 4);
+
+    s.remove_chord(0, poly);
+    s.assert_tree_property();
+    assert(s.num_live_arcs() == 2 &&
+           "shared-arc removal: X+A+Y chain → 1 LEFT arc + 1 RIGHT arc");
+    bool found_chain = false;
+    for (std::size_t i = 0; i < s.num_arcs(); ++i) {
+        if (s.arc(i).dead) continue;
+        if (s.arc(i).first_side == LEFT) {
+            assert(s.arc(i).first_edge == 0 && s.arc(i).last_edge == 3 &&
+                   s.arc(i).edge_count == 4 &&
+                   "chained arc must span the full glued range");
+            found_chain = true;
+        }
+    }
+    assert(found_chain);
+
+    s.compact();
+    s.check_invariants(poly);
+
+    std::printf("  [PASS] remove_chord_shared_arc_left\n");
+}
+
+static void test_remove_chord_shared_arc_right() {
+    // Mirror orientation: the leaf arc A lies on the RIGHT side, so ∂C
+    // traversal meets the chord's endpoints in the opposite order and A
+    // is killed by the SECOND glue (as arcs[1]) instead of the first.
+    Submap s;
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
+
+    Arc a;
+    a = {}; a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 4;
+    std::size_t L = s.add_arc(a);
+    a = {}; a.first_edge = 3; a.last_edge = 3; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = 1;
+    std::size_t V = s.add_arc(a);
+    a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r1; a.edge_count = 3;
+    std::size_t A = s.add_arc(a);
+    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = 2;
+    std::size_t W = s.add_arc(a);
+
+    Chord c;
+    c.region[0] = r0; c.region[1] = r1;
+    c.left_edge = 3;  c.left_side = RIGHT;
+    c.right_edge = 1; c.right_side = RIGHT;
+    c.y = 1.5; c.y_tag = 99;
+    c.left_adj  = {{V, A}, 2};        // V ends at chord, A starts
+    c.right_adj = {{A, W}, 2};        // A ends at chord, W starts
+    s.add_chord(c);
+
+    s.start_arc = L; s.end_arc = L;
+    s.start_vertex = 0; s.end_vertex = 4;
+
+    auto poly = test_polygon();
+    assert(s.simulated_contraction_weight(0, poly) == 4);
+
+    s.remove_chord(0, poly);
+    s.assert_tree_property();
+    assert(s.num_live_arcs() == 2);
+    for (std::size_t i = 0; i < s.num_arcs(); ++i) {
+        if (s.arc(i).dead) continue;
+        if (s.arc(i).first_side == RIGHT) {
+            assert(s.arc(i).first_edge == 3 && s.arc(i).last_edge == 0 &&
+                   s.arc(i).edge_count == 4 &&
+                   "chained RIGHT arc must span the full glued range");
+        }
+    }
+
+    s.compact();
+    s.check_invariants(poly);
+
+    std::printf("  [PASS] remove_chord_shared_arc_right\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  8f. Death: removing a chord whose endpoints are ∂C's ONLY
+//      subdivision points ([C91 §2.2 tex 94] impossibility)
+// ════════════════════════════════════════════════════════════════
+
+static void test_remove_chord_fully_wrapped_fires() {
+    // Both regions are single-arc leaves (each arc wraps around one C
+    // endpoint).  Gluing at both chord endpoints would close ∂C into an
+    // unbroken loop with no arc boundary at all.  This state is
+    // unreachable from V(C) by removals — C's endpoints are vertices of
+    // C, so removals never glue ∂C there ([C91 §2.2 tex 94]) and the arc
+    // boundaries at C's endpoints persist.  remove_chord asserts.
+    assert(assert_fires([]{
+        auto poly = test_polygon();
+        Submap s;
+        std::size_t r0 = s.add_node();
+        std::size_t r1 = s.add_node();
+
+        // A: LEFT edge 1 → wraps C's end vertex → RIGHT edge 2 (r1).
+        Arc a;
+        a = {}; a.first_edge = 1; a.last_edge = 2;
+        a.first_side = LEFT; a.last_side = RIGHT;
+        a.region_node = r1;
+        a.edge_count = poly.count_nonnull_edges(1, 3);
+        std::size_t A = s.add_arc(a);
+        // B: RIGHT edge 2 → wraps C's start vertex → LEFT edge 1 (r0).
+        a = {}; a.first_edge = 2; a.last_edge = 1;
+        a.first_side = RIGHT; a.last_side = LEFT;
+        a.region_node = r0;
+        a.edge_count = poly.count_nonnull_edges(0, 2);
+        std::size_t B = s.add_arc(a);
+
+        Chord c;
+        c.region[0] = r0; c.region[1] = r1;
+        c.left_edge = 1;  c.left_side = LEFT;
+        c.right_edge = 2; c.right_side = RIGHT;
+        c.y = 1.5; c.y_tag = 99;
+        c.left_adj  = {{B, A}, 2};    // B ends at chord, A starts
+        c.right_adj = {{A, B}, 2};    // A ends at chord, B starts
+        s.add_chord(c);
+
+        s.start_arc = A; s.end_arc = A;
+        s.start_vertex = 0; s.end_vertex = 4;
+
+        s.remove_chord(0, poly);      // ← must fire: ai == aj
+    }));
+    std::printf("  [PASS] remove_chord_fully_wrapped_fires\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 //  9. Null-length chord
 // ════════════════════════════════════════════════════════════════
 
@@ -516,7 +708,7 @@ static void test_null_length_chord() {
     // LEFT arc after the null-length chord.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 1;
-    std::size_t ai2 = s.add_arc(a);
+    [[maybe_unused]] std::size_t ai2 = s.add_arc(a);
 
     // RIGHT arc.
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
@@ -787,6 +979,9 @@ int main() {
     test_remove_chord_no_merge_at_vertex();
     test_remove_chord_2_adj_arcs();
     test_remove_chord_3_adj_arcs();
+    test_remove_chord_shared_arc_left();
+    test_remove_chord_shared_arc_right();
+    test_remove_chord_fully_wrapped_fires();
     test_null_length_chord();
     test_null_length_chord_right_side();
     test_empty_submap_fires();

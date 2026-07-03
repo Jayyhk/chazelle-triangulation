@@ -279,11 +279,16 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
         c.y_tag = v;
         c.is_null_length = false;
 
-        // Adjacent arcs: at LEFT endpoint (edge v-1).
-        // Vertex v is a polygon vertex so count=1 per side at each endpoint.
-        // LEFT endpoint: region i's LEFT arc ends here.
+        // Adjacent arcs.  NOTE: normal-form submaps record ONE adj arc at
+        // a polygon-vertex endpoint (check_invariants(polygon)'s
+        // endpoint↔count rule; [C91 §2.2 tex 94]).  This synthetic fixture
+        // deliberately records both the before- and after-arc so that
+        // region_weight's chord-adjacency walk reaches every arc — the
+        // fixture has no chords at C's endpoints, so under the 1-slot
+        // convention the wrap/tail arcs would be orphaned until §3.3's
+        // normalize() exists (see the TODOs in the tests below).  These
+        // submaps are therefore never run through check_invariants(polygon).
         c.left_adj = {{left_arc_indices[i], left_arc_indices[i + 1]}, 2};
-        // RIGHT endpoint: region i+1's RIGHT arc ends here.
         c.right_adj = {{right_arc_indices[i + 1], right_arc_indices[i]}, 2};
 
         s.add_chord(c);
@@ -579,6 +584,113 @@ static void test_remove_chord_arc_merge(std::mt19937& rng, int iters) {
         s.check_invariants();
     }
     std::printf("  [PASS] test_remove_chord_arc_merge\n");
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Test 4b: remove_chord — leaf region with a single arc adjacent at
+//  BOTH non-vertex endpoints ([C91 §2.2 tex 94] + [C91 §2.3 tex 121]).
+//  Gluing at both endpoints chains three arcs into one.
+// ════════════════════════════════════════════════════════════════════
+
+static void test_remove_chord_shared_arc(std::mt19937& rng, int iters) {
+    std::printf("  test_remove_chord_shared_arc (%d iters)...\n", iters);
+    for (int iter = 0; iter < iters; ++iter) {
+        std::size_t n = std::uniform_int_distribution<std::size_t>(4, 20)(rng);
+        auto poly = random_polygon(rng, n);
+        std::size_t ne = poly.num_edges();
+
+        // Random split edges e1 < e2 for the chord's two endpoints.
+        std::size_t e1 = std::uniform_int_distribution<std::size_t>(
+            0, ne - 2)(rng);
+        std::size_t e2 = std::uniform_int_distribution<std::size_t>(
+            e1 + 1, ne - 1)(rng);
+        bool left_side_leaf = std::uniform_int_distribution<int>(0, 1)(rng);
+
+        Submap s;
+        std::size_t r0 = s.add_node();
+        std::size_t r1 = s.add_node();
+
+        Arc a{};
+        std::size_t A_first, A_second;   // (before, after) arcs of the chord
+        std::size_t A_leaf_before, A_leaf_after;
+        if (left_side_leaf) {
+            // ∂C order: X=[0,e1] (r0) → A=[e1,e2] (r1) → Y=[e2,ne-1] (r0),
+            // all LEFT; Z=[ne-1,0] RIGHT (r0).
+            a = {}; a.first_edge = 0; a.last_edge = e1;
+            a.first_side = LEFT; a.last_side = LEFT;
+            a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, e1);
+            std::size_t X = s.add_arc(a);
+            a = {}; a.first_edge = e1; a.last_edge = e2;
+            a.first_side = LEFT; a.last_side = LEFT;
+            a.region_node = r1; a.edge_count = poly.count_nonnull_edges(e1, e2);
+            std::size_t A = s.add_arc(a);
+            a = {}; a.first_edge = e2; a.last_edge = ne - 1;
+            a.first_side = LEFT; a.last_side = LEFT;
+            a.region_node = r0; a.edge_count = poly.count_nonnull_edges(e2, ne - 1);
+            std::size_t Y = s.add_arc(a);
+            a = {}; a.first_edge = ne - 1; a.last_edge = 0;
+            a.first_side = RIGHT; a.last_side = RIGHT;
+            a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, ne - 1);
+            s.add_arc(a);
+            A_first = X; A_leaf_before = A; A_leaf_after = A; A_second = Y;
+            s.start_arc = X; s.end_arc = Y;
+        } else {
+            // Mirror on the RIGHT side: L=[0,ne-1] LEFT (r0);
+            // V=[ne-1,e2] (r0) → A=[e2,e1] (r1) → W=[e1,0] (r0), RIGHT.
+            a = {}; a.first_edge = 0; a.last_edge = ne - 1;
+            a.first_side = LEFT; a.last_side = LEFT;
+            a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, ne - 1);
+            std::size_t L = s.add_arc(a);
+            a = {}; a.first_edge = ne - 1; a.last_edge = e2;
+            a.first_side = RIGHT; a.last_side = RIGHT;
+            a.region_node = r0; a.edge_count = poly.count_nonnull_edges(e2, ne - 1);
+            std::size_t V = s.add_arc(a);
+            a = {}; a.first_edge = e2; a.last_edge = e1;
+            a.first_side = RIGHT; a.last_side = RIGHT;
+            a.region_node = r1; a.edge_count = poly.count_nonnull_edges(e1, e2);
+            std::size_t A = s.add_arc(a);
+            a = {}; a.first_edge = e1; a.last_edge = 0;
+            a.first_side = RIGHT; a.last_side = RIGHT;
+            a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, e1);
+            std::size_t W = s.add_arc(a);
+            A_first = V; A_leaf_before = A; A_leaf_after = A; A_second = W;
+            s.start_arc = L; s.end_arc = L;
+        }
+        s.start_vertex = 0; s.end_vertex = n - 1;
+
+        // Chord: both endpoints mid-edge (tag matches no vertex).
+        Chord c{};
+        c.region[0] = r0; c.region[1] = r1;
+        if (left_side_leaf) {
+            c.left_edge = e1;  c.left_side = LEFT;
+            c.right_edge = e2; c.right_side = LEFT;
+        } else {
+            c.left_edge = e2;  c.left_side = RIGHT;
+            c.right_edge = e1; c.right_side = RIGHT;
+        }
+        const auto& ce = poly.edge(c.left_edge);
+        c.y = (poly.vertex(ce.start_idx).y + poly.vertex(ce.end_idx).y) / 2.0;
+        c.y_tag = n + 100;
+        c.left_adj  = {{A_first, A_leaf_after}, 2};
+        c.right_adj = {{A_leaf_before, A_second}, 2};
+        s.add_chord(c);
+
+        // [C91 §2.3 tex 121]: predicted contraction weight == actual.
+        std::size_t simulated = s.simulated_contraction_weight(0, poly);
+
+        std::size_t survivor = s.remove_chord(0, poly);
+        s.assert_tree_property();
+        assert(s.num_live_nodes() == 1);
+        assert(s.num_live_arcs() == 2 &&
+               "shared-arc removal chains 3 arcs into 1 (+1 untouched)");
+        assert(simulated == brute_region_weight(s, survivor) &&
+               "simulated_contraction_weight != actual for shared-arc chord");
+        assert(s.region_weight(survivor) == brute_region_weight(s, survivor));
+
+        s.compact();
+        s.check_invariants(poly);
+    }
+    std::printf("  [PASS] test_remove_chord_shared_arc\n");
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1298,6 +1410,7 @@ int main(int argc, char** argv) {
     test_submap_invariants(rng, 500);
     test_remove_chord(rng, 500);
     test_remove_chord_arc_merge(rng, 500);
+    test_remove_chord_shared_arc(rng, 500);
     test_simulated_contraction_weight(rng, 500);
     test_simulated_contraction_nonvertex(rng, 500);
     test_double_identify(rng, 300);
