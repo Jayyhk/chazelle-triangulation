@@ -2,6 +2,7 @@
 
 #include "merge.h"
 #include "conformality.h"
+#include "granularity.h"
 
 namespace chazelle {
 
@@ -62,10 +63,32 @@ static void restore_conformality(Submap& S, const MergeInput& in,
     restore_conformality(S, C, o);
 }
 
-// [C91 §3.3]: Stage 3 — bring S to the desired granularity by removing
-// chords, then put S in normal form.  TODO: implement.
-static void enforce_granularity(Submap& /*S*/, const MergeInput& /*in*/,
-                                 const Polygon& /*C*/) {
+// [C91 §3.3 tex 274–280]: Stage 3 — enforce γ-granularity by removing
+// every removable exit chord (granularity.h), then "put S in normal
+// form, which includes computing its tree decomposition" (tex 276).
+// On the pre-fusion empty submap (stage 1 is still blocked on
+// [C91 §3.4]'s oracle) this is a no-op — no tree to contract.
+static void maintain_granularity(Submap& S, const MergeInput& in,
+                                 const Polygon& C) {
+    if (S.num_arcs() == 0 && S.num_nodes() == 0) return;  // fuse() TODO gate
+
+    // [C91 §3.3 tex 276]: "γ-granularity, for any γ ≥ γ₂, can be
+    // enforced in this nondeterministic fashion in time linear in the
+    // size of the submap tree."
+    enforce_granularity(S, C, in.gamma);
+
+    // [C91 §3.3 tex 276]: "We can now put S in normal form."
+    S.normalize(C);
+
+    // [C91 §3.3 Lemma 3.5 tex 279]: the result is a normal-form
+    // γ-granular conformal submap of V(C).
+    assert(S.is_conformal() &&
+           "[C91 Lemma 3.5 tex 279]: merge output must be conformal");
+    assert(S.is_granular(in.gamma, C) &&
+           "[C91 Lemma 3.5 tex 279]: merge output must be γ-granular");
+    assert(!S.tree_decomposition().empty() &&
+           "[C91 §2.4(iv) tex 139]: normal form includes the tree "
+           "decomposition");
 }
 
 MergeResult merge(const MergeInput& in) {
@@ -76,7 +99,7 @@ MergeResult merge(const MergeInput& in) {
     // [C91 §3]: "The merge proceeds in three stages."
     fuse(result.S, in, result.C);
     restore_conformality(result.S, in, result.C);
-    enforce_granularity(result.S, in, result.C);
+    maintain_granularity(result.S, in, result.C);
 
     return result;
 }

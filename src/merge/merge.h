@@ -104,8 +104,10 @@ inline void assert_merge_preconditions(const MergeInput& in) {
 }
 
 // [C91 §3]: Three-stage merge: ([C91 §3.1]) fuse via discovered chords,
-// ([C91 §3.2]) restore conformality, ([C91 §3.3]) enforce γ-granularity.
-// TODO: implement.
+// ([C91 §3.2]) restore conformality, ([C91 §3.3]) enforce γ-granularity
+// and put S in normal form.  Stages 2 and 3 are implemented; stage 1
+// (`fuse`) is blocked on [C91 §3.4]'s real ray-shooting oracle (see
+// TODO.md item 1).
 MergeResult merge(const MergeInput& in);
 
 } // namespace chazelle

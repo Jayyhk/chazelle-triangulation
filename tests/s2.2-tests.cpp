@@ -82,17 +82,26 @@ static Submap build_3region_submap() {
     a5.region_node = r0; a5.edge_count = 1;
     std::size_t ai5 = s.add_arc(a5);
 
-    // Chord 0: between r0 and r1, adj arcs a0,a1 (LEFT) and a5,a4 (RIGHT)
+    // Both chords sit at polygon vertices (y_tag 1 and 2 match vertices
+    // of test_polygon), so each endpoint records ONE adj arc — the
+    // before-arc in ∂C traversal order ([C91 §2.2 tex 94 + §2.4(ii)]
+    // 1-slot convention; the after-arc is found by remove_chord's
+    // junction scan).
+
+    // Chord 0: between r0 and r1 at vertex 1.  LEFT before-arc a0 (ends
+    // at v1); RIGHT before-arc a4 (RIGHT traversal descends: [1,1] ends
+    // at v1).
     Chord c0;
     c0.region[0] = r0; c0.region[1] = r1;
-    c0.left_adj = {{ai0, ai1}, 2}; c0.right_adj = {{ai5, ai4}, 2};
+    c0.left_adj = {{ai0}, 1}; c0.right_adj = {{ai4}, 1};
     c0.left_edge = 0; c0.right_edge = 0; c0.y = 1.0; c0.y_tag = 1;
     s.add_chord(c0);
 
-    // Chord 1: between r1 and r2, adj arcs a1,a2 (LEFT) and a4,a3 (RIGHT)
+    // Chord 1: between r1 and r2 at vertex 2.  LEFT before-arc a1;
+    // RIGHT before-arc a3 ([3,2] descending ends at v2).
     Chord c1;
     c1.region[0] = r1; c1.region[1] = r2;
-    c1.left_adj = {{ai1, ai2}, 2}; c1.right_adj = {{ai4, ai3}, 2};
+    c1.left_adj = {{ai1}, 1}; c1.right_adj = {{ai3}, 1};
     c1.left_edge = 1; c1.right_edge = 1; c1.y = 2.0; c1.y_tag = 2;
     s.add_chord(c1);
 
@@ -303,15 +312,18 @@ static void test_remove_chord_4_adj_arcs() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  8b. remove_chord — NO merge at vertex endpoints
+//  8b. remove_chord — arcs merge at vertex endpoints too
 // ════════════════════════════════════════════════════════════════
 
-static void test_remove_chord_no_merge_at_vertex() {
-    // Chord endpoint IS a polygon vertex → arcs should NOT merge.
-    // [C91 §2.2 tex 94 + §2.4(ii)]: vertex endpoints carry ONE adj arc
-    // (the arc ending at the endpoint, in ∂C traversal order) — the
-    // convention enforced by check_invariants(polygon) and produced by
-    // fusion's rebuild_submap.
+static void test_remove_chord_merge_at_vertex() {
+    // Chord endpoint IS a polygon vertex → the arcs meeting there fuse:
+    // [C91 §2.2 tex 96] region boundaries alternate exit chords with
+    // arcs (Fig. 2.4's region II passes through removed chords' vertex
+    // endpoints inside single arcs), and tex 94's vertex/non-vertex
+    // distinction governs only ∂C's vertex set (the vertex persists as
+    // an interior vertex of the fused arc).  Vertex endpoints carry ONE
+    // adj arc (the before-arc, [C91 §2.4(ii)] 1-slot convention); the
+    // after-arc is found by remove_chord's junction scan.
     Submap s;
     s.add_node(); // r0
     s.add_node(); // r1
@@ -348,21 +360,20 @@ static void test_remove_chord_no_merge_at_vertex() {
 
     s.remove_chord(0, poly);
 
-    // No arcs should have been killed (vertex endpoint → no merge).
-    assert(s.num_live_arcs() == 4 &&
-           "vertex endpoint should NOT merge arcs");
-    // All live arcs still have edge_count = 1 (no merging happened).
+    // [C91 §2.2 tex 96]: one glue per endpoint — a0+a1 on LEFT, a2+a3 on
+    // RIGHT — leaving one two-edge arc per ∂C side.
+    assert(s.num_live_arcs() == 2 &&
+           "[C91 §2.2 tex 96]: vertex endpoints must glue their arcs");
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
-        assert(s.arc(i).edge_count == 1);
+        assert(s.arc(i).edge_count == 2 &&
+               "glued arc spans both edges through the vertex");
     }
 
-    // compact()'s region-forwarding must repoint ai1 (orphaned in the
-    // dead region — it was not adjacent to any surviving chord).
     s.compact();
     s.check_invariants(poly);
 
-    std::printf("  [PASS] remove_chord_no_merge_at_vertex\n");
+    std::printf("  [PASS] remove_chord_merge_at_vertex\n");
 }
 
 
@@ -976,7 +987,7 @@ int main() {
     test_remove_all_chords();
     test_empty_region_weight();
     test_remove_chord_4_adj_arcs();
-    test_remove_chord_no_merge_at_vertex();
+    test_remove_chord_merge_at_vertex();
     test_remove_chord_2_adj_arcs();
     test_remove_chord_3_adj_arcs();
     test_remove_chord_shared_arc_left();

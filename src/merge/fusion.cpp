@@ -1732,10 +1732,11 @@ void rebuild_submap(Submap& out_S,
         // [C91 §2.4 tex 133]: a group at its edge's traversal-END vertex —
         // the next arc begins on the FOLLOWING traversal edge.  Leaving
         // the cursor on edge_c would put a zero-coverage edge into the
-        // next arc's cache range and, worse, break the start-y fallback
-        // derivation (the polygon vertex read from first_edge must be the
-        // arc's true starting vertex).  No advance at C's own endpoints —
-        // the wrap / tail emissions own those positions.
+        // next arc's cache range and, worse, break the input-table
+        // vertex derivation of the start-y (the polygon vertex read from
+        // first_edge must be the arc's true starting vertex).  No advance
+        // at C's own endpoints — the wrap / tail emissions own those
+        // positions.
         {
             const Endpoint& g = eps[i];
             if (group_at_vertex(g, trav_end_vertex(g.edge_c, g.side))) {

@@ -218,7 +218,11 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
             a.region_node = i;
             a.edge_count = poly.count_nonnull_edges(prev_edge, chord_edge);
             left_arc_indices[i] = s.add_arc(a);
-            prev_edge = chord_edge; // next arc starts at same edge (shared)
+            // Next arc starts AT vertex v, i.e., with edge v = chord_edge+1
+            // (the rebuild_submap convention for vertex chord-endpoints —
+            // arc_start_symbolic_y's input-table vertex derivation reads
+            // the start vertex off first_edge).
+            prev_edge = chord_edge + 1;
         }
         // Last region: from last chord edge to last edge.
         Arc a{};
@@ -252,7 +256,9 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
                 std::min(prev_edge, chord_edge),
                 std::max(prev_edge, chord_edge));
             right_arc_indices[region] = s.add_arc(a);
-            prev_edge = chord_edge; // next arc starts here
+            // Next arc starts AT vertex v on the RIGHT (descending)
+            // traversal, i.e., with edge v−1 = chord_edge−1.
+            prev_edge = chord_edge - 1;
         }
         // Last RIGHT region (region 0): from last chord to edge 0.
         Arc a{};
@@ -279,17 +285,13 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
         c.y_tag = v;
         c.is_null_length = false;
 
-        // Adjacent arcs.  NOTE: normal-form submaps record ONE adj arc at
-        // a polygon-vertex endpoint (check_invariants(polygon)'s
-        // endpoint↔count rule; [C91 §2.2 tex 94]).  This synthetic fixture
-        // deliberately records both the before- and after-arc so that
-        // region_weight's chord-adjacency walk reaches every arc — the
-        // fixture has no chords at C's endpoints, so under the 1-slot
-        // convention the wrap/tail arcs would be orphaned until §3.3's
-        // normalize() exists (see the TODOs in the tests below).  These
-        // submaps are therefore never run through check_invariants(polygon).
-        c.left_adj = {{left_arc_indices[i], left_arc_indices[i + 1]}, 2};
-        c.right_adj = {{right_arc_indices[i + 1], right_arc_indices[i]}, 2};
+        // Adjacent arcs: ONE per polygon-vertex endpoint — the before-arc
+        // in ∂C traversal order ([C91 §2.2 tex 94 + §2.4(ii)] 1-slot
+        // convention).  remove_chord's junction scan finds the after-arc
+        // (via the chords of the two regions plus the C-endpoint arc
+        // pointers start_arc/end_arc/tail_arc, [C91 §2.4(iii) tex 138]).
+        c.left_adj = {{left_arc_indices[i]}, 1};
+        c.right_adj = {{right_arc_indices[i + 1]}, 1};
 
         s.add_chord(c);
     }
@@ -523,13 +525,14 @@ static void test_remove_chord(std::mt19937& rng, int iters) {
             assert(s.num_live_nodes() == pre_nodes - 1);
             assert(s.num_live_chords() == pre_chords - 1);
 
-            // TODO: ([C91 §3.3]) After normalize() is implemented, verify
-            // region_weight == brute_region_weight here between removals.
-            // Currently skipped: cascaded removals leave orphaned arcs that
-            // are no longer reachable from any chord's adjacency list, so
-            // region_weight reads the wrong arcs.  normalize() (part of
-            // [C91 §3.3]'s "put S in normal form" step) would fix this,
-            // but it doesn't exist yet.
+            // [C91 §2.2 tex 96/108]: junction gluing keeps every live
+            // arc reachable (chord before-arc slots + the C-endpoint
+            // arc pointers), so region_weight is exact even between
+            // cascaded removals.
+            for (std::size_t r = 0; r < s.num_nodes(); ++r) {
+                if (s.node(r).dead) continue;
+                assert(s.region_weight(r) == brute_region_weight(s, r));
+            }
         }
 
         // After all removals: single region, no chords.
@@ -537,13 +540,17 @@ static void test_remove_chord(std::mt19937& rng, int iters) {
         assert(s.num_live_chords() == 0);
         s.assert_tree_property();
 
-        // Compact (resolves forwarding chains from cascaded removals).
-        s.compact();
+        // Removing every vertex chord glues each ∂C side back into one
+        // arc ([C91 §2.2 tex 96]).
+        assert(s.num_live_arcs() == 2);
+
+        // [C91 §3.3 tex 276]: put S in normal form.
+        s.normalize(poly);
         assert(s.num_nodes() == 1);
         assert(s.num_chords() == 0);
-        s.check_invariants();
-        // TODO: ([C91 §3.3]) After normalize() is implemented, call it here
-        // and verify region_weight(0) == brute_region_weight(s, 0).
+        s.check_invariants(poly);
+        assert(s.region_weight(0) == brute_region_weight(s, 0));
+        assert(!s.tree_decomposition().empty());
     }
     std::printf("  [PASS] test_remove_chord\n");
 }
@@ -871,13 +878,10 @@ static void test_compact(std::mt19937& rng, int iters) {
         // Full invariant check.
         s.check_invariants();
 
-        // TODO: ([C91 §3.3]) After normalize() is implemented, call it after
-        // compact() and verify:
-        //   for (std::size_t i = 0; i < s.num_nodes(); ++i)
-        //       assert(s.region_weight(i) == brute_region_weight(s, i));
-        // Currently skipped: after cascaded removals, some arcs are
-        // orphaned (no longer in any chord's adjacency list), so
-        // region_weight reads the wrong arcs.
+        // [C91 §3.3]: junction gluing + C-endpoint arc pointers keep
+        // region_weight exact after cascaded removals.
+        for (std::size_t i = 0; i < s.num_nodes(); ++i)
+            assert(s.region_weight(i) == brute_region_weight(s, i));
         for (std::size_t i = 0; i < s.num_arcs(); ++i) {
             assert(s.arc(i).region_node < s.num_nodes());
         }
@@ -1102,11 +1106,11 @@ static void test_full_pipeline(std::mt19937& rng, int iters) {
         s.check_invariants();
         assert(s.is_conformal());
 
-        // TODO: ([C91 §3.3]) After normalize() is implemented, call it here
-        // and replace the structural check below with:
-        //   for (std::size_t i = 0; i < s.num_nodes(); ++i)
-        //       assert(s.region_weight(i) == brute_region_weight(s, i));
-        // Also restore Step 7 (granularity cross-checks vs brute force).
+        // Step 4: normal form ([C91 §3.3 tex 276]) + weight cross-checks.
+        s.normalize(poly);
+        s.check_invariants(poly);
+        for (std::size_t i = 0; i < s.num_nodes(); ++i)
+            assert(s.region_weight(i) == brute_region_weight(s, i));
         for (std::size_t i = 0; i < s.num_arcs(); ++i) {
             assert(s.arc(i).region_node < s.num_nodes());
         }
@@ -1126,7 +1130,16 @@ static void test_full_pipeline(std::mt19937& rng, int iters) {
             assert(result.count >= 1 && result.count <= 6);
         }
 
-        // Step 7: granularity cross-checks skipped (see TODO in Step 4).
+        // Step 7: granularity cross-checks vs brute force ([C91 §2.3
+        // tex 120] criterion (i) via is_semigranular).
+        {
+            std::size_t max_w = 0;
+            for (std::size_t i = 0; i < s.num_nodes(); ++i)
+                max_w = std::max(max_w, brute_region_weight(s, i));
+            assert(s.is_semigranular(max_w));
+            if (max_w > 0)
+                assert(!s.is_semigranular(max_w - 1));
+        }
     }
     std::printf("  [PASS] test_full_pipeline\n");
 }
@@ -1338,11 +1351,11 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         // Invariants.
         s.assert_tree_property();
         assert(s.region_weight(r1) == 0); // empty region inside null-length chord
-        // TODO: ([C91 §3.3]) region_weight(r0) undercounts here because a3
-        // (the RIGHT arc) isn't in the null-length chord's adj list —
-        // it's only reachable via a full arc scan.  After normalize() is
-        // implemented, assert region_weight(r0) == brute_region_weight.
+        // a3 (the RIGHT arc) is not in the null-length chord's adj list,
+        // but it ends at C's start wrap and is reachable as tail_arc
+        // ([C91 §2.4(iii) tex 138]) — region_weight is exact.
         assert(brute_region_weight(s, r0) > 0);
+        assert(s.region_weight(r0) == brute_region_weight(s, r0));
         assert(s.is_conformal());
 
         // Remove the null-length chord → single region.

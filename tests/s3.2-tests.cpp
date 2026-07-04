@@ -624,10 +624,15 @@ static void test_insert_chord() {
     assert(fx.S.arc(res.q_after_arc).region_node == 0);
     assert(fx.S.arc(13).region_node == 0);          // R3 before-half
 
-    // Splits: R3 = [4..3] → before [4..3] (ends at v4) + after [3..3].
-    assert(fx.S.arc(13).last_edge == 3 && fx.S.arc(13).first_edge == 4);
+    // Splits: R3 = [4..3] split AT v4 (edge 3's end vertex) → edge 3
+    // belongs entirely to the after-half ([C91 §2.4 tex 133]: the
+    // arc-structure's pointers are the edges the arc spans): before
+    // [4..4] (ends at v4, ec 1) + after [3..3] (starts at v4, ec 1).
+    assert(fx.S.arc(13).last_edge == 4 && fx.S.arc(13).first_edge == 4);
+    assert(fx.S.arc(13).edge_count == 1);
     assert(fx.S.arc(res.p_after_arc).first_edge == 3 &&
            fx.S.arc(res.p_after_arc).last_edge == 3);
+    assert(fx.S.arc(res.p_after_arc).edge_count == 1);
 
     // Adjacency re-pointing: c1 (v1e)'s slot 0 referenced R3 as its
     // ENDING arc — now the after-half; and c1 itself moved to region 9.

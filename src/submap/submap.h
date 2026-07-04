@@ -37,7 +37,26 @@ public:
 
     // [C91 §2.2 tex 94]: Remove a chord — "remove the chord and those
     // endpoints that are not vertices of C, gluing back ∂C at those
-    // points."  Arcs are merged only at non-vertex endpoints.
+    // points."
+    //
+    // Arc gluing happens at EVERY endpoint of the removed chord, not just
+    // non-vertex ones: [C91 §2.2 tex 96] region boundaries ALTERNATE exit
+    // chords with arcs (Fig. 2.4's region II — "a two-edge arc, an exit
+    // chord, a one-edge arc, an exit chord, a three-edge arc (not a
+    // four-edge arc!), ..." — passes through removed chords' vertex
+    // endpoints inside single arcs), and [C91 §2.2 tex 108] "once removed,
+    // a chord of zero length ceases to separate any arcs" (null-length
+    // chords have only vertex endpoints).  The vertex/non-vertex
+    // distinction of tex 94 governs ∂C's VERTEX set (mid-edge endpoints
+    // vanish; vertices of C persist as interior arc vertices), not arc
+    // structure.
+    //
+    // Exception: junctions at C's own endpoint companions ([C91 §2.1
+    // tex 72] case 3) are NOT glued — the arc-sequence table keeps arcs
+    // split at C's two endpoint wraps (the settled representation of
+    // [C91 §2.4 tex 142] double-backing; §3.2's LogicalArc re-glues wrap
+    // pieces logically where paper arcs are needed).
+    //
     // @param polygon  needed to detect which endpoints are polygon vertices.
     // @return surviving region index.
     std::size_t remove_chord(std::size_t chord_idx,
@@ -105,6 +124,18 @@ public:
     std::size_t start_arc    = NONE;
     std::size_t end_arc      = NONE;
 
+    // [C91 §2.4(iii) tex 138]: "pointers to the arc-structures whose
+    // corresponding arcs pass through the endpoints" — TWO arcs pass
+    // through each endpoint of C.  start_arc/end_arc hold the LEFT-half
+    // pair; tail_arc is the arc ENDING at C's start wrap (the last RIGHT
+    // arc in canonical ∂C order).  Needed because that arc ends at no
+    // chord, so it appears in no adjacency slot when its start is a
+    // vertex endpoint: region_weight and the [C91 §2.2 tex 96] junction
+    // glue would otherwise not reach it in O(1).  Maintained by add_arc
+    // (canonical insertion order), remove_chord, insert_chord, compact,
+    // and normalize.
+    std::size_t tail_arc     = NONE;
+
     // [C91 §2.4]: First RIGHT arc in arc-sequence.  LEFT = [0, boundary),
     // RIGHT = [boundary, num_arcs).
     std::size_t left_right_boundary() const noexcept {
@@ -151,17 +182,50 @@ public:
                       const class Polygon& polygon) const noexcept;
 
     // [C91 §2.3]: Weight of the merged region if `chord_idx` were contracted.
-    // May be less than the sum: non-vertex chord endpoints disappear
-    // ([C91 §2.2 tex 94]).
+    // May be less than the sum: "this weight might be less than the added
+    // weight of the two nodes of the contracted edge" ([C91 §2.3 tex 123]).
+    // Simulates exactly what remove_chord would produce: arc chains glued
+    // at both endpoints (vertex and mid-edge; wrap-cap junctions excepted).
     std::size_t simulated_contraction_weight(
         std::size_t chord_idx,
         const class Polygon& polygon) const noexcept;
+
+    // Same simulation, but with caller-supplied weights for the chord's
+    // two regions instead of region_weight().  [C91 §3.3 tex 276] needs
+    // the criterion-(ii) test in O(1) per chord while removals cascade;
+    // the §3.3 pass maintains per-region weights itself and passes them
+    // here (w0 for chord.region[0], w1 for chord.region[1]).
+    std::size_t simulated_contraction_weight(
+        std::size_t chord_idx,
+        const class Polygon& polygon,
+        std::size_t w0, std::size_t w1) const noexcept;
 
     // ── Compaction ──────────────────────────────────────────────
 
     // Strip dead arcs/chords/nodes; rebuild index mappings.  O(m).
     // Called once before putting S in normal form ([C91 §3.3]).
     void compact();
+
+    // ── [C91 §3.3 tex 276]: Normal form ─────────────────────────
+
+    // "We can now put S in normal form, which includes computing its
+    // tree decomposition.  As we discussed earlier, this can be done
+    // very simply in time O((n₁/γ₁ + n₂/γ₂ + 1)log(n₁ + n₂))."
+    //
+    // compact()s the tables, re-sorts the arc-sequence into canonical
+    // ∂C traversal order ([C91 §2.4(iii) tex 138]: LEFT ascending
+    // first_edge then RIGHT descending; within an edge, start-y follows
+    // the clockwise traversal direction) — repairing the order broken by
+    // [C91 §3.2]'s insert_chord appends — restores start_arc/end_arc and
+    // the LEFT/RIGHT boundary, re-validates the [C91 §2.4] invariants,
+    // and rebuilds the tree decomposition ([C91 §2.4(iv)]).
+    //
+    // O(M log M) comparison sort + O(M log M) tree decomposition
+    // ([C91 §2.3 tex 116]), within tex 276's normal-form budget.
+    //
+    // Precondition (asserted): S is conformal — normal form (iv) requires
+    // a tree decomposition, which is defined for conformal submaps.
+    void normalize(const class Polygon& polygon);
 
     std::size_t num_live_nodes()  const noexcept;
     std::size_t num_live_chords() const noexcept;
@@ -257,6 +321,28 @@ public:
     }
 
 private:
+    // [C91 §2.2 tex 96]: locate the glue mate at a removed chord's
+    // vertex-endpoint junction — the arc STARTING at the junction ∂C
+    // point (want_after) or ENDING there (!want_after).  The 1-slot
+    // adjacency convention records only the before-arc at vertex
+    // endpoints, so the mate is found by scanning the adjacency slots of
+    // the chord's two regions' incident chords plus the C-endpoint arcs
+    // (start_arc/end_arc/tail_arc) — O(degree) = O(1) for conformal
+    // submaps.  Among candidates a zero-length arc wins (it occupies the
+    // junction point itself and precedes/follows immediately, [C91 §2.2
+    // tex 96] "some arcs may be of zero length").
+    // @param edge, side   the junction endpoint's ∂C position.
+    // @param vertex_idx   the polygon vertex at the junction.
+    // @param exclude, exclude2  arc indices to skip (already-known
+    //     junction pieces; NONE if unused).
+    std::size_t find_junction_arc(const Chord& c,
+                                  std::size_t edge, Side side,
+                                  std::size_t vertex_idx,
+                                  bool want_after,
+                                  std::size_t exclude,
+                                  std::size_t exclude2,
+                                  const class Polygon& polygon) const;
+
     TreeDecomposition tree_decomp_;
     // Set by every mutator; cleared by build_tree_decomposition().  The
     // out-of-date contents stay until the next build() rebuilds from

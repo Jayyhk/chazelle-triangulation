@@ -1,24 +1,77 @@
-# TODO — Known Deferrals
+# TODO — Known Deferrals and Documented Deviations
 
-Work deferred during because it depends on machinery from later sections 
-of the paper. Each is documented, cited against 
-`papers/chazelle1991-transcribed.tex`, and owned by a future section. 
-None is a silent gap or an unexamined deviation.
+Two kinds of entries, both cited against
+`papers/chazelle1991-transcribed.tex`. **Deferrals**: work that depends
+on machinery from later sections of the paper, each owned by a future
+section. **Deviations**: places where the implementation deliberately
+departs from the paper's literal text because the text is demonstrably
+wrong; each carries the proof and the test that pins it. None is a
+silent gap or an unexamined deviation.
+
+## Documented paper deviations (not deferrals)
+
+- **[C91 §3.3 tex 276]'s once-only claim** — the paper says "chords
+  need be processed only once since the removals cannot make any chord
+  removable if it was not already so before." That claim is provably
+  half-wrong. Removability ([C91 §2.3 tex 121] criterion (ii),
+  negated) is a conjunction: *incident upon a node of degree < 3* AND
+  *contraction weight ≤ γ*.
+
+  - **Weight half — the paper is right.** Contraction only glues and
+    grows arcs, so a contraction weight that exceeds γ exceeds it
+    forever; that half of removability is monotone and never needs
+    re-checking.
+  - **Degree half — the paper is wrong.** Contracting a leaf edge — a
+    degree-1 node, which criterion (ii) explicitly covers ("degree
+    less than 3") — leaves a merged node of degree d_u + 1 − 2 =
+    d_u − 1. Degrees can DROP, so a chord examined while both
+    endpoints had degree ≥ 3 can become removable later. No static
+    processing order rescues the claim: parent-side degree drops can
+    occur after any fixed position of a hub chord in the order.
+  - **Why literal compliance breaks the paper's own theorem.** For
+    γ ≥ total weight, γ-granularity ⟺ no chords at all (any surviving
+    edge has a leaf endpoint: a degree-1 incidence with contraction
+    weight ≤ γ, violating criterion (ii)). A single pass that visits a
+    hub–hub chord before its leaf pockets leaves it behind, so the
+    output is not γ-granular — contradicting Lemma 3.5 (tex 279),
+    which everything downstream relies on (Lemma 2.3's O(n/γ + 1)
+    region bound for merge outputs, the §4 up-phase budget). When the
+    aside contradicts the theorem, the theorem wins.
+  - **The fix (implemented in `enforce_granularity`).** Keep "process
+    each exit chord in turn" verbatim; after each removal, re-examine
+    only the ≤ 4 chords incident upon the merged node (only they can
+    change status, and only via the degree drop). O(1) per removal, at
+    most one removal per chord — tex 276's "time linear in the size of
+    the submap tree" bound is preserved exactly, and the paper's
+    "nondeterministic fashion" (any order, any valid removal set) is
+    respected.
+  - **Verification.** Mathematically as above, plus empirically
+    (2026-07-04): with the re-check disabled, the criterion-(ii)
+    postcondition assert inside `enforce_granularity` fires on the
+    post-§3.2 six-peak comb with reversed chord order and γ = 100 — a
+    removable hub chord survives the single pass; with the re-check,
+    the fixed point is reached and all suites pass.
+    `tests/s3.3-tests.cpp::test_degree_drop_recheck` pins the
+    counterexample shape permanently.
 
 ## Blocked on future sections
 
-1. **Merge wiring** (`merge.cpp::fuse`) — owned by **§3.4**. The
-   three-call wiring (pass 1, pass 2 with `junction_at_end = false`,
-   `rebuild_submap`) is documented at the TODO but needs §3.4's real
-   ray-shooting oracle before it can execute: `local_shoot` trips
-   [C91 §3.1 tex 181]'s "local shoot must hit" assertion under stub
-   oracles, and `merge()`'s contract (normal-form γ-granular conformal
-   submap) is unmeetable while §3.3 is a stub anyway. The former
-   blockers (b) symmetric-pass orientation and (c) inventory dedup were
-   implemented 2026-07-03; the §3.2 stage (`restore_conformality`,
-   `src/merge/conformality.{h,cpp}`) was implemented and wired
-   2026-07-03 (the merge pipeline gates it off while `fuse` still
-   produces an empty submap).
+1. **Merge wiring** (`merge.cpp::fuse`) — owned by **§3.4**.
+   [C91 §3 tex 164]: "The merge proceeds in three stages" — stage 1 =
+   fusion (§3.1, `fuse`), stage 2 = restoring conformality (§3.2,
+   `restore_conformality`), stage 3 = maintaining granularity (§3.3,
+   `enforce_granularity` + `Submap::normalize`); `merge()` runs exactly
+   this pipeline. Stage 1's three-call wiring (pass 1, pass 2 with
+   `junction_at_end = false`, `rebuild_submap`) is documented at the
+   TODO in `fuse` but needs §3.4's real ray-shooting oracle before it
+   can execute: `local_shoot` trips [C91 §3.1 tex 181]'s "local shoot
+   must hit" assertion under stub oracles. This is now the ONLY
+   blocker: stage 2 was implemented and wired 2026-07-03 and stage 3
+   on 2026-07-04, so `merge()`'s contract ([C91 §3 tex 160]: "to merge
+   S₁ and S₂ means to compute a normal-form γ-granular conformal
+   submap of V(C)"; Lemma 3.5 tex 279) is met end-to-end once `fuse`
+   produces a real fusion. Stages 2 and 3 gate themselves off while
+   `fuse` still produces an empty submap.
 
 2. **Wrapped (through-infinity) hits in the §3.1 fusion walk** — owned
    by **§3.4**. `RayHit.wrapped` ([C91 §2.1 tex 70]: a ray that misses
@@ -43,26 +96,10 @@ None is a silent gap or an unexamined deviation.
    what exposed and fixed the inverted `shooting_direction` convention
    on 2026-07-03; see `src/merge/fusion.cpp`.)
 
-4. **Orphaned arcs after cascaded removals** — owned by **§3.3's
-   `normalize()`** (tex 276 *"We can now put S in normal form"*). Arcs
-   whose bounding chords are all removed drop out of every chord's
-   adjacency list, so `region_weight` can under-read until the submap is
-   re-normalized. The s2 e2e suite documents each skipped check with a
-   TODO. Not reachable in currently implemented paper flows (fusion
-   output carries chords at C's endpoints; §3.3 is not yet on disk).
-
-5. **e2e `double_identify` completeness** — owned by **§4** (up-phase).
+4. **e2e `double_identify` completeness** — owned by **§4** (up-phase).
    The randomized test verifies soundness (every returned arc contains
    the query edge, counts ≤ 6 per [C91 §2.4 tex 144], non-empty at
    vertices) but not exhaustiveness against a symbolic reference; the
    conservative brute-force set is a superset by construction.
    Strengthening this requires a full symbolic V(C) reference map,
    natural once §4's up-phase provides one.
-
-6. **Normal form after §3.2 insertions** — owned by **§3.3** (tex 276).
-   `Submap::insert_chord` appends split-arc halves at the table's end,
-   breaking canonical arc-sequence order ([C91 §2.4(iii) tex 138]);
-   `compacted_` is cleared so `double_identify` fails fast. §3.3's
-   normalize step re-sorts the table and rebuilds the tree
-   decomposition, exactly as the paper re-establishes normal form after
-   conformality restoration.

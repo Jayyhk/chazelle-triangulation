@@ -20,7 +20,7 @@ step.
   - [x] §3.0 — Merge Setup and Oracle Primitives
   - [ ] §3.1 — Fusion of Two Submaps (`merge.cpp::fuse` is still TODO)
   - [x] §3.2 — Restoring Conformality
-  - [ ] §3.3 — Maintaining Granularity
+  - [x] §3.3 — Maintaining Granularity
   - [ ] §3.4 — Implementing the Oracles
 - [ ] §4 — The Visibility Algorithm
   - [ ] §4.0 — Chains, Grades, and Algorithm Overview
