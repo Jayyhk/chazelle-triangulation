@@ -64,6 +64,9 @@ static MergeInput make_input(const Polygon& C1, const Polygon& C2,
     in.ray_shooter_2 = &STUB_RAY;
     in.arc_cutter_1  = &STUB_ARC;
     in.arc_cutter_2  = &STUB_ARC;
+    // [C91 §3.0(ii) tex 170]: nominal arc-cutter bounds for the stubs.
+    in.g_gamma1 = 1; in.g_gamma2 = 1;
+    in.h_gamma1 = 1; in.h_gamma2 = 1;
     return in;
 }
 

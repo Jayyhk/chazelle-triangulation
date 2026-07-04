@@ -54,6 +54,13 @@ struct RayHit {
     double y = 0.0;                 // = p.y (horizontal ray).
     std::size_t edge = 0;
     Side side = LEFT;
+    // [C91 §2.1 tex 70]: "If it were to go to infinity in the Cartesian
+    // plane, then it would actually wrap around in the spherical plane
+    // until it hits C again."  True iff the reported hit was reached
+    // through the point at infinity — its x lies BEHIND the source in
+    // the travel direction, and every direct (non-wrapped) hit is
+    // nearer than every wrapped one.
+    bool wrapped = false;
     // Index of the struck region arc.  Not part of the paper's spec
     // (tex 169 only mandates point + edge); set by local_shoot() after
     // the oracle call.  Oracle implementations MUST NOT set this.

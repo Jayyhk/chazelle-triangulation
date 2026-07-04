@@ -88,6 +88,15 @@ RayHit local_shoot(Point p, Side direction,
         RayHit hit = oracle.shoot(p, direction, ai, sub);
         if (!hit.hit) continue;
 
+        // [C91 §2.1 tex 70]: through-infinity hits carry hit.wrapped.
+        // The §3.1 fusion walk's distance comparisons (case (i)'s s vs t,
+        // case (ii)'s on-ab test) do not model the wrap metric yet; the
+        // real ray-shooting oracle arrives with [C91 §3.4], which owns
+        // that extension.  Fail fast rather than corrupt nearest-of.
+        assert(!hit.wrapped &&
+               "[C91 §3.4 TODO]: wrapped hits are not yet supported in the "
+               "§3.1 fusion walk");
+
         // [C91 §3.0(i) tex 169]: oracle reports forward hits only.  A backward
         // hit (negative signed distance) would beat every legitimate hit
         // and silently corrupt the nearest-of selection.
@@ -129,18 +138,16 @@ RayHit local_shoot(Point p, Side direction,
                 Side minus_x_face = edge_ascending ? LEFT : RIGHT;
                 Side plus_x_face  = edge_ascending ? RIGHT : LEFT;
 
-                Side struck_first_face;
-                if (best_dist == 0.0) {
-                    // d = 0: Crossing the immediate zero-width canal boundary.
-                    // Ray traveling RIGHT (crosses from -X to +X) hits +X face next.
-                    // Ray traveling LEFT (crosses from +X to -X) hits -X face next.
-                    struck_first_face = (direction == RIGHT) ? plus_x_face : minus_x_face;
-                } else {
-                    // d > 0: Hitting a distant obstacle.
-                    // Ray traveling RIGHT (from -X) hits the -X face first.
-                    // Ray traveling LEFT (from +X) hits the +X face first.
-                    struck_first_face = (direction == RIGHT) ? minus_x_face : plus_x_face;
-                }
+                // [C91 §2.1 tex 72]: a ray travels INTO the free region
+                // (shooting_direction) and strikes the wall whose free
+                // side faces it: traveling RIGHT it arrives from the −X
+                // side and strikes the −X face; traveling LEFT the +X
+                // face.  This holds at distance 0 too (e.g. the
+                // null-length inside pair, whose siblings face each
+                // other): the source's own wall faces AWAY from the ray
+                // and is never struck, so no self-hit is possible.
+                Side struck_first_face =
+                    (direction == RIGHT) ? minus_x_face : plus_x_face;
 
                 if (hit.side == struck_first_face && best.side != struck_first_face) {
                     best = hit;
@@ -161,10 +168,19 @@ RayHit local_shoot(Point p, Side direction,
 
 Side shooting_direction(std::size_t edge, Side side,
                          const Polygon& C) {
-    // [C91 §3.1]: "because of the double boundary the shooting direction is
-    // always uniquely defined."  Edge going up (start.y < end.y): LEFT
-    // side is on the west, shoots east (RIGHT).  Edge going down: LEFT
-    // shoots west (LEFT).  RIGHT side is the reverse.
+    // [C91 §2.1 tex 72]: "any point of ∂C has a unique horizontal 'chord
+    // direction' ... this direction points to the left of an observer
+    // walking clockwise around ∂C."  [C91 §2.2 tex 96]: the clockwise
+    // ∂C traversal walks each region's boundary COUNTERCLOCKWISE with
+    // respect to the region — the free region is on the observer's
+    // LEFT, so the chord direction points INTO the region the ∂C point
+    // bounds (away from the curve).
+    //
+    // The canonical order ([C91 §2.4(iii) tex 138]) walks Side::LEFT
+    // ascending — the observer climbs an ascending edge on its west
+    // wall with the snake on the right — so LEFT of an ascending edge
+    // is the west wall and shoots WEST (LEFT); the other three cases
+    // follow by symmetry.
     assert(edge < C.num_edges());
     const auto& e = C.edge(edge);
     SymbolicY start_y = symbolic_y_of(C.vertex(e.start_idx));
@@ -172,9 +188,9 @@ Side shooting_direction(std::size_t edge, Side side,
     bool edge_ascending = symbolic_y_less(start_y, end_y);
 
     if (side == LEFT)
-        return edge_ascending ? RIGHT : LEFT;
-    else
         return edge_ascending ? LEFT : RIGHT;
+    else
+        return edge_ascending ? RIGHT : LEFT;
 }
 
 // ── fusion_startup ──────────────────────────────────────────────

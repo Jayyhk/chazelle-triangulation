@@ -1084,6 +1084,291 @@ SymbolicY Submap::arc_start_symbolic_y(std::size_t arc_idx,
     return symbolic_y_of(polygon.vertex(vidx));
 }
 
+SymbolicY Submap::arc_end_symbolic_y(std::size_t arc_idx,
+                                     const Polygon& polygon) const {
+    assert(arc_idx < arc_sequence_.size() &&
+           !arc_sequence_[arc_idx].dead &&
+           "[C91 §2.4]: arc index must be valid + live");
+    const Arc& a = arc_sequence_[arc_idx];
+
+    // [C91 §2.4(ii) tex 137]: walk the arc's region's incident chords.
+    // Mirror of arc_start_symbolic_y — the arc ENDING at a chord endpoint
+    // is slot 0 of a count-2 pair, or the single count-1 slot (the
+    // "before-arc" of a polygon-vertex endpoint).
+    for (std::size_t ci : nodes_[a.region_node].incident_chords) {
+        const Chord& c = chords_[ci];
+        if (c.dead) continue;
+        if (c.is_null_length) {
+            // [C91 §2.1 tex 72]: the inner null-arc both starts AND ends
+            // at the null-length chord's position.
+            if (c.right_adj.count == 1 &&
+                c.right_adj.arcs[0] == arc_idx &&
+                a.region_node == c.region[1])
+                return c.symbolic_y();
+            if (c.left_adj.count == 1 &&
+                c.left_adj.arcs[0] == arc_idx &&
+                a.region_node == c.region[1])
+                return c.symbolic_y();
+            continue;
+        }
+        // [C91 §2.4 tex 137 + tex 133]: slot 0 is the arc ending at the
+        // chord; a count-1 (polygon-vertex) slot holds the before-arc,
+        // which likewise ends there ([C91 §2.2 tex 94]).
+        if (c.left_adj.arcs[0] == arc_idx)
+            return c.symbolic_y();
+        if (c.right_adj.arcs[0] == arc_idx)
+            return c.symbolic_y();
+    }
+
+    // [C91 §2.1 tex 72 / §2.4(iii) tex 138]: no bounding chord at the end —
+    // the arc ends at a polygon vertex (C-endpoint wrap or a companion
+    // vertex); the input table carries the y directly.  Under LEFT
+    // traversal (ascending) edge last_edge ends at vertex(last_edge + 1);
+    // under RIGHT traversal (descending) at vertex(last_edge).
+    assert(a.last_edge < polygon.num_edges() &&
+           "[C91 §2.4(iii)]: last_edge must be a valid edge index");
+    std::size_t vidx = (a.last_side == LEFT)
+        ? a.last_edge + 1
+        : a.last_edge;
+    assert(vidx < polygon.num_vertices() &&
+           "[C91 §2.4(iii)]: arc-end polygon vertex must be valid");
+    return symbolic_y_of(polygon.vertex(vidx));
+}
+
+// ── [C91 §3.2]: Chord insertion ─────────────────────────────────
+
+// [C91 §3.2 tex 264]: "For any region with more than four arcs, let us
+// apply Lemma 3.2 to every pair of nonconsecutive arcs until we find a
+// chord which we can add to S."  This is that chord addition: split the
+// region at the two mutually visible points p and q.
+
+Submap::InsertChordResult Submap::insert_chord(
+        const ChordPointSpec& p, const ChordPointSpec& q,
+        SymbolicY y, std::size_t region,
+        const std::size_t* cycle, std::size_t cycle_len,
+        const Polygon& polygon) {
+    assert(region < nodes_.size() && !nodes_[region].dead &&
+           "[C91 §3.2]: insert_chord requires a live region");
+    assert(y.tag != SOS_NONE &&
+           "[C91 §2 tex 47 (SoS)]: chord must carry its source SoS tag");
+    assert(p.arc != q.arc &&
+           "[C91 §3.2 Lemma 3.3]: the chord connects two distinct "
+           "(nonconsecutive) arcs of the region");
+    assert(p.x != q.x &&
+           "[C91 §2.1 tex 70]: a visibility chord between distinct ∂C "
+           "points has nonzero length");
+    assert(cycle_len >= 2 && "[C91 §3.2]: region cycle must hold both arcs");
+
+    // Validate the caller-supplied cycle and locate the two split arcs.
+    std::size_t ip = NONE, iq = NONE;
+    for (std::size_t i = 0; i < cycle_len; ++i) {
+        std::size_t ai = cycle[i];
+        assert(ai < arc_sequence_.size() && !arc_sequence_[ai].dead &&
+               arc_sequence_[ai].region_node == region &&
+               "[C91 §2.2 tex 96]: cycle entries must be live arcs of the region");
+        if (ai == p.arc) ip = i;
+        if (ai == q.arc) iq = i;
+    }
+    assert(ip != NONE && iq != NONE &&
+           "[C91 §3.2]: p.arc and q.arc must appear in the region cycle");
+
+    // [C91 §2.1 tex 70]: a ∂C point's horizontal visibility is unique, so
+    // a point coinciding with an existing chord endpoint cannot source a
+    // NEW chord — its visibility is already realized by that chord.
+    // Position identity: (edge, side, symbolic y) — a horizontal line at
+    // a fixed symbolic y crosses an edge at most once.
+    auto assert_not_chord_endpoint = [&](std::size_t edge, Side side) {
+        for (std::size_t ci : nodes_[region].incident_chords) {
+            const Chord& c = chords_[ci];
+            if (c.dead) continue;
+            if (!symbolic_y_equal(c.symbolic_y(), y)) continue;
+            assert(!((c.left_edge == edge && c.left_side == side) ||
+                     (c.right_edge == edge && c.right_side == side)) &&
+                   "[C91 §2.1 tex 70]: new chord endpoint coincides with an "
+                   "existing chord endpoint (visibility already realized)");
+        }
+    };
+    assert_not_chord_endpoint(p.edge, p.side);
+    assert_not_chord_endpoint(q.edge, q.side);
+
+    // ── Split the two arcs.  The first half keeps the table slot; the
+    // second half is appended (canonical order restored by [C91 §3.3
+    // tex 276] "We can now put S in normal form").
+    auto split_arc = [&](const ChordPointSpec& sp) -> std::size_t {
+        // Read the derived endpoint ys BEFORE mutating anything.
+        SymbolicY start_y = arc_start_symbolic_y(sp.arc, polygon);
+        SymbolicY end_y   = arc_end_symbolic_y(sp.arc, polygon);
+
+        Arc before = arc_sequence_[sp.arc];
+        assert(before.first_side == before.last_side &&
+               before.first_side == sp.side &&
+               "[C91 §3.1 tex 226]: fused-submap arcs are single-side "
+               "(rebuild_submap output; §3.2 splits preserve this)");
+        assert(sp.edge >= std::min(before.first_edge, before.last_edge) &&
+               sp.edge <= std::max(before.first_edge, before.last_edge) &&
+               "[C91 §3.2]: split point must lie on the arc");
+
+        bool at_start = (sp.edge == before.first_edge &&
+                         symbolic_y_equal(y, start_y));
+        bool at_end   = (sp.edge == before.last_edge &&
+                         symbolic_y_equal(y, end_y));
+        // Both at once would make the arc zero-length; zero-length arcs
+        // ([C91 §2.2 tex 96]) carry no visibility candidates and are never
+        // split ([C91 §2.1 tex 72]: their point sees only its companion).
+        assert(!(at_start && at_end) &&
+               "[C91 §3.2]: cannot split a zero-length arc");
+
+        Arc after = before;
+        after.first_edge = sp.edge;          // side unchanged
+        before.last_edge = sp.edge;
+
+        // [C91 §2.2 tex 106]: edge_count = nonnull P-edges over the covered
+        // range; zero-length halves get 0 ([C91 §2.4 tex 133] null arcs).
+        before.edge_count = at_start ? 0
+            : polygon.count_nonnull_edges(
+                  std::min(before.first_edge, before.last_edge),
+                  std::max(before.first_edge, before.last_edge));
+        after.edge_count = at_end ? 0
+            : polygon.count_nonnull_edges(
+                  std::min(after.first_edge, after.last_edge),
+                  std::max(after.first_edge, after.last_edge));
+
+        arc_sequence_[sp.arc] = before;
+        std::size_t after_idx = arc_sequence_.size();
+        arc_sequence_.push_back(after);
+        return after_idx;
+    };
+    std::size_t p_after = split_arc(p);
+    std::size_t q_after = split_arc(q);
+
+    // ── New region: the boundary chain running clockwise (along ∂C)
+    // from p to q — p's after-half, the cycle arcs strictly between,
+    // and q's before-half ([C91 §2.2 tex 96] Lemma 2.2: ∂C order = region
+    // boundary order).  Everything else stays in `region`.
+    std::size_t r_new = add_node();
+    arc_sequence_[p_after].region_node = r_new;
+    for (std::size_t i = (ip + 1) % cycle_len; ; i = (i + 1) % cycle_len) {
+        assert(i != ip && "[C91 §3.2]: chain walk must reach q before p");
+        arc_sequence_[cycle[i]].region_node = r_new;
+        if (i == iq) break;    // q's before-half (kept slot) included
+    }
+
+    // ── Re-point adjacency slots of the region's chords that referenced
+    // a split arc.  [C91 §2.4(ii) tex 137] slot convention: slot 1 of a
+    // count-2 pair is the arc STARTING at the chord (start unchanged —
+    // the before-half keeps the slot); every other slot references the
+    // arc ENDING there — now the appended after-half.
+    auto repoint = [&](Chord::AdjArcs& adj, std::size_t old_arc,
+                       std::size_t after_idx) {
+        for (std::size_t k = 0; k < adj.count; ++k) {
+            if (adj.arcs[k] != old_arc) continue;
+            if (!(adj.count == 2 && k == 1))
+                adj.arcs[k] = after_idx;
+        }
+    };
+    for (std::size_t ci : nodes_[region].incident_chords) {
+        Chord& c = chords_[ci];
+        assert(!c.dead && "[C91 §2.4]: incident_chords holds live chords only");
+        repoint(c.left_adj,  p.arc, p_after);
+        repoint(c.left_adj,  q.arc, q_after);
+        repoint(c.right_adj, p.arc, p_after);
+        repoint(c.right_adj, q.arc, q_after);
+    }
+
+    // ── Move chords whose boundary footprint went to the new region.
+    // The new chord pq crosses no existing chord (chords are horizontal;
+    // distinct symbolic ys under SoS [C91 §2 tex 47]), so each chord's
+    // region-side arcs land in ONE chain — read the side off any slot.
+    {
+        std::vector<std::size_t> stay;
+        stay.reserve(nodes_[region].incident_chords.size());
+        for (std::size_t ci : nodes_[region].incident_chords) {
+            Chord& c = chords_[ci];
+            std::size_t side_region = NONE;
+            auto scan = [&](const Chord::AdjArcs& adj) {
+                for (std::size_t k = 0; k < adj.count; ++k) {
+                    std::size_t rn = arc_sequence_[adj.arcs[k]].region_node;
+                    if (rn != region && rn != r_new) continue;
+                    assert((side_region == NONE || side_region == rn) &&
+                           "[C91 §3.2]: a chord's boundary footprint must "
+                           "lie entirely in one chain (pq crosses no chord)");
+                    side_region = rn;
+                }
+            };
+            scan(c.left_adj);
+            scan(c.right_adj);
+            assert(side_region != NONE &&
+                   "[C91 §2.4(ii)]: chord must reference an arc of its region");
+            if (side_region == r_new) {
+                if (c.region[0] == region) c.region[0] = r_new;
+                else {
+                    assert(c.region[1] == region);
+                    c.region[1] = r_new;
+                }
+                nodes_[r_new].incident_chords.push_back(ci);
+            } else {
+                stay.push_back(ci);
+            }
+        }
+        nodes_[region].incident_chords = std::move(stay);
+    }
+
+    // ── The new chord itself.  [C91 §2.2 tex 94]: a polygon-vertex
+    // endpoint records ONE adj arc (the before-arc); a mid-edge endpoint
+    // records both halves.
+    auto endpoint_is_vertex = [&](std::size_t edge) -> bool {
+        assert(edge < polygon.num_edges());
+        const auto& e = polygon.edge(edge);
+        return symbolic_y_equal(y, symbolic_y_of(polygon.vertex(e.start_idx))) ||
+               symbolic_y_equal(y, symbolic_y_of(polygon.vertex(e.end_idx)));
+    };
+    auto make_adj = [&](const ChordPointSpec& sp,
+                        std::size_t after_idx) -> Chord::AdjArcs {
+        Chord::AdjArcs adj;
+        adj.arcs[0] = sp.arc;          // before-half (ends at the chord)
+        if (endpoint_is_vertex(sp.edge)) {
+            adj.count = 1;
+        } else {
+            adj.arcs[1] = after_idx;   // after-half (starts at the chord)
+            adj.count = 2;
+        }
+        return adj;
+    };
+
+    Chord nc;
+    nc.region[0] = region;
+    nc.region[1] = r_new;
+    nc.y = y.y;
+    nc.y_tag = y.tag;
+    nc.is_null_length = false;
+    // Slot order along the chord: ascending x ([C91 §2.4(ii)]).
+    const ChordPointSpec& lp = (p.x < q.x) ? p : q;
+    const ChordPointSpec& rp = (p.x < q.x) ? q : p;
+    std::size_t l_after = (p.x < q.x) ? p_after : q_after;
+    std::size_t r_after = (p.x < q.x) ? q_after : p_after;
+    nc.left_edge  = lp.edge;  nc.left_side  = lp.side;
+    nc.right_edge = rp.edge;  nc.right_side = rp.side;
+    nc.left_adj  = make_adj(lp, l_after);
+    nc.right_adj = make_adj(rp, r_after);
+    std::size_t chord_idx = add_chord(nc);
+
+    // ── [C91 §2.4(iii) tex 138]: keep the C-endpoint arc pointers
+    // semantically correct.  start_arc starts at C's start vertex — the
+    // before-half keeps that (and the table slot).  end_arc ENDS at the
+    // C-end wrap, which the after-half now holds.
+    if (end_arc == p.arc) end_arc = p_after;
+    if (end_arc == q.arc) end_arc = q_after;
+
+    // The appended after-halves break the canonical arc-sequence order
+    // ([C91 §2.4(iii) tex 138]); [C91 §3.3 tex 276] re-normalizes.  Clear
+    // `compacted_` so double_identify fails fast rather than silently
+    // binary-searching an unordered table.
+    compacted_ = false;
+    tree_decomp_dirty_ = true;
+
+    return InsertChordResult{chord_idx, r_new, p_after, q_after};
+}
+
 // ── Tree decomposition ──────────────────────────────────────────
 
 void Submap::build_tree_decomposition() {

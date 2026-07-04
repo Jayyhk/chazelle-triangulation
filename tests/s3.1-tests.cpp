@@ -363,13 +363,14 @@ static void test_startup_case1() {
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
-    // a₀ at vertex 4 = (4,3). Edge 3 ascending → shoot LEFT → p.x ≈ 4.
-    // Hits must be to the LEFT (x < 4).
-    // Oracle for S₁: hits at x=-10 (far left).
-    // Oracle for S₂: hits at x=3 (close left).
+    // a₀ = RIGHT companion at vertex 4 = (4,3).  Edge 3 ascending, RIGHT
+    // (east) wall → shoot RIGHT ([C91 §2.1 tex 72]: into the free region,
+    // toward C₂ which extends east).  Hits must be to the RIGHT (x > 4).
+    // Oracle for S₁: hits at x=18 (far right).
+    // Oracle for S₂: hits at x=5 (close right).
     // c₀ on ∂C₂ (closer) → Case 1.
-    StartupOracle oracle1(&C1, -10.0);
-    StartupOracle oracle2(&C2, 3.0);
+    StartupOracle oracle1(&C1, 18.0);
+    StartupOracle oracle2(&C2, 5.0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -409,12 +410,13 @@ static void test_startup_case2() {
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
-    // a₀ at vertex 4 = (4,3). Edge 3 ascending → shoot LEFT → p.x ≈ 4.
-    // Oracle for S₁: hits at x=3 (close left, on ∂C₁).
-    // Oracle for S₂: hits at x=-10 (far left, on ∂C₂).
+    // a₀ = RIGHT companion at vertex 4 = (4,3).  Edge 3 ascending → shoot
+    // RIGHT ([C91 §2.1 tex 72]).
+    // Oracle for S₁: hits at x=5 (close right, on ∂C₁).
+    // Oracle for S₂: hits at x=18 (far right, on ∂C₂).
     // c₀ on ∂C₁ (closer) → Case 2.
-    StartupOracle oracle1(&C1, 3.0);
-    StartupOracle oracle2(&C2, -10.0);
+    StartupOracle oracle1(&C1, 5.0);
+    StartupOracle oracle2(&C2, 18.0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -435,30 +437,34 @@ static void test_startup_case2() {
 
 static void test_shooting_direction_all_cases() {
     // [C91 §2.1 tex 72]: chord direction = "left of an observer walking
-    // clockwise around ∂C".  Under [C91 §2.1 tex 66]'s induced orientation,
-    // RIGHT-side walks WITH curve, LEFT-side walks AGAINST curve.
-    //   walk = ±curve_dir  ⟹  observer's left = perp_CCW(walk).
+    // clockwise around ∂C".  [C91 §2.2 tex 96]: the clockwise ∂C tour
+    // walks each region's boundary counterclockwise w.r.t. the region,
+    // so the free region — and the chord — is on the observer's LEFT.
+    // The canonical order ([C91 §2.4(iii) tex 138]) walks Side::LEFT
+    // WITH the curve (ascending) and Side::RIGHT against it:
+    //   walk = ±curve_dir  ⟹  chord direction = perp_CCW(walk).
     //
     // Construct edges with controlled ascending / descending y, then
     // verify all four (side × ascent) combinations.
     Polygon up({{0,0,0}, {1,2,1}});             // edge 0 ascending (y: 0 → 2).
     Polygon down({{0,2,0}, {1,0,1}});           // edge 0 descending.
 
-    // LEFT side, ascending edge: LEFT walks against curve = (-1,-2);
-    // observer's left = perp_CCW(-1,-2) = (2,-1) → horizontal +x → RIGHT.
-    assert(shooting_direction(0, LEFT, up) == RIGHT);
+    // LEFT side, ascending edge: LEFT walks with curve = (1,2);
+    // observer's left = perp_CCW(1,2) = (-2,1) → horizontal -x → LEFT
+    // (the west wall shoots into its free region to the west).
+    assert(shooting_direction(0, LEFT, up) == LEFT);
 
-    // LEFT side, descending edge: walk against descending curve = (-1, +2);
-    // perp_CCW = (-2, -1) → horizontal -x → LEFT.
-    assert(shooting_direction(0, LEFT, down) == LEFT);
+    // LEFT side, descending edge: walk with curve = (1,-2);
+    // perp_CCW = (2,1) → horizontal +x → RIGHT.
+    assert(shooting_direction(0, LEFT, down) == RIGHT);
 
-    // RIGHT side, ascending: RIGHT walks with curve = (1,2);
-    // perp_CCW = (-2, 1) → horizontal -x → LEFT.
-    assert(shooting_direction(0, RIGHT, up) == LEFT);
+    // RIGHT side, ascending: RIGHT walks against curve = (-1,-2);
+    // perp_CCW = (2,-1) → horizontal +x → RIGHT.
+    assert(shooting_direction(0, RIGHT, up) == RIGHT);
 
-    // RIGHT side, descending: walk = (1, -2);
-    // perp_CCW = (2, 1) → horizontal +x → RIGHT.
-    assert(shooting_direction(0, RIGHT, down) == RIGHT);
+    // RIGHT side, descending: walk = (-1,2);
+    // perp_CCW = (-2,-1) → horizontal -x → LEFT.
+    assert(shooting_direction(0, RIGHT, down) == LEFT);
 
     std::printf("  [PASS] shooting_direction_all_cases\n");
 }
@@ -551,9 +557,10 @@ static void test_startup_d1_eq_d2_defaults_to_case1() {
     S2.start_arc = ai0; S2.end_arc = ai0;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
-    // Both oracles return hits at the SAME x (3.0), so d1 == d2.
-    StartupOracle oracle1(&C1, 3.0);
-    StartupOracle oracle2(&C2, 3.0);
+    // Both oracles return hits at the SAME x (5.0, forward of a₀'s
+    // eastward shot), so d1 == d2.
+    StartupOracle oracle1(&C1, 5.0);
+    StartupOracle oracle2(&C2, 5.0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -666,21 +673,22 @@ static void test_build_fusion_sequence_skips_null_length_chords() {
 //   raw y under SoS (distinct tags).  V(C₂) has a horizontal chord
 //   between them at y = junction.y, surviving γ-granularity in S₂.
 //
-//   C₁'s last edge ascends → leaving_downward = true and a₀ shoots LEFT.
-//   C₂'s vertices arranged so that v_end is to the LEFT of junction
-//   (lower x), matching the shoot direction.
+//   C₁'s last edge ascends → leaving_downward = true and a₀ (RIGHT
+//   companion, east wall) shoots RIGHT ([C91 §2.1 tex 72]).  C₂'s
+//   vertices arranged so that v_end is to the RIGHT of the junction
+//   (higher x), matching the shoot direction.
 //
 // Expected: with leaving_downward=true (moving DOWN below the chord),
 // we enter the region BELOW the chord (the "outside" of the curve).
 static void test_startup_vertex_to_vertex_tie_break() {
     // C₁: last edge v3(3,1) → v4(4,3) ascends → leaving_downward=true,
-    // a₀_dir = LEFT.
+    // a₀_dir = RIGHT.
     auto C1 = make_C1();  // {(0,0,0), (1,2,1), (2,4,2), (3,1,3), (4,3,4)}
     auto S1 = make_S1(C1);
 
-    // C₂: start at junction (4,3,4), goes UP-LEFT to (3,5,5), then
-    // DOWN-LEFT to end vertex (2,3,6).  Start and end share raw y=3.
-    Polygon C2({{4,3,4}, {3,5,5}, {2,3,6}});
+    // C₂: start at junction (4,3,4), goes UP-RIGHT to (5,5,5), then
+    // DOWN-RIGHT to end vertex (6,3,6).  Start and end share raw y=3.
+    Polygon C2({{4,3,4}, {5,5,5}, {6,3,6}});
 
     // S₂ structure (minimal: the null-length chord at v_mid is
     // γ-removed, leaving just one big arc per ∂C side and the matching
@@ -689,7 +697,8 @@ static void test_startup_vertex_to_vertex_tie_break() {
     std::size_t r_loop    = S2.add_node(); // contains the curve arcs (above chord)
     std::size_t r_outside = S2.add_node(); // empty region below chord
 
-    // Big LEFT-side arc covering edges 0–1 (v4 → v5 → v6 on LEFT side).
+    // Big LEFT-side arc covering edges 0–1 (v4 → v5 → v6 on LEFT side —
+    // the upper faces of the peak).
     Arc a{};
     a.first_edge = 0; a.last_edge = 1;
     a.first_side = LEFT; a.last_side = LEFT;
@@ -697,7 +706,8 @@ static void test_startup_vertex_to_vertex_tie_break() {
     a.edge_count = 2;
     std::size_t ai_left = S2.add_arc(a);
 
-    // Big RIGHT-side arc covering edges 1 → 0 (descending: v6 → v5 → v4).
+    // Big RIGHT-side arc covering edges 1 → 0 (descending: v6 → v5 → v4
+    // — the under faces of the peak).
     a = {};
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
@@ -705,27 +715,31 @@ static void test_startup_vertex_to_vertex_tie_break() {
     a.edge_count = 2;
     std::size_t ai_right = S2.add_arc(a);
 
-    // Matching chord at y=3, y_tag = junction's tag (4).
-    // Both endpoints are polygon vertices.
+    // Matching chord at y=3, y_tag = junction's tag (4), running under
+    // the peak from the junction (edge 0's east wall = RIGHT, ascending)
+    // to v_end (edge 1's west wall = RIGHT, descending).  Both endpoints
+    // are polygon vertices → one adj slot each, holding the arc ENDING
+    // there in cw ∂C₂ order: at the junction (tour end) that is the
+    // RIGHT-side arc; at v_end (the end-vertex wrap) the LEFT-side arc.
     Chord c{};
     c.region[0] = r_loop;
     c.region[1] = r_outside;
-    c.left_edge = 1; c.left_side = LEFT;
-    c.right_edge = 0; c.right_side = RIGHT;
+    c.left_edge = 0; c.left_side = RIGHT;
+    c.right_edge = 1; c.right_side = RIGHT;
     c.y = 3.0; c.y_tag = 4; // junction's index
-    c.left_adj = {{ai_left}, 1};
-    c.right_adj = {{ai_right}, 1};
+    c.left_adj = {{ai_right}, 1};
+    c.right_adj = {{ai_left}, 1};
     S2.add_chord(c);
 
     S2.start_arc = ai_left; S2.end_arc = ai_left;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
-    // a₀ at (4,3). Edge 3 ascending → shoot LEFT (toward lower x).
-    // Oracle for S₁: hit at x=-10 (far LEFT, not interesting).
-    // Oracle for S₂: hit at x=2 (where v_end of C₂ is).
+    // a₀ at (4,3). Edge 3 ascending, RIGHT wall → shoot RIGHT.
+    // Oracle for S₁: hit at x=20 (far RIGHT, not interesting).
+    // Oracle for S₂: hit at x=6 (where v_end of C₂ is).
     // c₀ on ∂C₂ (closer) → Case 1.  a₀c₀ lies on the matching chord.
-    StartupOracle oracle1(&C1, -10.0);
-    StartupOracle oracle2(&C2, 2.0);
+    StartupOracle oracle1(&C1, 20.0);
+    StartupOracle oracle2(&C2, 6.0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -759,10 +773,12 @@ static void test_startup_vertex_to_vertex_tie_break() {
 // structural check + adjacent vertex SoS comparison.
 //
 // Setup: C₂'s curve goes UP from junction (y=3) to v_mid (y=5) and
-// back DOWN past y=3 to v_end (y=1).  The horizontal ray from junction
-// at y=3 crosses edge 1 (v_mid → v_end) mid-edge.  Two LEFT-side adj
-// arcs at the crossing — one above (from v_mid_L down to crossing)
-// and one below (from crossing down to v_end_L).
+// back DOWN past y=3 to v_end (y=1).  a₀ (east wall) shoots RIGHT
+// ([C91 §2.1 tex 72]); the horizontal ray from the junction at y=3
+// crosses edge 1 (v_mid → v_end) mid-edge on its west wall (= RIGHT
+// side of the descending edge).  Two RIGHT-side adj arcs at the
+// crossing — one below (from v_end up to the crossing, ending at the
+// chord) and one above (from the crossing up to v_mid, starting at it).
 //
 // (The null-length chord at v_mid is conceptually present per [C91 §2.1 tex 72]
 // but is not modeled explicitly — the lambda processes only the matching
@@ -773,36 +789,35 @@ static void test_startup_mid_edge_tie_break() {
     auto S1 = make_S1(C1);
 
     // C₂: junction at y=3, peak at y=5, end at y=1.  Edge 1 descends
-    // from y=5 to y=1 crossing y=3 at x≈2.5.
-    Polygon C2({{4,3,4}, {3,5,5}, {2,1,6}});
+    // from y=5 to y=1 crossing y=3 at x=5.5.
+    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
 
     Submap S2;
     std::size_t r_above = S2.add_node();
     std::size_t r_below = S2.add_node();
 
-    // LEFT-side arc above the chord: from v_mid_L down edge 1 to the
-    // mid-edge crossing.  Single-edge on edge 1.  Starts at v_mid_L
-    // (the top companion of v_mid's null-length chord, conceptually),
-    // ends at the chord crossing.
+    // RIGHT-side arc above the chord: from the mid-edge crossing up
+    // edge 1's west wall to v_mid.  Single-edge on edge 1.  STARTS at
+    // the chord crossing (cw RIGHT-side traversal ascends this edge).
     Arc a{};
     a.first_edge = 1; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r_above;
     a.edge_count = 1;
-    std::size_t ai_above_L = S2.add_arc(a);
+    std::size_t ai_above_R = S2.add_arc(a);
 
-    // LEFT-side arc below the chord: from mid-edge crossing down edge 1
-    // to v_end_L.  Single-edge on edge 1.  Starts at the chord.
+    // RIGHT-side arc below the chord: from v_end up edge 1's west wall
+    // to the crossing.  Single-edge on edge 1.  ENDS at the chord.
     a = {};
     a.first_edge = 1; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r_below;
     a.edge_count = 1;
-    std::size_t ai_below_L = S2.add_arc(a);
+    std::size_t ai_below_R = S2.add_arc(a);
 
-    // RIGHT-side arc at v_junction_R (vertex endpoint at the junction).
-    // Single-edge on edge 0.  RIGHT-side traversal starts at v_mid_R
-    // and descends edge 0 to v_junction_R.
+    // RIGHT-side arc at v_junction_R (vertex endpoint at the junction):
+    // from v_mid down edge 0's east wall to the junction, ENDING at the
+    // chord's junction endpoint (the tour's last stretch).
     a = {};
     a.first_edge = 0; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
@@ -811,24 +826,25 @@ static void test_startup_mid_edge_tie_break() {
     std::size_t ai_right_at_junction = S2.add_arc(a);
 
     // Matching chord at y=3, y_tag=4 (junction's tag).
-    // Left slot: mid-edge crossing on edge 1 (two adj arcs).
-    // Right slot: v_junction_R on edge 0 (one adj arc).
+    // Left slot: v_junction_R on edge 0 (vertex endpoint, one adj arc).
+    // Right slot: mid-edge crossing on edge 1 (two adj arcs — slot 0
+    // ends at the chord, slot 1 starts at it, [C91 §2.4(ii) tex 137]).
     Chord c{};
     c.region[0] = r_above;
     c.region[1] = r_below;
-    c.left_edge = 1; c.left_side = LEFT;
-    c.right_edge = 0; c.right_side = RIGHT;
+    c.left_edge = 0; c.left_side = RIGHT;
+    c.right_edge = 1; c.right_side = RIGHT;
     c.y = 3.0; c.y_tag = 4;
-    c.left_adj = {{ai_above_L, ai_below_L}, 2};
-    c.right_adj = {{ai_right_at_junction}, 1};
+    c.left_adj = {{ai_right_at_junction}, 1};
+    c.right_adj = {{ai_below_R, ai_above_R}, 2};
     S2.add_chord(c);
 
-    S2.start_arc = ai_above_L; S2.end_arc = ai_above_L;
+    S2.start_arc = ai_above_R; S2.end_arc = ai_above_R;
     S2.start_vertex = 0; S2.end_vertex = 2;
 
-    // a₀ shoots LEFT and hits the mid-edge crossing on edge 1 at x≈2.5.
-    StartupOracle oracle1(&C1, -10.0);
-    StartupOracle oracle2(&C2, 2.5);
+    // a₀ shoots RIGHT and hits the mid-edge crossing on edge 1 at x=5.5.
+    StartupOracle oracle1(&C1, 20.0);
+    StartupOracle oracle2(&C2, 5.5);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -838,16 +854,17 @@ static void test_startup_mid_edge_tie_break() {
     assert(start == 1);
     // Tie-break: leaving_downward=true → elect region BELOW chord.
     //
-    // Trace through resolve_s2_region's mid-edge branch:
-    //   - ai_above_L: single-edge on chord's edge.  arc_start_symbolic_y
-    //     hits the polygon-vertex case at vertex(first_edge=1) = v_mid
-    //     (y=5,tag=5) ≠ chord (y=3,tag=4) → ENDS at chord.  Previous vertex (LEFT,
-    //     last_edge=1) = C₂.edge(1).start_idx = v_mid (y=5 > 3) →
-    //     arc0_above = TRUE.
-    //   - ai_below_L: single-edge.  arc_start_symbolic_y finds chord via
-    //     c.left_adj.arcs[1] match → returns chord's (3,4) → STARTS at
-    //     chord.  Next vertex (LEFT, first_edge=1) = C₂.edge(1).end_idx
-    //     = v_end (y=1 < 3) → arc1_above = FALSE.
+    // Trace through resolve_s2_region's mid-edge branch (adj = the
+    // count-2 right slot):
+    //   - ai_below_R: single-edge on chord's edge.  arc_start_symbolic_y
+    //     hits the polygon-vertex case at vertex(first_edge+1=2) = v_end
+    //     (y=1,tag=6) ≠ chord (y=3,tag=4) → ENDS at chord.  Adjacent
+    //     vertex away from the chord (RIGHT, last_edge=1) =
+    //     C₂.edge(1).end_idx = v_end (y=1 < 3) → arc0_above = FALSE.
+    //   - ai_above_R: arc_start_symbolic_y finds the chord via
+    //     c.right_adj.arcs[1] match → returns chord's (3,4) → STARTS at
+    //     the chord.  Adjacent vertex (RIGHT, first_edge=1) =
+    //     C₂.edge(1).start_idx = v_mid (y=5 > 3) → arc1_above = TRUE.
     //   - above_r = r_above, below_r = r_below.
     //   - leaving_downward=true → return below_r = r_below.
     assert(state.s2_region == r_below &&
@@ -1369,10 +1386,11 @@ static void test_startup_case1_junction_at_start() {
     S_W.start_vertex = 0; S_W.end_vertex = 2;
 
     // a₀ = LEFT companion at W's vertex 0 = (4,3).  W's edge 0 ascends
-    // (3→5), so a₀ shoots RIGHT (+x).  Walker hit far (x=20, d=16);
-    // target hit near (x=5, d=1) → c₀ ∈ ∂C_target → Case 1.
-    StartupOracle oracleW(&W, 20.0);
-    StartupOracle oracleT(&T, 5.0);
+    // (3→5): the LEFT (west) wall shoots LEFT ([C91 §2.1 tex 72] — toward
+    // the target T, which extends west).  Walker hit far (x=-10, d=14);
+    // target hit near (x=3, d=1) → c₀ ∈ ∂C_target → Case 1.
+    StartupOracle oracleW(&W, -10.0);
+    StartupOracle oracleT(&T, 3.0);
 
     FusionState state;
     state.junction_at_end = false;

@@ -32,6 +32,16 @@ struct MergeInput {
     const RayShootingOracle* ray_shooter_2 = nullptr;
     const ArcCuttingOracle*  arc_cutter_1  = nullptr;
     const ArcCuttingOracle*  arc_cutter_2  = nullptr;
+
+    // [C91 §3.0(ii) tex 170]: the arc-cutters' bounds — cut() produces at
+    // most g(γᵢ) pieces, each carrying an h(γᵢ)-granular conformal
+    // submap.  [C91 §3.2] validates every cut() result against these via
+    // assert_cut_postconditions.  Values are supplied by whoever built
+    // the oracles ([C91 §3.4] / the up-phase [C91 §4]).
+    std::size_t g_gamma1 = 0;
+    std::size_t g_gamma2 = 0;
+    std::size_t h_gamma1 = 0;
+    std::size_t h_gamma2 = 0;
 };
 
 struct MergeResult {
@@ -82,6 +92,12 @@ inline void assert_merge_preconditions(const MergeInput& in) {
     assert(in.ray_shooter_1 && in.ray_shooter_2 &&
            in.arc_cutter_1 && in.arc_cutter_2 &&
            "[C91 §3.0 tex 166–170]: all four per-submap oracles required");
+
+    // [C91 §3.0(ii) tex 170]: cut() produces ≥ 1 piece with a submap, so
+    // any valid arc-cutter has g(γᵢ) ≥ 1 and h(γᵢ) ≥ 1.
+    assert(in.g_gamma1 >= 1 && in.g_gamma2 >= 1 &&
+           in.h_gamma1 >= 1 && in.h_gamma2 >= 1 &&
+           "[C91 §3.0(ii) tex 170]: arc-cutter bounds g(γᵢ), h(γᵢ) required");
 
     assert(in.gamma1 <= in.gamma2 && "[C91 §3]: γ₁ ≤ γ₂");
     assert(in.gamma  >= in.gamma2 && "[C91 §3]: target γ ≥ γ₂");

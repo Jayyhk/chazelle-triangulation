@@ -1,6 +1,7 @@
 // src/merge/merge.cpp
 
 #include "merge.h"
+#include "conformality.h"
 
 namespace chazelle {
 
@@ -38,11 +39,27 @@ static void fuse(Submap& /*S*/, const MergeInput& /*in*/,
                   const Polygon& /*C*/) {
 }
 
-// [C91 §3.2]: Stage 2 — restore conformality by cutting up >4-arc
-// regions using the arc-cutting oracle (binary search through tree
-// decompositions + ray-shooters).  TODO: implement.
-static void restore_conformality(Submap& /*S*/, const MergeInput& /*in*/,
-                                  const Polygon& /*C*/) {
+// [C91 §3.2]: Stage 2 — reduce every region to at most four arcs by
+// adding visibility chords (Lemmas 3.2–3.4; see conformality.h).  On the
+// pre-fusion empty submap (stage 1 is still blocked on [C91 §3.4]'s
+// oracle) this is a no-op — no arcs, no regions to cut.
+static void restore_conformality(Submap& S, const MergeInput& in,
+                                        const Polygon& C) {
+    ConformalityOracles o;
+    o.S1 = in.S1;
+    o.S2 = in.S2;
+    o.C1 = in.C1;
+    o.C2 = in.C2;
+    o.ray1 = in.ray_shooter_1;
+    o.ray2 = in.ray_shooter_2;
+    o.cut1 = in.arc_cutter_1;
+    o.cut2 = in.arc_cutter_2;
+    o.g_gamma1 = in.g_gamma1;
+    o.g_gamma2 = in.g_gamma2;
+    o.h_gamma1 = in.h_gamma1;
+    o.h_gamma2 = in.h_gamma2;
+    if (S.num_arcs() == 0 && S.num_nodes() == 0) return;  // fuse() TODO gate
+    restore_conformality(S, C, o);
 }
 
 // [C91 §3.3]: Stage 3 — bring S to the desired granularity by removing

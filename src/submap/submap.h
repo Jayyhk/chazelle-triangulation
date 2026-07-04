@@ -183,6 +183,65 @@ public:
     SymbolicY arc_start_symbolic_y(std::size_t arc_idx,
                                     const class Polygon& polygon) const;
 
+    // Symmetric to `arc_start_symbolic_y`: the symbolic y of the arc's
+    // ENDING position on ∂C.  [C91 §2.4 tex 133]: derived from the
+    // bounding chord (slot 0 / count-1 slot = the arc ending at the
+    // chord per the §2.4(ii) adjacency convention), or from the input
+    // table's vertex y when the arc ends at a polygon vertex.
+    // O(degree) per call.  Needed by [C91 §3.2]'s arc splitting and hit
+    // attribution.
+    SymbolicY arc_end_symbolic_y(std::size_t arc_idx,
+                                  const class Polygon& polygon) const;
+
+    // ── [C91 §3.2]: Chord insertion ───────────────────────────────────
+
+    // Position of a new chord endpoint on ∂C, inside a region arc.
+    struct ChordPointSpec {
+        std::size_t arc;        // live arc of the region containing the point
+        std::size_t edge;       // input-table edge of the point
+        Side side;              // ∂C side of the point
+        double x;               // exact x of the point on the edge at y
+    };
+
+    struct InsertChordResult {
+        std::size_t chord_idx;
+        std::size_t new_region;     // == chord(chord_idx).region[1]
+        std::size_t p_after_arc;    // appended second half of p.arc
+        std::size_t q_after_arc;    // appended second half of q.arc
+    };
+
+    // [C91 §3.2 tex 264]: "adding new chords into S" — insert the
+    // visibility chord pq (horizontal at symbolic y) into `region`,
+    // splitting it into two regions.  p and q must be mutually visible
+    // with respect to C (caller establishes this via Lemma 3.2) and must
+    // lie on two DISTINCT arcs of `region`.
+    //
+    // `cycle` = the region's live arcs in clockwise ∂C traversal order
+    // (Lemma 2.2 [C91 §2.2 tex 96]: the ∂C-order subsequence of a
+    // region's arcs IS its boundary cycle, counterclockwise).  The caller
+    // ([C91 §3.2]'s driver) maintains this inventory.
+    //
+    // Splits p.arc / q.arc in two (the first half keeps the table slot,
+    // the second half is APPENDED — canonical arc-sequence order is NOT
+    // maintained; [C91 §3.3 tex 276] "We can now put S in normal form"
+    // owns re-normalization, so `compacted_` is cleared to make
+    // double_identify fail fast until then).
+    //
+    // Preconditions (asserted): neither p nor q coincides with an
+    // existing chord endpoint of the region — a ∂C point's horizontal
+    // visibility is unique ([C91 §2.1 tex 70]), so a chord endpoint's
+    // visibility is already realized by its chord.
+    //
+    // O(|cycle| + degree) — O(1) for [C91 §3.2]'s bounded-arc regions
+    // (tex 238), preserving Lemma 3.4's bound.
+    InsertChordResult insert_chord(const ChordPointSpec& p,
+                                    const ChordPointSpec& q,
+                                    SymbolicY y,
+                                    std::size_t region,
+                                    const std::size_t* cycle,
+                                    std::size_t cycle_len,
+                                    const class Polygon& polygon);
+
     // [C91 §2.4(iv)]: conformal ⟹ tree decomposition available.
     void build_tree_decomposition();
     const TreeDecomposition& tree_decomposition() const noexcept {
