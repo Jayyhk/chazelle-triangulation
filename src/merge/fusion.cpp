@@ -595,14 +595,21 @@ std::size_t fusion_startup(FusionState& state,
     } else {
         // [C91 §3.1 case (ii)]: "skip all the way to c₀ ... set p = c₀, call
         // the region of S₂ containing a₀ current."  c₀ is on an edge
-        // interior, not a named vertex (index = NONE).
-        state.p = Point{c0.x, c0.y, NONE};
+        // interior, not a named vertex.
+        // [C91 §2 tex 47]: c₀ shares its perturbed y with a₀ (the
+        // horizontal visibility chord); it has no vertex tag of its own,
+        // so it borrows a₀'s tag for SoS comparisons.  The tag MUST ride
+        // on Point.index (the oracle reads its SymbolicY as {p.y,
+        // p.index}); leaving it NONE shifts the ray infinitesimally off
+        // a₀'s y and makes a hit that lands exactly on a vertex at that
+        // y (e.g. a local-minimum junction) slip past — tripping the
+        // [C91 §3.1 tex 181] "local shoot must hit" invariant.
+        state.p = Point{c0.x, c0.y, a0.y.tag};
         state.p_edge = c0.edge;
         state.p_side = c0.side;
-        // [C91 §3.1 + §2 tex 47]: c₀ shares its perturbed y with a₀ (the
-        // horizontal visibility chord); it has no vertex tag of its own,
-        // so it borrows a₀'s tag for SoS comparisons.  See c0_y below.
         state.p_y = a0.y;
+        assert(state.p.index == state.p_y.tag &&
+               "[C91 §2 tex 47]: p's SoS tag must match its symbolic y");
 
         // Topological slope leaving c₀.
         assert(c0.edge < C1.num_edges());
@@ -1207,7 +1214,11 @@ void fuse_submaps(FusionState& state,
                                           : chord_ab.right_side;
                 SymbolicY chord_y = chord_ab.symbolic_y();
                 Point q_point = s2_endpoint_point(q_edge, chord_y);
-                Point p_prime{r.p_prime_hit.x, r.p_prime_hit.y, NONE};
+                // p' lies mid-edge on A_j but its perturbed y is
+                // chord_ab's (the back-shot's source); carry that SoS tag
+                // on Point.index so oracle shots from p keep the correct
+                // y (see the case (ii) startup note above).
+                Point p_prime{r.p_prime_hit.x, r.p_prime_hit.y, chord_y.tag};
 
                 // q on C₂ (S₂ exit chord endpoint); p' on C₁ (A_j of S₁).
                 if (q_point.x < p_prime.x)

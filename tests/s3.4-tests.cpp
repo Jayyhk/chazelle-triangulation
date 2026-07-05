@@ -578,6 +578,199 @@ static void test_structure_separator_recursion() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  3c. Wrap-straddling regions: > 4 table arcs — exercises the
+//      RegionArcs / collect_region_arcs fix and region_weight's seam
+//      handling ([C91 §2.4 tex 142] split representation)
+// ════════════════════════════════════════════════════════════════
+
+// Ground truth: a region's live arcs by full-table scan.
+static std::vector<std::size_t> region_table_arcs(const Submap& S,
+                                                  std::size_t r) {
+    std::vector<std::size_t> out;
+    for (std::size_t ai = 0; ai < S.num_arcs(); ++ai)
+        if (!S.arc(ai).dead && S.arc(ai).region_node == r)
+            out.push_back(ai);
+    return out;
+}
+
+static void test_collect_region_arcs_wrap_straddle() {
+    ConformalComb cc;
+    const Submap& S = cc.fx.S;
+
+    // The conformal comb keeps a region that straddles C's endpoint
+    // wraps and so holds > 4 TABLE arcs (≤ 4 paper arcs + wrap splits,
+    // [C91 §2.4 tex 142]) — the case the old RegionArcs::MAX = 4 aborted
+    // on.
+    std::size_t max_r = NONE, max_n = 0;
+    for (std::size_t r = 0; r < S.num_nodes(); ++r) {
+        if (S.node(r).dead) continue;
+        std::size_t n = region_table_arcs(S, r).size();
+        if (n > max_n) { max_n = n; max_r = r; }
+    }
+    assert(max_n > 4 &&
+           "[C91 §2.4 tex 142]: the conformal comb must have a "
+           "wrap-straddling region with > 4 table arcs (else this test "
+           "proves nothing about the RegionArcs fix)");
+
+    // collect_region_arcs must gather EVERY table arc of the region —
+    // no overflow, no silent miss.
+    RegionArcs got = collect_region_arcs(S, max_r);
+    auto want = region_table_arcs(S, max_r);
+    assert(got.count == want.size() &&
+           "[C91 §3.1 tex 181 + §2.4 tex 142]: collect_region_arcs must "
+           "gather every table arc of a wrap-straddling region");
+    for (std::size_t ai : want) {
+        bool found = false;
+        for (std::size_t g : got) if (g == ai) { found = true; break; }
+        assert(found &&
+               "[C91 §3.1 tex 181]: collect_region_arcs reaches every "
+               "table arc (chord adjacency + the four C-endpoint arcs)");
+    }
+
+    std::printf("  [PASS] collect_region_arcs_wrap_straddle "
+                "(region %zu, %zu table arcs)\n", max_r, max_n);
+}
+
+static void test_region_weight_wrap_straddle() {
+    ConformalComb cc;
+    const Submap& S = cc.fx.S;
+
+    // region_weight gathers by chord-adjacency + {start,end,tail}_arc and
+    // deliberately omits lrb (reachable via adjacency).  Referee it
+    // against the true max edge_count over ALL the region's table arcs —
+    // if it ever missed a seam arc carrying the max, this would catch it.
+    bool saw_straddle = false;
+    for (std::size_t r = 0; r < S.num_nodes(); ++r) {
+        if (S.node(r).dead) continue;
+        auto arcs = region_table_arcs(S, r);
+        if (arcs.size() > 4) saw_straddle = true;
+        std::size_t truth = 0;
+        for (std::size_t ai : arcs)
+            truth = std::max(truth, S.arc(ai).edge_count);
+        assert(S.region_weight(r) == truth &&
+               "[C91 §2.2]: region_weight must equal the max edge_count "
+               "over ALL the region's table arcs — including wrap-split "
+               "seam arcs it reaches only through adjacency");
+    }
+    assert(saw_straddle &&
+           "the conformal comb must contain a wrap-straddling region");
+
+    std::printf("  [PASS] region_weight_wrap_straddle\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  3d. A merged submap with NO through-infinity chord — exercises
+//      build_vertical_line's region_infinity_ branch and the query's
+//      tex-308 no-D*-hit fallback ([C91 §3.4 tex 306–308])
+// ════════════════════════════════════════════════════════════════
+
+static void test_structure_no_wrapped_chords() {
+    // The merged junction (4,5) is a LOCAL max but NOT the global max
+    // (9), so its outside pair is a finite chord — no chord of the
+    // fusion runs through infinity ([C91 §2.1 tex 70]).  With μ > 1 and
+    // an empty wrapped-chord set, build_vertical_line takes the
+    // region_infinity_ branch, and queries that strike no D* region
+    // route through it (the tex-308 fallback), rather than the
+    // vertical-line binary search the comb exercises.
+    Polygon C1({{0,0,0}, {2,3,1}, {4,5,2}});
+    Polygon C2({{4,5,2}, {6,2,3}, {8,9,4}});
+    Submap S1 = make_chordless_normal(C1);
+    Submap S2 = make_chordless_normal(C2);
+    const std::size_t g = std::max(C1.num_edges(), C2.num_edges());
+    SubmapRayShooter r1(S1, C1, g), r2(S2, C2, g);
+    SafeArcCutter c1(&C1, 64), c2(&C2, 64);
+
+    MergeInput in;
+    in.C1 = &C1; in.C2 = &C2; in.S1 = &S1; in.S2 = &S2;
+    in.gamma1 = g; in.gamma2 = g; in.gamma = g;
+    in.ray_shooter_1 = &r1; in.ray_shooter_2 = &r2;
+    in.arc_cutter_1 = &c1; in.arc_cutter_2 = &c2;
+    in.g_gamma1 = 64; in.g_gamma2 = 64; in.h_gamma1 = 64; in.h_gamma2 = 64;
+    MergeResult res = merge(in);
+
+    std::size_t gamma = 0;
+    for (std::size_t r = 0; r < res.S.num_nodes(); ++r)
+        if (!res.S.node(r).dead)
+            gamma = std::max(gamma, res.S.region_weight(r));
+
+    RayShootingStructure rs(res.S, res.C, gamma);
+    assert(rs.mu() > 1 && "the merge must retain structure");
+    assert(rs.vertical_line().empty() &&
+           "[C91 §2.1 tex 70]: no chord wraps ⟹ empty vertical line");
+    assert(rs.region_at_infinity() != NONE &&
+           rs.region_at_infinity() < res.S.num_nodes() &&
+           !res.S.node(rs.region_at_infinity()).dead &&
+           "[C91 §3.4 tex 306]: a live polar region is elected when no "
+           "chord crosses the vertical line");
+
+    Rng rng(0x5EEDu);
+    for (std::size_t v = 0; v < res.C.num_vertices(); ++v) {
+        check_against_brute(rs, res.C, res.C.vertex(v), LEFT);
+        check_against_brute(rs, res.C, res.C.vertex(v), RIGHT);
+    }
+    for (int i = 0; i < 2000; ++i) {
+        Point p{rng.uniform(-2.0, 10.0), rng.uniform(-2.0, 11.0), SOS_NONE};
+        check_against_brute(rs, res.C, p, (i & 1) ? LEFT : RIGHT);
+    }
+
+    std::printf("  [PASS] structure_no_wrapped_chords (mu=%zu, "
+                "region_infinity path)\n", rs.mu());
+}
+
+// ════════════════════════════════════════════════════════════════
+//  3e. Regression: merge across a LOCAL-MINIMUM junction — the mid-edge
+//      current point p must carry its borrowed SoS tag ([C91 §2 tex 47])
+// ════════════════════════════════════════════════════════════════
+
+static void test_local_min_junction() {
+    // Junction (4,2) is a LOCAL min of C (neighbours 3 and 4) but not the
+    // GLOBAL min (v0 = 1).  In the case (ii) startup, c₀ = (1,2) on ∂C₁
+    // sees ∂C₂ only at the junction vertex, which lies exactly at c₀'s y.
+    // c₀ has no vertex tag of its own and borrows a₀'s (the junction's);
+    // if that tag is dropped (Point.index = NONE) the oracle shoots at a
+    // perturbed y that slips past the junction, tripping the [C91 §3.1
+    // tex 181] "local shoot must hit" invariant.  This merge must
+    // complete and the result must be geometrically correct.
+    Polygon C1({{0,1,0}, {2,3,1}, {4,2,2}});
+    Polygon C2({{4,2,2}, {6,4,3}, {8,7,4}});
+    Submap S1 = make_chordless_normal(C1);
+    Submap S2 = make_chordless_normal(C2);
+    const std::size_t g = std::max(C1.num_edges(), C2.num_edges());
+    SubmapRayShooter r1(S1, C1, g), r2(S2, C2, g);
+    SafeArcCutter c1(&C1, 64), c2(&C2, 64);
+
+    MergeInput in;
+    in.C1 = &C1; in.C2 = &C2; in.S1 = &S1; in.S2 = &S2;
+    in.gamma1 = g; in.gamma2 = g; in.gamma = g;
+    in.ray_shooter_1 = &r1; in.ray_shooter_2 = &r2;
+    in.arc_cutter_1 = &c1; in.arc_cutter_2 = &c2;
+    in.g_gamma1 = 64; in.g_gamma2 = 64; in.h_gamma1 = 64; in.h_gamma2 = 64;
+    MergeResult res = merge(in);           // must not abort
+
+    res.S.check_invariants(res.C);
+    assert(res.S.is_conformal());
+    assert(res.S.is_granular(g, res.C));
+
+    std::size_t gamma = 0;
+    for (std::size_t r = 0; r < res.S.num_nodes(); ++r)
+        if (!res.S.node(r).dead)
+            gamma = std::max(gamma, res.S.region_weight(r));
+    RayShootingStructure rs(res.S, res.C, gamma);
+
+    Rng rng(0xA11CEu);
+    for (std::size_t v = 0; v < res.C.num_vertices(); ++v) {
+        check_against_brute(rs, res.C, res.C.vertex(v), LEFT);
+        check_against_brute(rs, res.C, res.C.vertex(v), RIGHT);
+    }
+    for (int i = 0; i < 2000; ++i) {
+        Point p{rng.uniform(-2.0, 10.0), rng.uniform(-1.0, 9.0), SOS_NONE};
+        check_against_brute(rs, res.C, p, (i & 1) ? LEFT : RIGHT);
+    }
+
+    std::printf("  [PASS] local_min_junction\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 //  4. [C91 §3.0(i)] adapter — subarc filtering
 // ════════════════════════════════════════════════════════════════
 
@@ -758,6 +951,10 @@ int main() {
     test_structure_trivial_mu1();
     test_structure_comb();
     test_structure_separator_recursion();
+    test_collect_region_arcs_wrap_straddle();
+    test_region_weight_wrap_straddle();
+    test_structure_no_wrapped_chords();
+    test_local_min_junction();
     test_oracle_adapter();
     test_fusion_wrapped_junction();
     test_merge_comb_e2e();
