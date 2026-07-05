@@ -4,9 +4,11 @@ Two kinds of entries, both cited against
 `papers/chazelle1991-transcribed.tex`. **Deferrals**: work that depends
 on machinery from later sections of the paper, each owned by a future
 section. **Deviations**: places where the implementation deliberately
-departs from the paper's literal text because the text is demonstrably
-wrong; each carries the proof and the test that pins it. None is a
-silent gap or an unexamined deviation.
+departs from the paper's literal text — either because the text is
+demonstrably wrong, or because an equivalent representation better fits
+the data structures; each carries the reasoning (and, where it fixes a
+bug, the test that pins it). None is a silent gap or an unexamined
+deviation.
 
 ## Documented paper deviations (not deferrals)
 
@@ -54,52 +56,80 @@ silent gap or an unexamined deviation.
     `tests/s3.3-tests.cpp::test_degree_drop_recheck` pins the
     counterexample shape permanently.
 
+- **[C91 §2.4 tex 142]'s double-backing arc-structure — we split
+  instead.** An *equivalence*, not a correction: the paper's
+  representation is correct; we choose a different-but-equivalent one so
+  that the arc-sequence table is uniformly single-side.
+
+  - **What the paper says.** A single arc that wraps around a C-endpoint
+    ("double-backing") is stored as ONE arc-structure with two
+    input-table pointers e₁, eₜ ([C91 §2.4 tex 142]: "an arc might wrap
+    around both sides of C ... detected... as soon as we reach an edge
+    of P incident upon an endpoint of C").
+  - **What we do.** `rebuild_submap` (the §3.1 fusion-output builder)
+    and `Submap::normalize` emit only single-side arc-structures
+    (`first_side == last_side`): each wrap-spanning arc is split at the
+    C-endpoint into a LEFT leg and a RIGHT leg — two separate table
+    entries. (The `Arc` type can still express double-backing, and
+    `double_identify` retains seam handling for it, but the merge/normal
+    -form path never produces one.)
+  - **Why.** The arc-sequence table is a total order — LEFT arcs
+    ascending by `first_edge`, then RIGHT descending ([C91 §2.4(iii)
+    tex 138]; enforced by `add_arc`). `double_identify` ([C91 §2.4
+    tex 144]) breaks the circular sequence into those two linear halves
+    and binary-searches each by (edge, y). A double-backing arc
+    straddles both halves — it sorts into one run but is invisible to
+    the other half's search — so the paper has to special-case the ≤ 2
+    endpoint arcs at the seam. Splitting keeps every entry in exactly
+    one half, so the O(log m) search — and every arc traversal, weight
+    sum, and region-cycle walk — needs no per-arc "is this wrapped?"
+    branch. (No recorded rationale from the original §2 author; this is
+    the reconstructed engineering benefit, and it is the invariant the
+    rest of the codebase is actually built on.)
+  - **Cost / consequence.** ≤ 2 extra arc-structures per submap (one per
+    C-endpoint wrap). Conformality still bounds a region to ≤ 4 PAPER
+    arcs (degree ≤ 4, [C91 §2.3 tex 114]), but a region straddling both
+    wraps then holds up to 4 + 2 = 6 arc-STRUCTURES.
+    `fused_region_cycle` re-glues the legs into `LogicalArc`s wherever
+    the paper's arc COUNT is meant (§3.2's "≤ 4 arcs" target);
+    `is_conformal` (degree) is the paper invariant. Relied on by §2.4
+    `double_identify`, §3.1 `collect_region_arcs` (the four C-endpoint
+    arcs), §3.2 `LogicalArc`, and §3.4
+    `RayShootingStructure::build_faces` (whose per-region assert is
+    therefore ≤ 6, not ≤ 4 — the ≤ 4 form silently crashed on the first
+    conformal fixture with a wrap-straddling region, 2026-07-04).
+  - **Equivalence, not correction.** The paper itself conceptually
+    splits the circular arc sequence into two linear sequences at the
+    same two C-endpoints ([C91 §2.4 tex 144]); we make that split
+    physical. Both representations encode the same V(C), and Lemma 2.3's
+    bounds (O(n/γ) regions, O(γ) edges per region) are untouched by the
+    O(1) extra structures.
+
 ## Blocked on future sections
 
-1. **Merge wiring** (`merge.cpp::fuse`) — owned by **§3.4**.
-   [C91 §3 tex 164]: "The merge proceeds in three stages" — stage 1 =
-   fusion (§3.1, `fuse`), stage 2 = restoring conformality (§3.2,
-   `restore_conformality`), stage 3 = maintaining granularity (§3.3,
-   `enforce_granularity` + `Submap::normalize`); `merge()` runs exactly
-   this pipeline. Stage 1's three-call wiring (pass 1, pass 2 with
-   `junction_at_end = false`, `rebuild_submap`) is documented at the
-   TODO in `fuse` but needs §3.4's real ray-shooting oracle before it
-   can execute: `local_shoot` trips [C91 §3.1 tex 181]'s "local shoot
-   must hit" assertion under stub oracles. This is now the ONLY
-   blocker: stage 2 was implemented and wired 2026-07-03 and stage 3
-   on 2026-07-04, so `merge()`'s contract ([C91 §3 tex 160]: "to merge
-   S₁ and S₂ means to compute a normal-form γ-granular conformal
-   submap of V(C)"; Lemma 3.5 tex 279) is met end-to-end once `fuse`
-   produces a real fusion. Stages 2 and 3 gate themselves off while
-   `fuse` still produces an empty submap.
-
-2. **Wrapped (through-infinity) hits in the §3.1 fusion walk** — owned
-   by **§3.4**. `RayHit.wrapped` ([C91 §2.1 tex 70]: a ray that misses
-   everything "wraps around in the spherical plane until it hits C
-   again") is fully supported by §3.2's `local_shoot_fused`
-   (lexicographic (wrapped, distance) nearest order; d ≤ 0 behind the
-   source), but §3.1's `local_shoot` and the case (i)/(ii) distance
-   comparisons in `fuse_submaps` do not model the wrap metric yet —
-   `local_shoot` asserts `!hit.wrapped` with a §3.4 TODO. A real fusion
-   whose junction is a global y-extremum (a₀'s startup shot wraps —
-   e.g. the apex outside-pair chord) needs this. Extend alongside
-   §3.4's real oracle.
-
-3. **End-to-end geometric validation of fusion** — owned by **§3.4**.
-   The §3.1 fusion loop (both tour orientations) is validated
-   line-by-line against the paper plus structural tests (sequence shape,
-   startup region election, main-loop termination, dedup, full §2.4
-   invariants on rebuild output), but has never run against a TRUE
-   geometric visibility oracle. That residual risk is irreducible until
-   §3.4 supplies one. (§3.2 now HAS run end-to-end against true
-   geometric oracles — `tests/s3.2-tests.cpp`'s comb fixture — which is
-   what exposed and fixed the inverted `shooting_direction` convention
-   on 2026-07-03; see `src/merge/fusion.cpp`.)
-
-4. **e2e `double_identify` completeness** — owned by **§4** (up-phase).
+1. **e2e `double_identify` completeness** — owned by **§4** (up-phase).
    The randomized test verifies soundness (every returned arc contains
    the query edge, counts ≤ 6 per [C91 §2.4 tex 144], non-empty at
    vertices) but not exhaustiveness against a symbolic reference; the
    conservative brute-force set is a superset by construction.
    Strengthening this requires a full symbolic V(C) reference map,
    natural once §4's up-phase provides one.
+
+2. **Arc-cutting oracle** — owned by **§4** (up-phase).
+   [C91 §3.4 tex 284]: "The arc-cutter is implemented by using the
+   divide-and-conquer structure of the up-phase of the visibility
+   algorithm ... we postpone the discussion of its implementation."
+   Tests supply [C91 §3.0(ii) tex 170]-compliant cutters (validated by
+   `assert_cut_postconditions`); the production cutter arrives with
+   §4.1's chain decomposition ([C91 §4.1 tex 341–346]).
+
+3. **[C91 §3.0(i) tex 169] oracle over piece structures** — owned by
+   **§4** (up-phase). tex 169 specifies the report "in the absence of
+   any obstacle except α'"; [C91 §4.1 tex 341] realizes that contract
+   by decomposing α' into chains and shooting in each chain's own
+   Lemma 3.6 structure (whose curve IS the piece). At the §3.4 stage
+   the available structure is the one over Cᵢ itself
+   (`SubmapRayShooter`), whose obstacle is Cᵢ ⊇ ᾱ'; the two reports
+   agree at every §3.1/§3.2 call site (see the semantics note in
+   `src/merge/ray_shooting.h`). When §4 lands, the merge oracles
+   should be assembled per tex 341 and this note re-examined.

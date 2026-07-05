@@ -134,6 +134,15 @@ struct FusionState {
 Side shooting_direction(std::size_t edge, Side side,
                          const Polygon& C);
 
+// [C91 §2.1 tex 70/72]: does this non-null chord run through infinity?
+// A chord wraps exactly when the chord direction at its endpoints
+// points away from the other endpoint — the left (smaller-x) slot
+// shoots LEFT — and a non-null chord whose endpoints share their x (an
+// outside duplicate pair at a y-extremum) always wraps: the direct
+// zero-length segment is realized by the null-length INSIDE pair, so
+// the outside pair's visibility runs the other way around the sphere.
+bool chord_runs_through_infinity(const Polygon& C, const Chord& c);
+
 // [C91 §3.1 Start-Up]: Initialize p and the current S₂ region.
 //
 // Compute c₀ = the point of ∂C that a₀ sees, then:

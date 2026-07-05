@@ -1,6 +1,7 @@
 // tests/s3.0-tests.cpp — Tests for [C91 §3.0]: merge setup and preconditions.
 
 #include "merge/merge.h"
+#include "merge/ray_shooting.h"
 
 #include <cassert>
 #include <cstdio>
@@ -51,7 +52,16 @@ struct StubArcCutter : ArcCuttingOracle {
 static const StubRayShooter STUB_RAY;
 static const StubArcCutter STUB_ARC;
 
-// Build a MergeInput with stub oracles.
+// Real [C91 §3.4] ray-shooting oracles for the tests that drive an
+// actual merge (stage 1 shoots for real since the §3.4 wiring).
+struct OracleRig {
+    SubmapRayShooter ray1, ray2;
+    OracleRig(const Submap& S1, const Polygon& C1, std::size_t g1,
+              const Submap& S2, const Polygon& C2, std::size_t g2)
+        : ray1(S1, C1, g1), ray2(S2, C2, g2) {}
+};
+
+// Build a MergeInput with stub oracles (precondition-only tests).
 static MergeInput make_input(const Polygon& C1, const Polygon& C2,
                               Submap& S1, Submap& S2,
                               std::size_t g1, std::size_t g2,
@@ -136,7 +146,10 @@ static void test_merged_curve() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
+    OracleRig rig(S1, C1, 2, S2, C2, 2);
     auto in = make_input(C1, C2, S1, S2, 2, 2, 2);
+    in.ray_shooter_1 = &rig.ray1;
+    in.ray_shooter_2 = &rig.ray2;
     auto result = merge(in);
 
     // C = C₁ ∪ C₂: 3 + 3 - 1 (shared vertex) = 5 vertices.
@@ -191,7 +204,10 @@ static void test_shared_vertex() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
+    OracleRig rig(S1, C1, 1, S2, C2, 1);
     auto in = make_input(C1, C2, S1, S2, 1, 1, 1);
+    in.ray_shooter_1 = &rig.ray1;
+    in.ray_shooter_2 = &rig.ray2;
     auto result = merge(in);
 
     // 2 + 2 - 1 = 3 vertices.
@@ -218,7 +234,10 @@ static void test_merged_edges() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
+    OracleRig rig(S1, C1, 3, S2, C2, 3);
     auto in = make_input(C1, C2, S1, S2, 3, 3, 3);
+    in.ray_shooter_1 = &rig.ray1;
+    in.ray_shooter_2 = &rig.ray2;
     auto result = merge(in);
 
     // 4 + 3 - 1 = 6 vertices, 5 edges.

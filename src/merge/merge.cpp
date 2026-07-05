@@ -2,6 +2,7 @@
 
 #include "merge.h"
 #include "conformality.h"
+#include "fusion.h"
 #include "granularity.h"
 
 namespace chazelle {
@@ -25,25 +26,30 @@ static Polygon build_merged_curve(const Polygon& C1, const Polygon& C2) {
 // [C91 §3.1]: Stage 1 — fuse S₁ and S₂ via discovered chords from the
 // fusion vertex traversal.
 //
-// TODO: wire up the three calls
-//   1. st1.junction_at_end = true;
-//      fuse_submaps(st1, S₁, C₁, S₂, C₂, ray1, ray2)   — S₁ into S₂
-//   2. st2.junction_at_end = false;                     — [C91 §3.1 tex 179]
-//      fuse_submaps(st2, S₂, C₂, S₁, C₁, ray2, ray1)   — by symmetry
-//   3. rebuild_submap(out_S, C, S₁, C₁, S₂, C₂, st1, st2)
-//
-// Remaining blocker:
-//   (a) [C91 §3.4]: no real ray-shooting oracle exists yet — fuse_submaps
-//       calls local_shoot, which trips [C91 §3.1 tex 181]'s "local shoot
-//       must hit" assertion under the no-op oracle stubs used in tests.
-static void fuse(Submap& /*S*/, const MergeInput& /*in*/,
-                  const Polygon& /*C*/) {
+// [C91 §3.1 tex 179]: "By symmetry, we may limit our discussion to the
+// problem of fusing S₁ into S₂ ... The idea is then to repeat the work
+// described below with respect to S₂ (i.e., fusing S₂ into S₁), and
+// set up a new submap S based on the information collected."  Pass 2
+// runs the same algorithm with the arguments swapped and the junction
+// at the walked curve's FIRST vertex (fusion.h).  [C91 §3.1 tex 226]:
+// rebuild_submap then sets S up in normal form from the chord
+// inventory (without its tree decomposition — §3.2's job).
+static void fuse(Submap& S, const MergeInput& in, const Polygon& C) {
+    FusionState st1;
+    st1.junction_at_end = true;
+    fuse_submaps(st1, *in.S1, *in.C1, *in.S2, *in.C2,
+                 *in.ray_shooter_1, *in.ray_shooter_2);
+
+    FusionState st2;
+    st2.junction_at_end = false;
+    fuse_submaps(st2, *in.S2, *in.C2, *in.S1, *in.C1,
+                 *in.ray_shooter_2, *in.ray_shooter_1);
+
+    rebuild_submap(S, C, *in.S1, *in.C1, *in.S2, *in.C2, st1, st2);
 }
 
 // [C91 §3.2]: Stage 2 — reduce every region to at most four arcs by
-// adding visibility chords (Lemmas 3.2–3.4; see conformality.h).  On the
-// pre-fusion empty submap (stage 1 is still blocked on [C91 §3.4]'s
-// oracle) this is a no-op — no arcs, no regions to cut.
+// adding visibility chords (Lemmas 3.2–3.4; see conformality.h).
 static void restore_conformality(Submap& S, const MergeInput& in,
                                         const Polygon& C) {
     ConformalityOracles o;
@@ -59,19 +65,14 @@ static void restore_conformality(Submap& S, const MergeInput& in,
     o.g_gamma2 = in.g_gamma2;
     o.h_gamma1 = in.h_gamma1;
     o.h_gamma2 = in.h_gamma2;
-    if (S.num_arcs() == 0 && S.num_nodes() == 0) return;  // fuse() TODO gate
     restore_conformality(S, C, o);
 }
 
 // [C91 §3.3 tex 274–280]: Stage 3 — enforce γ-granularity by removing
 // every removable exit chord (granularity.h), then "put S in normal
 // form, which includes computing its tree decomposition" (tex 276).
-// On the pre-fusion empty submap (stage 1 is still blocked on
-// [C91 §3.4]'s oracle) this is a no-op — no tree to contract.
 static void maintain_granularity(Submap& S, const MergeInput& in,
                                  const Polygon& C) {
-    if (S.num_arcs() == 0 && S.num_nodes() == 0) return;  // fuse() TODO gate
-
     // [C91 §3.3 tex 276]: "γ-granularity, for any γ ≥ γ₂, can be
     // enforced in this nondeterministic fashion in time linear in the
     // size of the submap tree."

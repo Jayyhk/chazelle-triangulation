@@ -54,14 +54,25 @@ public:
     std::size_t count_nonnull_edges(std::size_t lo,
                                      std::size_t hi) const noexcept;
 
+    // [C91 §3.4 tex 306]: the ray-shooting structure's vertical line is
+    // anchored "to the right of all the vertices of P", and its polar
+    // segments are delimited by the curve's global y-extremes; the
+    // extreme vertices (under the SoS order of [C91 §2 tex 47]) are
+    // input-table aggregates, computed once at construction.
+    std::size_t max_y_vertex() const noexcept { return max_y_vertex_; }
+    std::size_t min_y_vertex() const noexcept { return min_y_vertex_; }
+
 private:
     std::vector<Point> vertices_;
     std::vector<Edge>  edges_;
     // nonnull_prefix_[i] = number of nonnull edges in [0, i).
     std::vector<std::size_t> nonnull_prefix_;
+    std::size_t max_y_vertex_ = 0;
+    std::size_t min_y_vertex_ = 0;
 
     void build_edges();
     void build_nonnull_prefix();
+    void find_y_extremes();
 };
 
 // [C91 §2 tex 47]: SoS-aware interpolation parameter on an edge.

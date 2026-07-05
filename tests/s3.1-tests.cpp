@@ -1307,20 +1307,32 @@ static void test_case_ii_hit_beyond_ab_disqualified() {
     FusionState state;
     fuse_submaps(state, S1, C1, S2, C2, oracle1, oracle2);
 
-    // Exactly two chords: the startup a₀c₀ and a_{m+1}'s case (i)
-    // discovery (walker endpoint at the junction edge 3, LEFT side).
-    // Without the on-ab disqualification, the S₂ chord endpoints' far
-    // hits (distance 100 ≫ |ab| ≈ 1.5) pass the back-shot test (both
-    // synthetic distances equal 100) and would record spurious case (ii)
-    // chords / derail the walk.
-    assert(state.chords.size() == 2 &&
+    // Four chords: the startup a₀c₀, a₁'s and a₂'s case (i) discoveries
+    // at the S₁ chord's y (the fixture's S₁ chord is an outside
+    // duplicate pair at the y-maximum (2,4) — it runs through infinity
+    // per [C91 §2.1 tex 70], so t is wrapped and the direct synthetic
+    // S₂ hits precede it in the lexicographic ray order), and a_{m+1}'s
+    // case (i) discovery (walker endpoint at the junction edge 3).
+    // Crucially, NO case (ii) chord: without the on-ab
+    // disqualification, the S₂ chord endpoints' far hits (distance
+    // 100 ≫ |ab| ≈ 1.5) pass the back-shot test (both synthetic
+    // distances equal 100) and would record spurious case (ii) chords /
+    // derail the walk.  A case (ii) product would pair an S₂ chord
+    // endpoint (y = {3, 4}) with a mid-arc walker point p'; every
+    // recorded chord at that y must instead have its walker endpoint on
+    // the junction edge 3 (startup / a_{m+1} companions).
+    assert(state.chords.size() == 4 &&
            "[C91 §3.1 tex 222]: hits beyond ab must be disqualified — "
-           "only startup + a_{m+1} case (i) may record");
-    assert(state.chords[1].left_on_walker != state.chords[1].right_on_walker);
-    assert((state.chords[1].left_on_walker
-                ? state.chords[1].left_edge
-                : state.chords[1].right_edge) == 3 &&
-           "second chord must be a_{m+1}'s case (i), not a case (ii) product");
+           "startup + a₁/a₂/a_{m+1} case (i) only");
+    for (const auto& dc : state.chords) {
+        if (!(dc.y.y == 3.0 && dc.y.tag == 4)) continue;   // S₂ chord's y
+        assert(dc.left_on_walker != dc.right_on_walker);
+        std::size_t walker_edge = dc.left_on_walker ? dc.left_edge
+                                                    : dc.right_edge;
+        assert(walker_edge == 3 &&
+               "[C91 §3.1 tex 222]: chords at the S₂ chord's y must be "
+               "junction-companion records, not case (ii) products");
+    }
 
     std::printf("  [PASS] case_ii_hit_beyond_ab_disqualified\n");
 }

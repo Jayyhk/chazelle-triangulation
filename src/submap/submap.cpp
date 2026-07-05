@@ -1302,12 +1302,22 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
             return;
         }
 
-        // [C91 §2.4 tex 144] Phase 2: bsearch by start-y.  Direction is
-        // inferred from the run's endpoints (depends on the edge's
-        // geometric y-direction per tex 138, NOT on the LEFT/RIGHT half).
-        bool keys_ascending = (interval_len >= 2) &&
-            symbolic_y_leq(arc_start_symbolic_y(blo, polygon),
-                           arc_start_symbolic_y(bend - 1, polygon));
+        // [C91 §2.4 tex 144] Phase 2: bsearch by start-y.  [C91
+        // §2.4(iii) tex 138]: within an edge, start-y follows the
+        // clockwise traversal direction — the edge's own y-direction on
+        // the LEFT half, reversed on the RIGHT half.  (Inferring the
+        // direction from the run's endpoint keys instead is wrong when
+        // those keys tie, e.g. when a zero-length arc at the run's
+        // front shares its start-y with its successor.)
+        bool keys_ascending;
+        {
+            assert(edge_idx < polygon.num_edges());
+            const auto& e = polygon.edge(edge_idx);
+            bool edge_ascending = symbolic_y_less(
+                symbolic_y_of(polygon.vertex(e.start_idx)),
+                symbolic_y_of(polygon.vertex(e.end_idx)));
+            keys_ascending = ascending ? edge_ascending : !edge_ascending;
+        }
 
         std::size_t ylo = blo, yhi = bend;
         while (ylo < yhi) {

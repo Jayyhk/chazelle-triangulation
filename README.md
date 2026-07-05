@@ -18,17 +18,17 @@ step.
   - [x] §2.5 — A Topological Lemma
 - [ ] §3 — Merging Two Submaps
   - [x] §3.0 — Merge Setup and Oracle Primitives
-  - [ ] §3.1 — Fusion of Two Submaps (`merge.cpp::fuse` is still TODO)
+  - [x] §3.1 — Fusion of Two Submaps
   - [x] §3.2 — Restoring Conformality
   - [x] §3.3 — Maintaining Granularity
-  - [ ] §3.4 — Implementing the Oracles
+  - [ ] §3.4 — Implementing the Oracles (arc-cutting oracle TODO)
 - [ ] §4 — The Visibility Algorithm
   - [ ] §4.0 — Chains, Grades, and Algorithm Overview
   - [ ] §4.1 — The Up-Phase
   - [ ] §4.2 — The Down-Phase
 
 **[LT79]** Lipton-Tarjan Planar Separator
-- [ ] §3 — An Algorithm for Finding a Good Partition
+- [x] §3 — An Algorithm for Finding a Good Partition
 
 **[FM84]** Fournier-Montuno Triangulation
 - [ ] Extract trapezoids from V(P)

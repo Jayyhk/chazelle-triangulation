@@ -38,6 +38,20 @@ Polygon::Polygon(std::vector<Point> vertices) {
     vertices_ = std::move(vertices);
     build_edges();
     build_nonnull_prefix();
+    find_y_extremes();
+}
+
+void Polygon::find_y_extremes() {
+    // [C91 §3.4 tex 306] + [C91 §2 tex 47]: global y-extreme vertices
+    // under the perturbed (SoS) order; one O(n) pass at input setup.
+    max_y_vertex_ = 0;
+    min_y_vertex_ = 0;
+    for (std::size_t i = 1; i < vertices_.size(); ++i) {
+        if (point_y_above(vertices_[i], vertices_[max_y_vertex_]))
+            max_y_vertex_ = i;
+        if (point_y_below(vertices_[i], vertices_[min_y_vertex_]))
+            min_y_vertex_ = i;
+    }
 }
 
 void Polygon::build_edges() {
