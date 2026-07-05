@@ -30,10 +30,13 @@ struct FusionVertex {
     bool is_companion;         // True for a₀ or a_{m+1}.
 };
 
-// [C91 §3.1 tex 181]: Fixed-capacity result for collect_region_arcs —
-// conformality bounds the count: "at most four arcs need to be checked."
+// [C91 §3.1 tex 181]: Fixed-capacity result for collect_region_arcs.
+// Conformality bounds a region to ≤ 4 PAPER arcs ("at most four arcs
+// need to be checked"), but our single-side arc table splits a paper
+// arc at each of C's two endpoint wraps ([C91 §2.4 tex 142]), adding
+// ≤ 2 table arcs — so a wrap-straddling region has up to 6.
 struct RegionArcs {
-    static constexpr std::size_t MAX = 4;
+    static constexpr std::size_t MAX = 6;
     std::array<std::size_t, MAX> arcs = {};
     std::size_t count = 0;
     void push(std::size_t arc_idx) {

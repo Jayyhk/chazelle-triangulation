@@ -64,9 +64,12 @@ RegionArcs collect_region_arcs(const Submap& S, std::size_t region) {
            "RIGHT arc (the double boundary has two sides)");
     check_endpoint_arc(S.left_right_boundary());
 
-    // [C91 §3.1 tex 181]: degree ≤ 4 ⟹ at most 4 arcs (one per chord-gap).
-    assert(out.count <= 4 &&
-           "[C91 §3.1 tex 181]: conformal region has at most 4 arcs (degree ≤ 4)");
+    // [C91 §3.1 tex 181]: degree ≤ 4 ⟹ ≤ 4 PAPER arcs.  Our single-side
+    // table splits a paper arc at each of C's two endpoint wraps
+    // ([C91 §2.4 tex 142]), so a wrap-straddling region holds up to
+    // 4 + 2 = 6 table arcs.
+    assert(out.count <= 6 &&
+           "[C91 §3.1 tex 181 + §2.4 tex 142]: ≤4 paper arcs + ≤2 wrap splits");
 
     return out;
 }
@@ -79,7 +82,8 @@ RayHit local_shoot(Point p, Side direction,
                     const RayShootingOracle& oracle,
                     bool require_hit) {
     // [C91 §3.1 tex 181]: check each region arc, take the nearest hit.
-    // Conformality bounds the loop to ≤ 4 arcs.
+    // Conformality bounds the loop to ≤ 4 paper arcs (≤ 6 table arcs
+    // once C's endpoint wraps split them; see collect_region_arcs).
     RegionArcs arcs = collect_region_arcs(S, region);
 
     RayHit best;
