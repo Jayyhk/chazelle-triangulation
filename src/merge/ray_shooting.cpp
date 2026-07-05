@@ -10,6 +10,7 @@
 #include "fusion.h"          // shooting_direction ([C91 §2.1 tex 72])
 
 #include <algorithm>
+#include <array>
 
 namespace chazelle {
 
@@ -54,62 +55,58 @@ struct Leg {
     Pos lo, hi;
 };
 
-// Decompose a live arc into its 1 or 2 legs ([C91 §2.4 tex 142]:
-// wrapped arcs double-back around an endpoint of C).
+// Decompose a live arc into its 1–3 legs ([C91 §2.4 tex 142]: wrapped
+// arcs double-back around one — or both — endpoints of C).  Interior
+// leg boundaries sit at the turnarounds; the arc's own endpoints carry
+// the derived ys ([C91 §2.4 tex 133]).
 std::size_t arc_to_legs(const Submap& S, const Polygon& C,
-                        std::size_t ai, Leg out[2]) {
+                        std::size_t ai, Leg out[3]) {
     const Arc& a = S.arc(ai);
+    assert(S.start_vertex != NONE && S.end_vertex != NONE &&
+           "[C91 §2.4(iii)]: C endpoints must be set");
+    ArcLeg lg[3];
+    std::size_t n = a.legs(S.start_vertex, S.end_vertex, lg);
+
     SymbolicY sy_start = S.arc_start_symbolic_y(ai, C);
     SymbolicY sy_end = S.arc_end_symbolic_y(ai, C);
+    SymbolicY start_wrap_y = symbolic_y_of(C.vertex(S.start_vertex));
+    SymbolicY end_wrap_y = symbolic_y_of(C.vertex(S.end_vertex));
 
-    if (a.first_side == a.last_side) {
+    for (std::size_t i = 0; i < n; ++i) {
         Leg l;
-        l.side = a.first_side;
-        if (a.first_side == LEFT) {
-            l.lo_edge = a.first_edge; l.hi_edge = a.last_edge;
-            l.lo = {a.first_edge, sy_start};
-            l.hi = {a.last_edge, sy_end};
+        l.side = lg[i].side;
+        l.lo_edge = lg[i].lo;
+        l.hi_edge = lg[i].hi;
+        // Leg boundary positions in LEFT-mirrored order: the position
+        // at lo_edge's low end and hi_edge's high end.  The arc's own
+        // FIRST position is the traversal start of the first leg (its
+        // LEFT-order low end on LEFT, high end on RIGHT); mirrored
+        // symmetrically for the last leg; every other leg boundary is a
+        // turnaround.
+        bool first_leg = (i == 0);
+        bool last_leg = (i + 1 == n);
+        if (l.side == LEFT) {
+            l.lo = {l.lo_edge, first_leg ? sy_start
+                                         : start_wrap_y};
+            l.hi = {l.hi_edge, last_leg ? sy_end : end_wrap_y};
         } else {
-            // RIGHT traversal descends; mirror.
-            l.lo_edge = a.last_edge; l.hi_edge = a.first_edge;
-            l.lo = {a.last_edge, sy_end};
-            l.hi = {a.first_edge, sy_start};
+            // RIGHT traversal descends; the leg's LEFT-mirrored low end
+            // is its traversal END.
+            l.lo = {l.lo_edge, last_leg ? sy_end : start_wrap_y};
+            l.hi = {l.hi_edge, first_leg ? sy_start
+                                         : end_wrap_y};
         }
-        out[0] = l;
-        return 1;
+        out[i] = l;
     }
-    if (a.first_side == LEFT) {
-        // LEFT→RIGHT wrap at C's end vertex ([C91 §2.4 tex 142]).
-        assert(S.end_vertex != NONE && S.end_vertex >= 1);
-        std::size_t turn = S.end_vertex - 1;
-        SymbolicY wrap_y = symbolic_y_of(C.vertex(S.end_vertex));
-        out[0] = Leg{LEFT, a.first_edge, turn,
-                     {a.first_edge, sy_start}, {turn, wrap_y}};
-        out[1] = Leg{RIGHT, a.last_edge, turn,
-                     {a.last_edge, sy_end}, {turn, wrap_y}};
-        return 2;
-    }
-    // RIGHT→LEFT wrap at C's start vertex.
-    assert(S.start_vertex != NONE);
-    std::size_t turn = S.start_vertex;
-    SymbolicY wrap_y = symbolic_y_of(C.vertex(S.start_vertex));
-    out[0] = Leg{RIGHT, turn, a.first_edge,
-                 {turn, wrap_y}, {a.first_edge, sy_start}};
-    out[1] = Leg{LEFT, turn, a.last_edge,
-                 {turn, wrap_y}, {a.last_edge, sy_end}};
-    return 2;
+    return n;
 }
 
 // Does arc ai cover ∂C position (edge, side)?
 bool arc_covers(const Submap& S, const Polygon& C, std::size_t ai,
                 std::size_t edge, Side side) {
-    Leg legs[2];
-    std::size_t n = arc_to_legs(S, C, ai, legs);
-    for (std::size_t i = 0; i < n; ++i)
-        if (legs[i].side == side && legs[i].lo_edge <= edge &&
-            edge <= legs[i].hi_edge)
-            return true;
-    return false;
+    (void)C;
+    assert(S.start_vertex != NONE && S.end_vertex != NONE);
+    return S.arc(ai).covers(edge, side, S.start_vertex, S.end_vertex);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -183,7 +180,7 @@ void scan_region(const Submap& S, const Polygon& C,
                  const std::vector<std::size_t>& arcs,
                  Point p, SymbolicY sy, Side dir, Contact& best) {
     for (std::size_t ai : arcs) {
-        Leg legs[2];
+        Leg legs[3];
         std::size_t n = arc_to_legs(S, C, ai, legs);
         for (std::size_t i = 0; i < n; ++i)
             scan_edge_range(C, legs[i].lo_edge, legs[i].hi_edge,
@@ -364,7 +361,7 @@ void RayShootingStructure::build_faces() {
         if (S.node(r).dead) continue;
         bool nonempty = false;
         for (std::size_t ai : arcs_of_region_[r]) {
-            Leg legs[2];
+            Leg legs[3];
             std::size_t n = arc_to_legs(S, C, ai, legs);
             for (std::size_t i = 0; i < n && !nonempty; ++i)
                 if (pos_order(C, legs[i].lo, legs[i].hi) != 0)
@@ -377,12 +374,10 @@ void RayShootingStructure::build_faces() {
             face_of_region_[r] = region_of_face_.size();
             region_of_face_.push_back(r);
         }
-        // [C91 §2.3 tex 114]: conformal ⟹ ≤ 4 paper arcs (degree ≤ 4).
-        // Our single-side arc table splits a paper arc at each of C's
-        // two endpoint wraps ([C91 §2.4 tex 142]), adding ≤ 2 table
-        // arcs — so ≤ 6.
-        assert(arcs_of_region_[r].size() <= 6 &&
-               "[C91 §2.3 tex 114 + §2.4 tex 142]: ≤4 paper arcs + ≤2 wrap splits");
+        // [C91 §2.3 tex 114]: conformal ⟹ ≤ 4 arcs (degree ≤ 4) — a
+        // wrap-spanning arc is ONE arc-structure ([C91 §2.4 tex 142]).
+        assert(arcs_of_region_[r].size() <= 4 &&
+               "[C91 §2.3 tex 114]: conformal region has ≤ 4 arc-structures");
     }
     mu_ = region_of_face_.size();
     assert(mu_ >= 1 && "V(C) has at least one nonempty region");
@@ -410,16 +405,17 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
     struct Interval {
         Pos lo, hi;
         std::size_t arc;
+        std::size_t leg;         // cycle-ordinal of the leg within the arc
         std::size_t region;
     };
     std::vector<Interval> ivl, ivr;
     for (std::size_t ai = 0; ai < S.num_arcs(); ++ai) {
-        Leg legs[2];
+        Leg legs[3];
         std::size_t n = arc_to_legs(S, C, ai, legs);
         for (std::size_t i = 0; i < n; ++i) {
             if (pos_order(C, legs[i].lo, legs[i].hi) == 0)
                 continue;                       // zero length: contracted
-            Interval iv{legs[i].lo, legs[i].hi, ai,
+            Interval iv{legs[i].lo, legs[i].hi, ai, i,
                         S.arc(ai).region_node};
             (legs[i].side == LEFT ? ivl : ivr).push_back(iv);
         }
@@ -446,10 +442,13 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
     retain(ivr, right_ivals_);
 
     // Overlap sweep; every positive overlap is one abutment edge.
-    // Record it on both arcs for the rotation build (LEFT lists come
-    // out in LEFT-traversal order, RIGHT lists in reverse).
-    std::vector<std::vector<std::size_t>> events_left(S.num_arcs());
-    std::vector<std::vector<std::size_t>> events_right(S.num_arcs());
+    // Record it per (arc, leg) for the rotation build — a wrap-spanning
+    // arc's legs occupy separate stretches of its boundary cycle
+    // ([C91 §2.4 tex 142]), so their events must interleave in cycle
+    // order.  LEFT lists come out in LEFT-traversal order, RIGHT lists
+    // in reverse.
+    std::vector<std::array<std::vector<std::size_t>, 3>> leg_events(
+        S.num_arcs());
     {
         std::size_t i = 0, j = 0;
         while (i < ivl.size() && j < ivr.size()) {
@@ -465,8 +464,8 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
                 if (fa != fb) {
                     std::size_t id = edges.size();
                     edges.push_back({fa, fb, false});
-                    events_left[a.arc].push_back(id);
-                    events_right[b.arc].push_back(id);
+                    leg_events[a.arc][a.leg].push_back(id);
+                    leg_events[b.arc][b.leg].push_back(id);
                 }
             }
             if (pos_order(C, a.hi, b.hi) <= 0) ++i; else ++j;
@@ -492,9 +491,10 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
     // ── Rotations: walk each face's boundary cycle ───────────────
     // Lemma 2.2 ([C91 §2.2 tex 96]): a region's arcs in canonical table
     // order ARE its boundary cycle, with its chords interleaved where
-    // consecutive arcs meet at chord endpoints (or the C-endpoint wraps
-    // where they meet without a chord).  The dual embedding inherits
-    // its rotations from these cycles.
+    // consecutive arcs meet at chord endpoints ([C91 §2.4 tex 142]:
+    // wrap-spanning arcs are single structures, so every junction is a
+    // chord endpoint).  The dual embedding inherits its rotations from
+    // these cycles.
     std::vector<std::vector<std::size_t>> rot(mu_);
     for (std::size_t f = 0; f < mu_; ++f) {
         std::size_t r = region_of_face_[f];
@@ -510,20 +510,24 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
             ++emitted;
             assert(emitted <= 2 * arcs.size() + 2 &&
                    "region boundary cycle must close");
-            // The arc's abutment events, in traversal order per leg.
-            const Arc& a = S.arc(cur);
-            auto emit_leg = [&](Side side) {
-                if (side == LEFT) {
-                    for (std::size_t id : events_left[cur])
-                        rot[f].push_back(id);
-                } else {
-                    for (std::size_t k = events_right[cur].size();
-                         k-- > 0; )
-                        rot[f].push_back(events_right[cur][k]);
+            // The arc's abutment events, in traversal order per leg —
+            // legs in cycle order ([C91 §2.4 tex 142]); LEFT legs run
+            // with the stored order, RIGHT legs reversed.
+            {
+                ArcLeg lg[3];
+                std::size_t n = S.arc(cur).legs(S.start_vertex,
+                                                S.end_vertex, lg);
+                for (std::size_t li = 0; li < n; ++li) {
+                    const auto& evs = leg_events[cur][li];
+                    if (lg[li].side == LEFT) {
+                        for (std::size_t id : evs)
+                            rot[f].push_back(id);
+                    } else {
+                        for (std::size_t k = evs.size(); k-- > 0; )
+                            rot[f].push_back(evs[k]);
+                    }
                 }
-            };
-            emit_leg(a.first_side);
-            if (a.first_side != a.last_side) emit_leg(a.last_side);
+            }
 
             // Find the chord of r ending this arc, if any.
             std::size_t via_chord = NONE;
@@ -540,17 +544,18 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
                     via_left_slot = left_slot;
                 }
             }
-            std::size_t next;
-            if (via_chord != NONE) {
-                if (chord_edge[via_chord] != NONE)
-                    rot[f].push_back(chord_edge[via_chord]);
-                next = chord_after_arc(S, C, S.chord(via_chord),
-                                       !via_left_slot);
-            } else {
-                // C-endpoint wrap: the boundary continues on the next
-                // table arc ([C91 §2.4(iii) tex 138]).
-                next = (cur + 1) % S.num_arcs();
-            }
+            // [C91 §2.2 tex 96]: the boundary alternates arcs and exit
+            // chords, so every arc ends at a chord endpoint of its
+            // region — wrap-spanning arcs are single structures with
+            // chord-bounded ends ([C91 §2.4 tex 142]).  (A chordless
+            // submap has μ == 1 and never builds the dual graph.)
+            assert(via_chord != NONE &&
+                   "[C91 §2.2 tex 96]: every arc ends at a chord "
+                   "endpoint of its region");
+            if (chord_edge[via_chord] != NONE)
+                rot[f].push_back(chord_edge[via_chord]);
+            std::size_t next = chord_after_arc(S, C, S.chord(via_chord),
+                                               !via_left_slot);
             assert(S.arc(next).region_node == r &&
                    "[C91 §2.2 tex 96]: the boundary cycle stays in the "
                    "region");
@@ -945,29 +950,15 @@ namespace {
 
 // Does the target subarc cover ∂C position (edge, side)?  Subarcs are
 // specified at edge resolution ([C91 §3.0(i) tex 169]: edge names plus
-// side flags); wrapped targets split into their two legs per
-// [C91 §2.4 tex 142].
+// side flags); wrapped targets decompose into their legs per
+// [C91 §2.4 tex 142] (oracle.h::subarc_covers_position).
 bool subarc_covers(const Submap& S, const Polygon& C, const Subarc& t,
                    std::size_t edge, Side side) {
     (void)C;
-    if (t.first_side == t.last_side) {
-        if (side != t.first_side) return false;
-        std::size_t lo = std::min(t.first_edge, t.last_edge);
-        std::size_t hi = std::max(t.first_edge, t.last_edge);
-        return lo <= edge && edge <= hi;
-    }
-    if (t.first_side == LEFT) {
-        // LEFT→RIGHT wrap at C's end vertex.
-        assert(S.end_vertex != NONE && S.end_vertex >= 1);
-        std::size_t turn = S.end_vertex - 1;
-        if (side == LEFT) return t.first_edge <= edge && edge <= turn;
-        return t.last_edge <= edge && edge <= turn;
-    }
-    // RIGHT→LEFT wrap at C's start vertex.
-    assert(S.start_vertex != NONE);
-    std::size_t turn = S.start_vertex;
-    if (side == RIGHT) return turn <= edge && edge <= t.first_edge;
-    return turn <= edge && edge <= t.last_edge;
+    assert(S.start_vertex != NONE && S.end_vertex != NONE &&
+           "[C91 §2.4(iii)]: C endpoints must be set");
+    return subarc_covers_position(t, edge, side,
+                                  S.start_vertex, S.end_vertex);
 }
 
 } // namespace

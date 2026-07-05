@@ -42,45 +42,91 @@ static Polygon make_C1() {
 }
 
 // Build a 2-region submap of C₁ with one chord at vertex 2.
+// [C91 §2.4 tex 142]: r1's arc double-backs around C₁'s end vertex
+// (E: L(1)→R(1), ᾱ = [1,3]) and r0's around its start vertex
+// (S: R(1)→L(1), ᾱ = [0,1]) — single structures, never split.
 static Submap make_S1(const Polygon& C) {
     Submap s;
     s.add_node(); // r0
     s.add_node(); // r1
+    s.start_vertex = 0; s.end_vertex = 4;
 
     Arc a{};
-    // LEFT arcs
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 2;
-    std::size_t ai0 = s.add_arc(a);
-
-    a.first_edge = 1; a.last_edge = 3;
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 1; a.edge_count = 3;
-    std::size_t ai1 = s.add_arc(a);
+    std::size_t aiE = s.add_arc(a);
 
-    // RIGHT arcs
     a = {};
-    a.first_edge = 3; a.last_edge = 1;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 1; a.edge_count = 3;
-    std::size_t ai2 = s.add_arc(a);
-
-    a.first_edge = 1; a.last_edge = 0;
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = LEFT;
     a.region_node = 0; a.edge_count = 2;
-    std::size_t ai3 = s.add_arc(a);
+    std::size_t aiS = s.add_arc(a);
 
+    // Chord at vertex 2 (y = 4): both endpoints are polygon-vertex
+    // companions → ONE adj arc each, the before-arc ([C91 §2.2 tex 94 +
+    // §2.4(ii)] 1-slot convention): S's LEFT leg ends at (1,LEFT,y₂);
+    // E's RIGHT leg ends at (1,RIGHT,y₂).
     Chord c{};
     c.region[0] = 0; c.region[1] = 1;
     c.left_edge = 1; c.right_edge = 1;
     c.left_side = LEFT; c.right_side = RIGHT;
     c.y = C.vertex(2).y; c.y_tag = 2;
-    c.left_adj = {{ai0, ai1}, 2};
-    c.right_adj = {{ai2, ai3}, 2};
+    c.left_adj = {{aiS}, 1};
+    c.right_adj = {{aiE}, 1};
     s.add_chord(c);
 
-    s.start_arc = ai0; s.end_arc = ai1;
+    assert(s.start_arc == aiS && s.end_arc == aiE &&
+           "[C91 §2.4(iii) tex 138]: endpoint arcs auto-registered");
+    return s;
+}
+
+// Chain variant with a MIDDLE region carrying two plain arcs (for the
+// local_shoot multi-arc selection tests): r0 — c0(v1) — r1 — c1(v3) — r2.
+static Submap make_S1_chain(const Polygon& C) {
+    Submap s;
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
+    std::size_t r2 = s.add_node();
     s.start_vertex = 0; s.end_vertex = 4;
 
+    Arc a{};
+    a.first_edge = 1; a.last_edge = 2;
+    a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r1; a.edge_count = 2;
+    std::size_t a1 = s.add_arc(a);
+    a = {};
+    a.first_edge = 3; a.last_edge = 3;
+    a.first_side = LEFT; a.last_side = RIGHT;   // end wrap: ᾱ = [3,3]
+    a.region_node = r2; a.edge_count = 1;
+    std::size_t aE = s.add_arc(a);
+    a = {};
+    a.first_edge = 2; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r1; a.edge_count = 2;
+    std::size_t a4 = s.add_arc(a);
+    a = {};
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = RIGHT; a.last_side = LEFT;   // start wrap: ᾱ = [0,0]
+    a.region_node = r0; a.edge_count = 1;
+    std::size_t aS = s.add_arc(a);
+
+    Chord c{};
+    c.region[0] = r0; c.region[1] = r1;
+    c.left_edge = 0; c.right_edge = 0;
+    c.left_side = LEFT; c.right_side = RIGHT;
+    c.y = C.vertex(1).y; c.y_tag = 1;
+    c.left_adj = {{aS}, 1}; c.right_adj = {{a4}, 1};
+    s.add_chord(c);
+    c = {};
+    c.region[0] = r1; c.region[1] = r2;
+    c.left_edge = 2; c.right_edge = 2;
+    c.left_side = LEFT; c.right_side = RIGHT;
+    c.y = C.vertex(3).y; c.y_tag = 3;
+    c.left_adj = {{a1}, 1}; c.right_adj = {{aE}, 1};
+    s.add_chord(c);
+
+    assert(s.start_arc == aS && s.end_arc == aE);
     return s;
 }
 
@@ -130,15 +176,14 @@ static void test_fusion_sequence_basic() {
 
 static void test_fusion_sequence_no_chords() {
     Polygon C({{0,0,0}, {1,1,1}, {2,2,2}});
+    // Chordless submap: the single closed arc ([C91 §2.4 tex 142/138]).
     Submap s;
     s.add_node();
+    s.start_vertex = 0; s.end_vertex = 2;
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
-    s.add_arc(a);
-    a.first_edge = 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
     s.add_arc(a);
 
     FusionState state;
@@ -214,13 +259,13 @@ static void test_collect_region_arcs() {
     auto C1 = make_C1();
     auto S1 = make_S1(C1);
 
-    // Region 0 has 2 arcs (LEFT ai0 and RIGHT ai3).
+    // [C91 §2.2 tex 96 + §2.4 tex 142]: arc-structure count == region
+    // degree — each region's wrap-spanning arc is ONE structure.
     auto arcs0 = collect_region_arcs(S1, 0);
-    assert(arcs0.count == 2);
+    assert(arcs0.count == 1);
 
-    // Region 1 has 2 arcs (LEFT ai1 and RIGHT ai2).
     auto arcs1 = collect_region_arcs(S1, 1);
-    assert(arcs1.count == 2);
+    assert(arcs1.count == 1);
 
     std::printf("  [PASS] collect_region_arcs\n");
 }
@@ -247,7 +292,7 @@ struct FixedRayShooter : RayShootingOracle {
 
 static void test_local_shoot() {
     auto C1 = make_C1();
-    auto S1 = make_S1(C1);
+    auto S1 = make_S1_chain(C1);
 
     FixedRayShooter oracle;
     Point p{0.0, 2.0, 99};
@@ -256,7 +301,7 @@ static void test_local_shoot() {
     auto hit = local_shoot(p, RIGHT, 0, S1, C1, oracle);
     assert(hit.hit);
 
-    // Shoot from region 1.
+    // Shoot from region 1 (two plain arcs).
     hit = local_shoot(p, RIGHT, 1, S1, C1, oracle);
     assert(hit.hit);
 
@@ -285,21 +330,22 @@ struct DistanceRayShooter : RayShootingOracle {
 
 static void test_local_shoot_nearest() {
     auto C1 = make_C1();
-    auto S1 = make_S1(C1);
+    auto S1 = make_S1_chain(C1);
 
     DistanceRayShooter oracle;
     Point p{1.0, 2.0, 99};
 
+    // Region 1 has two plain arcs (LEFT a1, RIGHT a4).
     // Shooting RIGHT from x=1: hits at x=3 (RIGHT arc) and x=10 (LEFT arc).
     // Nearest in RIGHT direction = x=3 (closer to p.x=1).
-    auto hit = local_shoot(p, RIGHT, 0, S1, C1, oracle);
+    auto hit = local_shoot(p, RIGHT, 1, S1, C1, oracle);
     assert(hit.hit);
     assert(hit.x == 3.0);
 
     // Shooting LEFT from x=15: hits at x=3 and x=10.
     // Nearest in LEFT direction = x=10 (closer to p.x=15).
     Point p2{15.0, 2.0, 99};
-    hit = local_shoot(p2, LEFT, 0, S1, C1, oracle);
+    hit = local_shoot(p2, LEFT, 1, S1, C1, oracle);
     assert(hit.hit);
     assert(hit.x == 10.0);
 
@@ -348,20 +394,17 @@ static void test_startup_case1() {
     Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
     auto S1 = make_S1(C1);
 
-    // Single-region S₂.
+    // Single-region S₂: the chordless submap's single closed arc
+    // ([C91 §2.4 tex 142/138]).
     Submap S2;
     S2.add_node();
+    S2.start_vertex = 0; S2.end_vertex = 2;
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
     std::size_t ai0 = S2.add_arc(a);
-    a.first_edge = 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    S2.add_arc(a);
-    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
-    S2.start_arc = ai0; S2.end_arc = ai0;
-    S2.start_vertex = 0; S2.end_vertex = 2;
+    assert(S2.start_arc == ai0 && S2.end_arc == ai0);
 
     // a₀ = RIGHT companion at vertex 4 = (4,3).  Edge 3 ascending, RIGHT
     // (east) wall → shoot RIGHT ([C91 §2.1 tex 72]: into the free region,
@@ -396,19 +439,16 @@ static void test_startup_case2() {
     Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
     auto S1 = make_S1(C1);
 
+    // Chordless S₂: the single closed arc ([C91 §2.4 tex 142/138]).
     Submap S2;
     S2.add_node();
+    S2.start_vertex = 0; S2.end_vertex = 2;
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
     std::size_t ai0 = S2.add_arc(a);
-    a.first_edge = 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    S2.add_arc(a);
-    // [C91 §2.4] (tex 144): end_arc = last LEFT arc (ai0).
-    S2.start_arc = ai0; S2.end_arc = ai0;
-    S2.start_vertex = 0; S2.end_vertex = 2;
+    assert(S2.start_arc == ai0 && S2.end_arc == ai0);
 
     // a₀ = RIGHT companion at vertex 4 = (4,3).  Edge 3 ascending → shoot
     // RIGHT ([C91 §2.1 tex 72]).
@@ -501,11 +541,12 @@ static void test_local_shoot_tie_break() {
     //   struck_first_face (dist > 0, dir=RIGHT) = minus_x_face
     //   minus_x_face for ascending edge = LEFT
     auto C1 = make_C1();                        // edge 1: (1,2)→(2,4) ascending
-    auto S1 = make_S1(C1);
+    auto S1 = make_S1_chain(C1);
 
-    // Region 0 has two arcs; oracle returns both at x=5 with controlled
-    // sides via arc_idx.  For shooting RIGHT toward an ascending-edge
-    // hit, struck_first_face = LEFT (the -x face).
+    // Region 1 has two plain arcs (a1 = arc 0, a4 = arc 2); oracle
+    // returns both at x=5 with controlled sides via arc_idx.  For
+    // shooting RIGHT toward an ascending-edge hit, struck_first_face =
+    // LEFT (the -x face).
     //
     // First oracle: arc 0 → LEFT, others → RIGHT.  Best stays at the
     //   first hit (LEFT, struck_first_face=LEFT, no swap needed).
@@ -515,7 +556,7 @@ static void test_local_shoot_tie_break() {
     Point p{0.0, 2.0, 99};
 
     TieBreakRayShooter oracle(LEFT, RIGHT);
-    RayHit h1 = local_shoot(p, RIGHT, 0, S1, C1, oracle);
+    RayHit h1 = local_shoot(p, RIGHT, 1, S1, C1, oracle);
     assert(h1.hit);
     assert(h1.x == 5.0);
     assert(h1.side == LEFT &&
@@ -523,7 +564,7 @@ static void test_local_shoot_tie_break() {
            "an ascending-edge hit must be LEFT (the -x face)");
 
     TieBreakRayShooter oracle_rev(RIGHT, LEFT);
-    RayHit h2 = local_shoot(p, RIGHT, 0, S1, C1, oracle_rev);
+    RayHit h2 = local_shoot(p, RIGHT, 1, S1, C1, oracle_rev);
     assert(h2.hit);
     assert(h2.x == 5.0);
     assert(h2.side == LEFT &&
@@ -546,16 +587,15 @@ static void test_startup_d1_eq_d2_defaults_to_case1() {
     Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
     auto S1 = make_S1(C1);
 
+    // Chordless S₂: the single closed arc ([C91 §2.4 tex 142/138]).
     Submap S2;
     S2.add_node();
+    S2.start_vertex = 0; S2.end_vertex = 2;
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
     std::size_t ai0 = S2.add_arc(a);
-    a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    S2.add_arc(a);
-    S2.start_arc = ai0; S2.end_arc = ai0;
-    S2.start_vertex = 0; S2.end_vertex = 2;
+    assert(S2.start_arc == ai0 && S2.end_arc == ai0);
 
     // Both oracles return hits at the SAME x (5.0, forward of a₀'s
     // eastward shot), so d1 == d2.
@@ -587,58 +627,60 @@ static void test_build_fusion_sequence_skips_null_length_chords() {
     // the fused submap and must NOT appear in the main-loop sequence.
     auto C = make_C1();                         // 5 vertices, 4 edges.
 
-    // Synthetic submap with 1 exit chord + 1 null-length chord.
-    // Null-length chords are at y-extrema (vertex 2 = (2, 4) is a y-max in C1).
+    // Submap with 1 exit chord + 1 null-length chord, in the paper's
+    // extremum shape ([C91 §2.1 tex 72]): vertex 2 = (2,4) is a y-max
+    // of C₁; its inside pair (LEFT) carries the null chord cN, its
+    // outside pair (RIGHT) the exit chord cO joining the two outside
+    // companions.  Wrap-spanning arcs are single structures
+    // ([C91 §2.4 tex 142]).
     Submap s;
     std::size_t r0 = s.add_node();
-    std::size_t r1 = s.add_node();              // for the exit chord
-    std::size_t r_null = s.add_node();          // empty region inside the null-length chord
+    std::size_t r_null = s.add_node();          // inside the null chord
+    std::size_t r_cap = s.add_node();           // beyond the exit chord
+    s.start_vertex = 0; s.end_vertex = 4;
 
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
+    // N: the inside pair's null arc (LEFT at vertex 2).
+    a.first_edge = 2; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r_null; a.edge_count = 0;
+    std::size_t N = s.add_arc(a);
+    // arc2: from the inside pair down LEFT edges 2–3, around C's end
+    // vertex, up RIGHT edges 3–2 to the first outside companion.
+    a = {}; a.first_edge = 2; a.last_edge = 2; a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = r0; a.edge_count = 2;
-    std::size_t ai0 = s.add_arc(a);
-
-    // Null-length empty arc on LEFT at vertex 2 (y-max).
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r_null; a.edge_count = 0;   // null-length
-    std::size_t ai_null = s.add_arc(a);
-
-    a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r1; a.edge_count = 3;
-    std::size_t ai1 = s.add_arc(a);
-
-    a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r1; a.edge_count = 3;
-    std::size_t ai2 = s.add_arc(a);
-
-    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    std::size_t arc2 = s.add_arc(a);
+    // Z: the outside pair's zero arc (RIGHT at vertex 2).
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r_cap; a.edge_count = 0;
+    std::size_t Z = s.add_arc(a);
+    // arc1: from the second outside companion down RIGHT edges 1–0,
+    // around C's start vertex, up LEFT edges 0–1 to the inside pair.
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 2;
-    std::size_t ai3 = s.add_arc(a);
+    std::size_t arc1 = s.add_arc(a);
 
-    // Exit chord: r0 ↔ r1 at vertex 2's y level.
+    // Exit chord cO: the outside pair's chord — vertex endpoints, one
+    // adj arc each ([C91 §2.2 tex 94]); sourced at vertex 2
+    // ([C91 §2 tex 47]).
     Chord ec;
-    ec.region[0] = r0; ec.region[1] = r1;
-    ec.left_edge = 1; ec.right_edge = 1;
-    ec.left_side = LEFT; ec.right_side = RIGHT;
-    ec.y = C.vertex(2).y; ec.y_tag = 22;
-    ec.left_adj = {{ai0, ai1}, 2};
-    ec.right_adj = {{ai2, ai3}, 2};
+    ec.region[0] = r0; ec.region[1] = r_cap;
+    ec.left_edge = 2; ec.left_side = RIGHT; ec.left_adj = {{arc2}, 1};
+    ec.right_edge = 1; ec.right_side = RIGHT; ec.right_adj = {{Z}, 1};
+    ec.y = C.vertex(2).y; ec.y_tag = 2;
     s.add_chord(ec);
 
-    // Null-length chord: r0 ↔ r_null at vertex 2 LEFT side.
+    // Null-length chord cN at vertex 2 (LEFT inside pair).
     Chord null_chord;
     null_chord.region[0] = r0; null_chord.region[1] = r_null;
-    null_chord.left_edge = 1; null_chord.right_edge = 1;
+    null_chord.left_edge = 2; null_chord.right_edge = 2;
     null_chord.left_side = LEFT; null_chord.right_side = LEFT;
     null_chord.y = C.vertex(2).y; null_chord.y_tag = 2;
     null_chord.is_null_length = true;
-    null_chord.left_adj = {{ai0}, 1};
-    null_chord.right_adj = {{ai_null}, 1};
+    null_chord.left_adj = {{arc1}, 1};
+    null_chord.right_adj = {{N}, 1};
     s.add_chord(null_chord);
 
-    s.start_arc = ai0; s.end_arc = ai1;
-    s.start_vertex = 0; s.end_vertex = 4;
+    assert(s.start_arc == arc1 && s.end_arc == arc2);
 
     FusionState state;
     build_fusion_sequence(state, s, C);
@@ -690,49 +732,47 @@ static void test_startup_vertex_to_vertex_tie_break() {
     // DOWN-RIGHT to end vertex (6,3,6).  Start and end share raw y=3.
     Polygon C2({{4,3,4}, {5,5,5}, {6,3,6}});
 
-    // S₂ structure (minimal: the null-length chord at v_mid is
-    // γ-removed, leaving just one big arc per ∂C side and the matching
-    // chord between two regions).
+    // S₂ structure: the chord joins the RIGHT companions of C₂'s two
+    // endpoints, cutting off the pocket between the chord and the
+    // peak's underside.  [C91 §2.4 tex 142]: the outer region's arc
+    // runs from the junction companion around BOTH turnarounds — one
+    // DOUBLE-WRAP structure W (first=(0,RIGHT) < last=(1,RIGHT)); the
+    // pocket's arc B is the plain RIGHT stretch between the endpoints.
     Submap S2;
-    std::size_t r_loop    = S2.add_node(); // contains the curve arcs (above chord)
-    std::size_t r_outside = S2.add_node(); // empty region below chord
+    std::size_t r_outer  = S2.add_node(); // outer region (below the chord)
+    std::size_t r_pocket = S2.add_node(); // pocket above the chord
+    S2.start_vertex = 0; S2.end_vertex = 2;
 
-    // Big LEFT-side arc covering edges 0–1 (v4 → v5 → v6 on LEFT side —
-    // the upper faces of the peak).
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r_loop;
-    a.edge_count = 2;
-    std::size_t ai_left = S2.add_arc(a);
-
-    // Big RIGHT-side arc covering edges 1 → 0 (descending: v6 → v5 → v4
-    // — the under faces of the peak).
-    a = {};
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r_loop;
+    a.region_node = r_pocket;
     a.edge_count = 2;
-    std::size_t ai_right = S2.add_arc(a);
+    std::size_t B = S2.add_arc(a);
 
-    // Matching chord at y=3, y_tag = junction's tag (4), running under
-    // the peak from the junction (edge 0's east wall = RIGHT, ascending)
-    // to v_end (edge 1's west wall = RIGHT, descending).  Both endpoints
-    // are polygon vertices → one adj slot each, holding the arc ENDING
-    // there in cw ∂C₂ order: at the junction (tour end) that is the
-    // RIGHT-side arc; at v_end (the end-vertex wrap) the LEFT-side arc.
+    a = {};
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = RIGHT;   // double wrap
+    a.region_node = r_outer;
+    a.edge_count = 2;
+    std::size_t W = S2.add_arc(a);
+
+    // Matching chord at y=3, y_tag = junction's tag (4).  Both
+    // endpoints are polygon vertices → one adj slot each, the arc
+    // ENDING there ([C91 §2.2 tex 94]): at the junction companion that
+    // is B; at v_end's companion, W.
     Chord c{};
-    c.region[0] = r_loop;
-    c.region[1] = r_outside;
+    c.region[0] = r_outer;
+    c.region[1] = r_pocket;
     c.left_edge = 0; c.left_side = RIGHT;
     c.right_edge = 1; c.right_side = RIGHT;
     c.y = 3.0; c.y_tag = 4; // junction's index
-    c.left_adj = {{ai_right}, 1};
-    c.right_adj = {{ai_left}, 1};
+    c.left_adj = {{B}, 1};
+    c.right_adj = {{W}, 1};
     S2.add_chord(c);
 
-    S2.start_arc = ai_left; S2.end_arc = ai_left;
-    S2.start_vertex = 0; S2.end_vertex = 2;
+    assert(S2.start_arc == W && S2.end_arc == W &&
+           "[C91 §2.4 tex 142]: the double-wrap arc is both endpoint arcs");
 
     // a₀ at (4,3). Edge 3 ascending, RIGHT wall → shoot RIGHT.
     // Oracle for S₁: hit at x=20 (far RIGHT, not interesting).
@@ -750,11 +790,13 @@ static void test_startup_vertex_to_vertex_tie_break() {
     // Case 1: main loop starts at k=1.
     assert(start == 1);
     // Tie-break: leaving_downward=true → we move DOWN below the chord.
-    // Above-chord region is r_loop (containing C₂'s arcs); below is
-    // r_outside.  Algorithm elects r_outside.
-    assert(state.s2_region == r_outside &&
+    // The pocket's arc B approaches the chord endpoints from ABOVE (via
+    // the peak vertex y=5), so r_pocket is the above-chord region and
+    // the outer region — whose double-wrap arc W passes below through
+    // the turnarounds — is elected.
+    assert(state.s2_region == r_outer &&
            "vertex-to-vertex tie-break: leaving_downward=true should "
-           "elect the region below the chord (r_outside)");
+           "elect the region below the chord (r_outer)");
     assert(!state.chords.empty());
 
     std::printf("  [PASS] startup_vertex_to_vertex_tie_break\n");
@@ -795,52 +837,52 @@ static void test_startup_mid_edge_tie_break() {
     Submap S2;
     std::size_t r_above = S2.add_node();
     std::size_t r_below = S2.add_node();
+    S2.start_vertex = 0; S2.end_vertex = 2;
 
-    // RIGHT-side arc above the chord: from the mid-edge crossing up
-    // edge 1's west wall to v_mid.  Single-edge on edge 1.  STARTS at
-    // the chord crossing (cw RIGHT-side traversal ascends this edge).
+    // [C91 §2.4 tex 142]: r_above's arc U runs from the junction
+    // companion through C₂'s START turnaround and over the peak to the
+    // mid-edge crossing — one start-wrap structure R(0)→R... hm — the
+    // crossing is on edge 1's RIGHT face, reached along the RIGHT
+    // ascent from v_end; U instead covers RIGHT edge 0 + the crossing
+    // approach from above: first=(1,RIGHT), last=(0,RIGHT) would be the
+    // plain stretch.  Concretely: U = from the crossing up edge 1's
+    // west wall (RIGHT), over v_mid, down edge 0's east wall (RIGHT) to
+    // the junction companion — plain RIGHT arc [1,0] (no turnaround in
+    // its span).  W = r_below's arc from the junction companion through
+    // the START turn, all of LEFT, the END turn, and up edge 1's RIGHT
+    // face to the crossing — one double-wrap structure
+    // (first=(0,RIGHT) < last=(1,RIGHT), [C91 §2.4 tex 142]).
     Arc a{};
-    a.first_edge = 1; a.last_edge = 1;
+    a.first_edge = 1; a.last_edge = 0;
     a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r_above;
-    a.edge_count = 1;
-    std::size_t ai_above_R = S2.add_arc(a);
+    a.edge_count = 2;
+    std::size_t U = S2.add_arc(a);
 
-    // RIGHT-side arc below the chord: from v_end up edge 1's west wall
-    // to the crossing.  Single-edge on edge 1.  ENDS at the chord.
     a = {};
-    a.first_edge = 1; a.last_edge = 1;
-    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = RIGHT;   // double wrap
     a.region_node = r_below;
-    a.edge_count = 1;
-    std::size_t ai_below_R = S2.add_arc(a);
-
-    // RIGHT-side arc at v_junction_R (vertex endpoint at the junction):
-    // from v_mid down edge 0's east wall to the junction, ENDING at the
-    // chord's junction endpoint (the tour's last stretch).
-    a = {};
-    a.first_edge = 0; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r_above;
-    a.edge_count = 1;
-    std::size_t ai_right_at_junction = S2.add_arc(a);
+    a.edge_count = 2;
+    std::size_t W = S2.add_arc(a);
 
     // Matching chord at y=3, y_tag=4 (junction's tag).
-    // Left slot: v_junction_R on edge 0 (vertex endpoint, one adj arc).
-    // Right slot: mid-edge crossing on edge 1 (two adj arcs — slot 0
-    // ends at the chord, slot 1 starts at it, [C91 §2.4(ii) tex 137]).
+    // Left slot: junction companion on edge 0 (vertex endpoint, one adj
+    // arc — U ends there).  Right slot: mid-edge crossing on edge 1
+    // (two adj arcs — slot 0 ends at the chord (W), slot 1 starts at it
+    // (U), [C91 §2.4(ii) tex 137]).
     Chord c{};
     c.region[0] = r_above;
     c.region[1] = r_below;
     c.left_edge = 0; c.left_side = RIGHT;
     c.right_edge = 1; c.right_side = RIGHT;
     c.y = 3.0; c.y_tag = 4;
-    c.left_adj = {{ai_right_at_junction}, 1};
-    c.right_adj = {{ai_below_R, ai_above_R}, 2};
+    c.left_adj = {{U}, 1};
+    c.right_adj = {{W, U}, 2};
     S2.add_chord(c);
 
-    S2.start_arc = ai_above_R; S2.end_arc = ai_above_R;
-    S2.start_vertex = 0; S2.end_vertex = 2;
+    assert(S2.start_arc == W && S2.end_arc == W &&
+           "[C91 §2.4 tex 142]: the double-wrap arc is both endpoint arcs");
 
     // a₀ shoots RIGHT and hits the mid-edge crossing on edge 1 at x=5.5.
     StartupOracle oracle1(&C1, 20.0);
@@ -855,16 +897,13 @@ static void test_startup_mid_edge_tie_break() {
     // Tie-break: leaving_downward=true → elect region BELOW chord.
     //
     // Trace through resolve_s2_region's mid-edge branch (adj = the
-    // count-2 right slot):
-    //   - ai_below_R: single-edge on chord's edge.  arc_start_symbolic_y
-    //     hits the polygon-vertex case at vertex(first_edge+1=2) = v_end
-    //     (y=1,tag=6) ≠ chord (y=3,tag=4) → ENDS at chord.  Adjacent
-    //     vertex away from the chord (RIGHT, last_edge=1) =
+    // count-2 right slot {W, U}):
+    //   - W: ends at the chord (its last position is the crossing).
+    //     Adjacent vertex away from the chord (RIGHT, last_edge=1) =
     //     C₂.edge(1).end_idx = v_end (y=1 < 3) → arc0_above = FALSE.
-    //   - ai_above_R: arc_start_symbolic_y finds the chord via
-    //     c.right_adj.arcs[1] match → returns chord's (3,4) → STARTS at
-    //     the chord.  Adjacent vertex (RIGHT, first_edge=1) =
-    //     C₂.edge(1).start_idx = v_mid (y=5 > 3) → arc1_above = TRUE.
+    //   - U: starts at the chord (slot 1).  Adjacent vertex (RIGHT,
+    //     first_edge=1) = C₂.edge(1).start_idx = v_mid (y=5 > 3) →
+    //     arc1_above = TRUE.
     //   - above_r = r_above, below_r = r_below.
     //   - leaving_downward=true → return below_r = r_below.
     assert(state.s2_region == r_below &&
@@ -895,30 +934,36 @@ struct ForwardOracle : RayShootingOracle {
     RayHit shoot(Point p, Side dir,
                  std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
-        assert(target.first_side == target.last_side &&
-               "ForwardOracle: wrapped subarc targets not modeled");
         RayHit h;
-        // Walk the subarc's edges in traversal order; hit the first one
-        // whose symbolic y-range contains the ray's y.
+        // Walk the subarc's legs in cycle order ([C91 §2.4 tex 142]:
+        // wrap-spanning targets decompose per leg), each leg's edges in
+        // traversal order; hit the first edge whose symbolic y-range
+        // contains the ray's y.
         SymbolicY py{p.y, p.index};
-        std::size_t e = target.first_edge;
-        for (;;) {
-            const auto& ed = C->edge(e);
-            SymbolicY y0 = symbolic_y_of(C->vertex(ed.start_idx));
-            SymbolicY y1 = symbolic_y_of(C->vertex(ed.end_idx));
-            SymbolicY lo = symbolic_y_less(y0, y1) ? y0 : y1;
-            SymbolicY hi = symbolic_y_less(y0, y1) ? y1 : y0;
-            if (symbolic_y_leq(lo, py) && symbolic_y_leq(py, hi)) {
-                h.hit = true;
-                h.y = p.y;
-                h.x = (dir == LEFT) ? (p.x - forward_dist)
-                                    : (p.x + forward_dist);
-                h.edge = e;
-                h.side = target.first_side;
-                return h;
+        ArcLeg legs[3];
+        std::size_t n = subarc_legs(target, 0, C->num_vertices() - 1,
+                                    legs);
+        for (std::size_t li = 0; li < n; ++li) {
+            for (std::size_t k = 0; k <= legs[li].hi - legs[li].lo;
+                 ++k) {
+                std::size_t e = (legs[li].side == LEFT)
+                    ? legs[li].lo + k    // LEFT traversal ascends
+                    : legs[li].hi - k;   // RIGHT descends
+                const auto& ed = C->edge(e);
+                SymbolicY y0 = symbolic_y_of(C->vertex(ed.start_idx));
+                SymbolicY y1 = symbolic_y_of(C->vertex(ed.end_idx));
+                SymbolicY lo = symbolic_y_less(y0, y1) ? y0 : y1;
+                SymbolicY hi = symbolic_y_less(y0, y1) ? y1 : y0;
+                if (symbolic_y_leq(lo, py) && symbolic_y_leq(py, hi)) {
+                    h.hit = true;
+                    h.y = p.y;
+                    h.x = (dir == LEFT) ? (p.x - forward_dist)
+                                        : (p.x + forward_dist);
+                    h.edge = e;
+                    h.side = legs[li].side;
+                    return h;
+                }
             }
-            if (e == target.last_edge) break;
-            e = (target.last_edge > target.first_edge) ? e + 1 : e - 1;
         }
         h.hit = false;
         return h;
@@ -940,18 +985,16 @@ static void test_fuse_main_loop_smoke() {
     auto S1 = make_S1(C1);
     Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
 
+    // Chordless S₂: the single closed arc ([C91 §2.4 tex 142/138]).
     Submap S2;
     S2.add_node();
+    S2.start_vertex = 0; S2.end_vertex = 2;
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
     std::size_t ai0 = S2.add_arc(a);
-    a.first_edge = 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    S2.add_arc(a);
-    S2.start_arc = ai0; S2.end_arc = ai0;
-    S2.start_vertex = 0; S2.end_vertex = 2;
+    assert(S2.start_arc == ai0 && S2.end_arc == ai0);
 
     // S₂ closer than S₁ → Case 1 startup.  Forward dist same for both
     // so startup distance comparison favors S₂ (tie → ∂C₂ per tex 191).
@@ -987,29 +1030,27 @@ static void test_fuse_main_loop_case_ii_smoke() {
     Submap S2;
     std::size_t r_above = S2.add_node();
     std::size_t r_below = S2.add_node();
+    S2.start_vertex = 0; S2.end_vertex = 2;
 
     // S₂ chord at y=3 (junction's y): mid-edge crossing on edge 1 (LEFT)
-    // and vertex endpoint at junction on edge 0 (RIGHT).
+    // and vertex endpoint at the junction on edge 0 (RIGHT).
+    // [C91 §2.4 tex 142]: r_above's arc Q double-backs around C₂'s
+    // START vertex (from the junction companion over the peak to the
+    // crossing); r_below's arc P around C₂'s END vertex (from the
+    // crossing under the curve back to the junction companion).
     Arc a{};
-    a.first_edge = 1; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r_above;
-    a.edge_count = 1;
-    std::size_t ai_above_L = S2.add_arc(a);
-
-    a = {};
-    a.first_edge = 1; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 1; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;    // end wrap
     a.region_node = r_below;
-    a.edge_count = 1;
-    std::size_t ai_below_L = S2.add_arc(a);
+    a.edge_count = 2;
+    std::size_t P = S2.add_arc(a);
 
     a = {};
-    a.first_edge = 0; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = LEFT;    // start wrap
     a.region_node = r_above;
-    a.edge_count = 1;
-    std::size_t ai_right_at_junction = S2.add_arc(a);
+    a.edge_count = 2;
+    std::size_t Q = S2.add_arc(a);
 
     Chord c{};
     c.region[0] = r_above;
@@ -1017,12 +1058,11 @@ static void test_fuse_main_loop_case_ii_smoke() {
     c.left_edge = 1; c.left_side = LEFT;
     c.right_edge = 0; c.right_side = RIGHT;
     c.y = 3.0; c.y_tag = 4;
-    c.left_adj = {{ai_above_L, ai_below_L}, 2};
-    c.right_adj = {{ai_right_at_junction}, 1};
+    c.left_adj = {{Q, P}, 2};                    // before, after
+    c.right_adj = {{P}, 1};                      // vertex endpoint
     S2.add_chord(c);
 
-    S2.start_arc = ai_above_L; S2.end_arc = ai_above_L;
-    S2.start_vertex = 0; S2.end_vertex = 2;
+    assert(S2.start_arc == Q && S2.end_arc == P);
 
     // Forward oracles — distance-from-p so the main loop iterates without
     // backward-hit asserts.  S₂ closer than S₁ to keep Case 1 startup.
@@ -1041,21 +1081,19 @@ static void test_fuse_main_loop_case_ii_smoke() {
 //  17. rebuild_submap — [C91 §3.1 tex 226] normal-form assembly
 // ════════════════════════════════════════════════════════════════
 
-// Minimal single-region conformal submap (no chords) over `poly`.
+// Minimal single-region conformal submap (no chords) over `poly`: one
+// region bounded by the single closed arc ([C91 §2.4 tex 142/138]).
 static Submap make_chordless(const Polygon& poly) {
     Submap s;
     s.add_node();
+    s.start_vertex = 0; s.end_vertex = poly.num_vertices() - 1;
     Arc a{};
-    a.first_edge = 0; a.last_edge = poly.num_edges() - 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
-    a.first_edge = poly.num_edges() - 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    s.add_arc(a);
-    s.start_arc = ai0; s.end_arc = ai0;
-    s.start_vertex = 0; s.end_vertex = poly.num_vertices() - 1;
+    assert(s.start_arc == ai0 && s.end_arc == ai0);
     return s;
 }
 
@@ -1074,7 +1112,12 @@ static void test_rebuild_no_chords() {
 
     assert(out.num_nodes() == 1);
     assert(out.num_chords() == 0);
-    assert(out.num_arcs() == 2);
+    // [C91 §2.4 tex 142/138]: ONE closed arc covering all of ∂C, cut at
+    // C's start turnaround.
+    assert(out.num_arcs() == 1);
+    assert(out.arc(0).first_side == LEFT && out.arc(0).last_side == RIGHT &&
+           out.arc(0).first_edge == 0 && out.arc(0).last_edge == 0);
+    assert(out.start_arc == 0 && out.end_arc == 0);
     out.assert_tree_property();
     out.check_invariants(C);
 
@@ -1227,16 +1270,17 @@ static void test_rebuild_junction_null_in_input_fires() {
         Submap S2;
         std::size_t r0 = S2.add_node();
         std::size_t r1 = S2.add_node();
+        S2.start_vertex = 0; S2.end_vertex = 1;
         Arc a{};
-        a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
+        // Outer arc: wraps C₂'s end vertex ([C91 §2.4 tex 142]).
+        a.first_edge = 0; a.last_edge = 0;
+        a.first_side = LEFT; a.last_side = RIGHT;
         a.region_node = r0; a.edge_count = 1;
         std::size_t a0 = S2.add_arc(a);
-        a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
+        a = {}; a.first_edge = 0; a.last_edge = 0;
+        a.first_side = RIGHT; a.last_side = LEFT;
         a.region_node = r1; a.edge_count = 0;
         std::size_t a_null = S2.add_arc(a);
-        a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-        a.region_node = r0; a.edge_count = 1;
-        S2.add_arc(a);
         Chord nc{};
         nc.region[0] = r0; nc.region[1] = r1;
         nc.left_edge = 0; nc.right_edge = 0;
@@ -1245,8 +1289,7 @@ static void test_rebuild_junction_null_in_input_fires() {
         nc.y = 1.0; nc.y_tag = 1;                 // ← junction's tag
         nc.left_adj = {{a0}, 1}; nc.right_adj = {{a_null}, 1};
         S2.add_chord(nc);
-        S2.start_arc = a0; S2.end_arc = a_null;
-        S2.start_vertex = 0; S2.end_vertex = 1;
+        (void)a0; (void)a_null;
 
         FusionState st1, st2;
         Submap out;
@@ -1272,31 +1315,39 @@ static void test_case_ii_hit_beyond_ab_disqualified() {
     Submap S2;
     std::size_t r_above = S2.add_node();
     std::size_t r_below = S2.add_node();
+    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    // S₂ chord at y=3 (junction's y): mid-edge crossing on edge 1 (LEFT)
+    // and vertex endpoint at the junction on edge 0 (RIGHT).
+    // [C91 §2.4 tex 142]: r_above's arc Q double-backs around C₂'s
+    // START vertex (from the junction companion over the peak to the
+    // crossing); r_below's arc P around C₂'s END vertex (from the
+    // crossing under the curve back to the junction companion).
     Arc a{};
-    a.first_edge = 1; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r_above; a.edge_count = 1;
-    std::size_t ai_above_L = S2.add_arc(a);
+    a.first_edge = 1; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;    // end wrap
+    a.region_node = r_below;
+    a.edge_count = 2;
+    std::size_t P = S2.add_arc(a);
+
     a = {};
-    a.first_edge = 1; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r_below; a.edge_count = 1;
-    std::size_t ai_below_L = S2.add_arc(a);
-    a = {};
-    a.first_edge = 0; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r_above; a.edge_count = 1;
-    std::size_t ai_right_at_junction = S2.add_arc(a);
+    a.first_edge = 0; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = LEFT;    // start wrap
+    a.region_node = r_above;
+    a.edge_count = 2;
+    std::size_t Q = S2.add_arc(a);
+
     Chord c{};
-    c.region[0] = r_above; c.region[1] = r_below;
+    c.region[0] = r_above;
+    c.region[1] = r_below;
     c.left_edge = 1; c.left_side = LEFT;
     c.right_edge = 0; c.right_side = RIGHT;
     c.y = 3.0; c.y_tag = 4;
-    c.left_adj = {{ai_above_L, ai_below_L}, 2};
-    c.right_adj = {{ai_right_at_junction}, 1};
+    c.left_adj = {{Q, P}, 2};                    // before, after
+    c.right_adj = {{P}, 1};                      // vertex endpoint
     S2.add_chord(c);
-    S2.start_arc = ai_above_L; S2.end_arc = ai_above_L;
-    S2.start_vertex = 0; S2.end_vertex = 2;
+
+    assert(S2.start_arc == Q && S2.end_arc == P);
 
     // The S₂ chord spans x ∈ [~2.5, 4] (length ~1.5).  ForwardOracle
     // with forward_dist = 100 puts every S₁ hit far beyond the other
@@ -1384,18 +1435,16 @@ static void test_startup_case1_junction_at_start() {
     auto T = make_C1();                 // {(0,0,0), ..., (4,3,4)}
     auto S_T = make_S1(T);
 
+    // Chordless S_W: the single closed arc ([C91 §2.4 tex 142/138]).
     Submap S_W;
     S_W.add_node();
+    S_W.start_vertex = 0; S_W.end_vertex = 2;
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
     std::size_t ai0 = S_W.add_arc(a);
-    a.first_edge = 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    S_W.add_arc(a);
-    S_W.start_arc = ai0; S_W.end_arc = ai0;
-    S_W.start_vertex = 0; S_W.end_vertex = 2;
+    assert(S_W.start_arc == ai0 && S_W.end_arc == ai0);
 
     // a₀ = LEFT companion at W's vertex 0 = (4,3).  W's edge 0 ascends
     // (3→5): the LEFT (west) wall shoots LEFT ([C91 §2.1 tex 72] — toward
@@ -1433,49 +1482,42 @@ static void test_fuse_main_loop_smoke_junction_at_start() {
     Polygon W({{0,0,10}, {1,2,11}, {2,4,12}, {3,1,13}, {4,3,14}});
 
     // make_S1-shaped 2-region submap over W (chord at W's vertex 2,
-    // whose SoS index is 12).
+    // whose SoS index is 12): both region arcs are single wrap
+    // structures ([C91 §2.4 tex 142]).
     Submap S_W;
     S_W.add_node();
     S_W.add_node();
+    S_W.start_vertex = 0; S_W.end_vertex = 4;
     Arc a{};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 2;
-    std::size_t ai0 = S_W.add_arc(a);
-    a.first_edge = 1; a.last_edge = 3;
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = LEFT; a.last_side = RIGHT;    // end wrap (r1)
     a.region_node = 1; a.edge_count = 3;
-    std::size_t ai1 = S_W.add_arc(a);
+    std::size_t aiE = S_W.add_arc(a);
     a = {};
-    a.first_edge = 3; a.last_edge = 1;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 1; a.edge_count = 3;
-    std::size_t ai2 = S_W.add_arc(a);
-    a.first_edge = 1; a.last_edge = 0;
+    a.first_edge = 1; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = LEFT;    // start wrap (r0)
     a.region_node = 0; a.edge_count = 2;
-    std::size_t ai3 = S_W.add_arc(a);
+    std::size_t aiS = S_W.add_arc(a);
     Chord c{};
     c.region[0] = 0; c.region[1] = 1;
     c.left_edge = 1; c.right_edge = 1;
     c.left_side = LEFT; c.right_side = RIGHT;
     c.y = W.vertex(2).y; c.y_tag = W.vertex(2).index;
-    c.left_adj = {{ai0, ai1}, 2};
-    c.right_adj = {{ai2, ai3}, 2};
+    c.left_adj = {{aiS}, 1};
+    c.right_adj = {{aiE}, 1};
     S_W.add_chord(c);
-    S_W.start_arc = ai0; S_W.end_arc = ai1;
-    S_W.start_vertex = 0; S_W.end_vertex = 4;
+    assert(S_W.start_arc == aiS && S_W.end_arc == aiE);
 
+    // Chordless S_T: the single closed arc ([C91 §2.4 tex 142/138]).
     Submap S_T;
     S_T.add_node();
+    S_T.start_vertex = 0; S_T.end_vertex = 2;
     a = {};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0; a.edge_count = 2;
     std::size_t t0 = S_T.add_arc(a);
-    a.first_edge = 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    S_T.add_arc(a);
-    S_T.start_arc = t0; S_T.end_arc = t0;
-    S_T.start_vertex = 0; S_T.end_vertex = 2;
+    assert(S_T.start_arc == t0 && S_T.end_arc == t0);
 
     ForwardOracle oracleW(&W, 5.0);
     ForwardOracle oracleT(&T, 1.0);

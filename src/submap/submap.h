@@ -51,11 +51,11 @@ public:
     // vanish; vertices of C persist as interior arc vertices), not arc
     // structure.
     //
-    // Exception: junctions at C's own endpoint companions ([C91 §2.1
-    // tex 72] case 3) are NOT glued — the arc-sequence table keeps arcs
-    // split at C's two endpoint wraps (the settled representation of
-    // [C91 §2.4 tex 142] double-backing; §3.2's LogicalArc re-glues wrap
-    // pieces logically where paper arcs are needed).
+    // Junctions at C's own endpoint companions ([C91 §2.1 tex 72] case 3)
+    // glue like every other junction: the merged arc double-backs around
+    // the endpoint of C and stays ONE arc-structure ([C91 §2.4 tex 142]).
+    // Removing the LAST chord closes the boundary into the single closed
+    // arc of the chordless submap (all of ∂C, one arc-structure).
     //
     // @param polygon  needed to detect which endpoints are polygon vertices.
     // @return surviving region index.
@@ -125,16 +125,18 @@ public:
     std::size_t end_arc      = NONE;
 
     // [C91 §2.4(iii) tex 138]: "pointers to the arc-structures whose
-    // corresponding arcs pass through the endpoints" — TWO arcs pass
-    // through each endpoint of C.  start_arc/end_arc hold the LEFT-half
-    // pair; tail_arc is the arc ENDING at C's start wrap (the last RIGHT
-    // arc in canonical ∂C order).  Needed because that arc ends at no
-    // chord, so it appears in no adjacency slot when its start is a
-    // vertex endpoint: region_weight and the [C91 §2.2 tex 96] junction
-    // glue would otherwise not reach it in O(1).  Maintained by add_arc
-    // (canonical insertion order), remove_chord, insert_chord, compact,
-    // and normalize.
-    std::size_t tail_arc     = NONE;
+    // corresponding arcs pass through the endpoints."  C's two turnaround
+    // points are never chord endpoints (chords end at the companion
+    // vertices flanking the turn, [C91 §2.1 tex 72] case 3), so EXACTLY
+    // ONE live arc passes through each turnaround and it double-backs
+    // there ([C91 §2.4 tex 142]):
+    //   start_arc — passes through C's start turnaround.  Always the
+    //     LAST table entry (its clockwise start position is maximal).
+    //   end_arc   — passes through C's end turnaround.  The last
+    //     LEFT-starting arc when one exists, else the last table entry.
+    // The two coincide for a double-wrap or closed arc.  Maintained by
+    // add_arc (canonical insertion order), remove_chord, insert_chord,
+    // compact, and normalize.
 
     // [C91 §2.4]: First RIGHT arc in arc-sequence.  LEFT = [0, boundary),
     // RIGHT = [boundary, num_arcs).
@@ -145,13 +147,18 @@ public:
     // ── [C91 §2.4]: Double identification ────────────────────────────
 
     // [C91 §2.4 tex 144]: "double identification of a point of ∂C" — all
-    // arcs passing through (edge, symbolic_y).  O(log m).
+    // arc-structures passing through (edge, symbolic_y).  O(log m).
     // At most 6 arcs (worst case: y-extremum with chords on both sides).
+    // push() is idempotent: an arc double-backing around an endpoint of
+    // C ([C91 §2.4 tex 142]) can cover the query point on both ∂C
+    // sides, but it is ONE arc-structure and is reported once.
     struct DoubleIdentifyResult {
         static constexpr std::size_t MAX = 6;
         std::array<std::size_t, MAX> arcs = {};
         std::size_t count = 0;
         void push(std::size_t arc_idx) {
+            for (std::size_t i = 0; i < count; ++i)
+                if (arcs[i] == arc_idx) return;
             assert(count < MAX);
             arcs[count++] = arc_idx;
         }
@@ -185,7 +192,8 @@ public:
     // May be less than the sum: "this weight might be less than the added
     // weight of the two nodes of the contracted edge" ([C91 §2.3 tex 123]).
     // Simulates exactly what remove_chord would produce: arc chains glued
-    // at both endpoints (vertex and mid-edge; wrap-cap junctions excepted).
+    // at both endpoints (vertex and mid-edge alike; contracting the last
+    // chord yields the closed arc spanning all of C).
     std::size_t simulated_contraction_weight(
         std::size_t chord_idx,
         const class Polygon& polygon) const noexcept;
@@ -326,11 +334,13 @@ private:
     // point (want_after) or ENDING there (!want_after).  The 1-slot
     // adjacency convention records only the before-arc at vertex
     // endpoints, so the mate is found by scanning the adjacency slots of
-    // the chord's two regions' incident chords plus the C-endpoint arcs
-    // (start_arc/end_arc/tail_arc) — O(degree) = O(1) for conformal
-    // submaps.  Among candidates a zero-length arc wins (it occupies the
-    // junction point itself and precedes/follows immediately, [C91 §2.2
-    // tex 96] "some arcs may be of zero length").
+    // the chord's two regions' incident chords — every live arc ends at
+    // a live chord endpoint of its region and is that chord's recorded
+    // before-arc ([C91 §2.2 tex 96] alternation under full junction
+    // gluing), so the slots are exhaustive.  O(degree) = O(1) for
+    // conformal submaps.  Among candidates a zero-length arc wins (it
+    // occupies the junction point itself and precedes/follows
+    // immediately, [C91 §2.2 tex 96] "some arcs may be of zero length").
     // @param edge, side   the junction endpoint's ∂C position.
     // @param vertex_idx   the polygon vertex at the junction.
     // @param exclude, exclude2  arc indices to skip (already-known
@@ -361,6 +371,11 @@ private:
     // [C91 §2.4 tex 144]: double_identify needs a compacted arc-sequence;
     // tracked as O(1) flag rather than O(m) per-call scan.
     bool compacted_ = true;
+
+    // Live chord count, maintained by add_chord/remove_chord — keeps
+    // remove_chord's last-chord test O(1) ([C91 §3.3 tex 276]: removals
+    // must run in time linear in the submap tree).
+    std::size_t live_chords_ = 0;
 };
 
 } // namespace chazelle

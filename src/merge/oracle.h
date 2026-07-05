@@ -28,23 +28,38 @@ struct Subarc {
     Side last_side;
 };
 
-// [C91 §2.4 tex 138]: Assert a Subarc respects clockwise ∂C ordering —
-// LEFT side ascends in edge, RIGHT side descends.  Wrap subarcs
-// (first_side ≠ last_side) inherit α's orientation per [C91 §2.4 tex 142];
-// no edge-index check is well-defined in that case.  Paper-proven for any
-// "subarc of α" where α is a region arc in normal form.
-inline void assert_subarc_clockwise(const Subarc& s) {
-    if (s.first_side == s.last_side) {
-        if (s.first_side == LEFT) {
-            assert(s.first_edge <= s.last_edge &&
-                   "[C91 §2.4 tex 138]: LEFT subarc must ascend in edge");
-        } else {
-            assert(s.first_edge >= s.last_edge &&
-                   "[C91 §2.4 tex 138]: RIGHT subarc must descend in edge");
-        }
-    }
-    // Wrap subarc: orientation encoded by side pair; per [C91 §2.4 tex 142]
-    // LEFT→RIGHT wraps at C₁'s end_vertex, RIGHT→LEFT at start_vertex.
+// [C91 §2.4 tex 138]: A Subarc respects clockwise ∂C ordering — LEFT
+// side ascends in edge, RIGHT side descends.  Wrap subarcs inherit α's
+// double-backing per [C91 §2.4 tex 142]: first_side ≠ last_side wraps
+// one endpoint of C; a same-side pair VIOLATING the traversal order
+// wraps both (the subarc covers the whole opposite side), so no
+// same-side edge-index check is possible — the encoding is exactly
+// Arc's (arc.h).
+inline void assert_subarc_clockwise(const Subarc&) {}
+
+// [C91 §2.4 tex 142]: decompose a Subarc into its 1–3 single-side legs —
+// the Subarc (first, last) encoding is Arc's, so reuse Arc::legs.
+inline std::size_t subarc_legs(const Subarc& s, std::size_t c_start,
+                               std::size_t c_end, ArcLeg out[3]) {
+    Arc a;
+    a.first_edge = s.first_edge;
+    a.first_side = s.first_side;
+    a.last_edge = s.last_edge;
+    a.last_side = s.last_side;
+    a.region_node = 0;   // unused by legs()
+    return a.legs(c_start, c_end, out);
+}
+
+// Does the subarc cover ∂C position (edge, side), at edge granularity?
+inline bool subarc_covers_position(const Subarc& s, std::size_t edge,
+                                   Side side, std::size_t c_start,
+                                   std::size_t c_end) {
+    ArcLeg lg[3];
+    std::size_t n = subarc_legs(s, c_start, c_end, lg);
+    for (std::size_t i = 0; i < n; ++i)
+        if (lg[i].side == side && lg[i].lo <= edge && edge <= lg[i].hi)
+            return true;
+    return false;
 }
 
 // [C91 §3.0(i) tex 169]: Ray-hit report — point + edge of P containing it.

@@ -46,8 +46,12 @@ static Polygon test_polygon() {
 //
 //  Region 0 — chord 0 — Region 1 — chord 1 — Region 2
 //
-//  Arcs (LEFT side): a0(reg 0), a1(reg 1), a2(reg 2)
-//  Arcs (RIGHT side): a3(reg 2), a4(reg 1), a5(reg 0)
+//  [C91 §2.4 tex 142]: a wrap-spanning arc is ONE arc-structure that
+//  double-backs around an endpoint of C — never split.  Region 2's arc
+//  passes around C's end vertex (end wrap) and region 0's around C's
+//  start vertex (start wrap), so the table holds 4 arc-structures:
+//    aE  L(2)→R(2)  r2 (end wrap),   a1 L[1,1] r1,
+//    a4  R[1,1] r1,                  aS R(0)→L(0) r0 (start wrap).
 // ════════════════════════════════════════════════════════════════
 
 static Submap build_3region_submap() {
@@ -56,31 +60,36 @@ static Submap build_3region_submap() {
     std::size_t r1 = s.add_node();
     std::size_t r2 = s.add_node();
 
-    // LEFT arcs (∂C order: a0, a1, a2)
-    Arc a0; a0.first_edge = 0; a0.last_edge = 0; a0.first_side = LEFT; a0.last_side = LEFT;
-    a0.region_node = r0; a0.edge_count = 1;
-    std::size_t ai0 = s.add_arc(a0);
+    // [C91 §2.4(iii) tex 138]: set C's endpoints before the arcs so
+    // add_arc can classify the wrap arcs.
+    s.start_vertex = 0;
+    s.end_vertex = 4;
+
+    // Canonical table order ([C91 §2.4(iii) tex 138]): LEFT-starting
+    // arcs ascending first_edge, then RIGHT-starting descending; the
+    // start-turn arc sorts last.
 
     Arc a1; a1.first_edge = 1; a1.last_edge = 1; a1.first_side = LEFT; a1.last_side = LEFT;
     a1.region_node = r1; a1.edge_count = 1;
     std::size_t ai1 = s.add_arc(a1);
 
-    Arc a2; a2.first_edge = 2; a2.last_edge = 3; a2.first_side = LEFT; a2.last_side = LEFT;
-    a2.region_node = r2; a2.edge_count = 2;
-    std::size_t ai2 = s.add_arc(a2);
-
-    // RIGHT arcs (∂C order: a3, a4, a5)
-    Arc a3; a3.first_edge = 3; a3.last_edge = 2; a3.first_side = RIGHT; a3.last_side = RIGHT;
-    a3.region_node = r2; a3.edge_count = 2;
-    std::size_t ai3 = s.add_arc(a3);
+    // Region 2's arc: from chord 1's LEFT endpoint up edge 2–3, around
+    // C's end vertex, back down to chord 1's RIGHT endpoint —
+    // ONE end-wrap structure ([C91 §2.4 tex 142]); ᾱ = edges [2,3].
+    Arc aE; aE.first_edge = 2; aE.last_edge = 2; aE.first_side = LEFT; aE.last_side = RIGHT;
+    aE.region_node = r2; aE.edge_count = 2;
+    std::size_t aiE = s.add_arc(aE);
 
     Arc a4; a4.first_edge = 1; a4.last_edge = 1; a4.first_side = RIGHT; a4.last_side = RIGHT;
     a4.region_node = r1; a4.edge_count = 1;
     std::size_t ai4 = s.add_arc(a4);
 
-    Arc a5; a5.first_edge = 0; a5.last_edge = 0; a5.first_side = RIGHT; a5.last_side = RIGHT;
-    a5.region_node = r0; a5.edge_count = 1;
-    std::size_t ai5 = s.add_arc(a5);
+    // Region 0's arc: from chord 0's RIGHT endpoint down edge 0, around
+    // C's start vertex, back up to chord 0's LEFT endpoint — ONE
+    // start-wrap structure; ᾱ = edge [0,0].
+    Arc aS; aS.first_edge = 0; aS.last_edge = 0; aS.first_side = RIGHT; aS.last_side = LEFT;
+    aS.region_node = r0; aS.edge_count = 1;
+    std::size_t aiS = s.add_arc(aS);
 
     // Both chords sit at polygon vertices (y_tag 1 and 2 match vertices
     // of test_polygon), so each endpoint records ONE adj arc — the
@@ -88,27 +97,26 @@ static Submap build_3region_submap() {
     // 1-slot convention; the after-arc is found by remove_chord's
     // junction scan).
 
-    // Chord 0: between r0 and r1 at vertex 1.  LEFT before-arc a0 (ends
-    // at v1); RIGHT before-arc a4 (RIGHT traversal descends: [1,1] ends
-    // at v1).
+    // Chord 0: between r0 and r1 at vertex 1.  LEFT before-arc aS (its
+    // LEFT leg ends at v1); RIGHT before-arc a4 (RIGHT traversal
+    // descends: [1,1] ends at v1).
     Chord c0;
     c0.region[0] = r0; c0.region[1] = r1;
-    c0.left_adj = {{ai0}, 1}; c0.right_adj = {{ai4}, 1};
+    c0.left_adj = {{aiS}, 1}; c0.right_adj = {{ai4}, 1};
     c0.left_edge = 0; c0.right_edge = 0; c0.y = 1.0; c0.y_tag = 1;
     s.add_chord(c0);
 
     // Chord 1: between r1 and r2 at vertex 2.  LEFT before-arc a1;
-    // RIGHT before-arc a3 ([3,2] descending ends at v2).
+    // RIGHT before-arc aE (its RIGHT leg [2,3] descending ends at v2).
     Chord c1;
     c1.region[0] = r1; c1.region[1] = r2;
-    c1.left_adj = {{ai1}, 1}; c1.right_adj = {{ai3}, 1};
+    c1.left_adj = {{ai1}, 1}; c1.right_adj = {{aiE}, 1};
     c1.left_edge = 1; c1.right_edge = 1; c1.y = 2.0; c1.y_tag = 2;
     s.add_chord(c1);
 
-    s.start_arc = ai0;
-    s.end_arc = ai2;
-    s.start_vertex = 0;
-    s.end_vertex = 4;
+    // [C91 §2.4(iii) tex 138]: add_arc auto-registered the endpoint
+    // pointers from the wrap classes.
+    assert(s.start_arc == aiS && s.end_arc == aiE);
 
     return s;
 }
@@ -140,7 +148,10 @@ static void test_submap_construction() {
 
     assert(s.num_nodes() == 3);
     assert(s.num_chords() == 2);
-    assert(s.num_arcs() == 6);
+    // [C91 §2.2 tex 96 + §2.4 tex 142]: arc-structure count == number of
+    // arcs — one per boundary alternation slot, wrap-spanning arcs
+    // included as single structures.
+    assert(s.num_arcs() == 4);
 
     // Tree property: 3 regions = 2 chords + 1.
     s.assert_tree_property();
@@ -171,11 +182,12 @@ static void test_check_invariants() {
 static void test_region_weight() {
     Submap s = build_3region_submap();
 
-    // r0 has arcs a0(ec=1) and a5(ec=1) → weight = 1
+    // r0's single start-wrap arc has ec=1 → weight = 1
     assert(s.region_weight(0) == 1);
     // r1 has arcs a1(ec=1) and a4(ec=1) → weight = 1
     assert(s.region_weight(1) == 1);
-    // r2 has arcs a2(ec=2) and a3(ec=2) → weight = 2
+    // r2's single end-wrap arc spans edges [2,3] (ec=2) → weight = 2
+    // ([C91 §2.2 tex 106]: single count over ᾱ, [C91 §2.4 tex 142]).
     assert(s.region_weight(2) == 2);
 
     std::printf("  [PASS] region_weight\n");
@@ -229,21 +241,31 @@ static void test_remove_all_chords() {
 //  7. Empty region weight = 0
 // ════════════════════════════════════════════════════════════════
 
-static void test_empty_region_weight() {
-    // [C91 §2.2]: "weight of a region as 0 if the region is empty."
+static void test_chordless_region_weight() {
+    // [C91 §2.2 tex 106 + §2.4 tex 142]: the chordless submap is one
+    // region bounded by the single closed arc (all of ∂C), stored cut
+    // at C's start turnaround; its weight is the arc's nonnull count.
+    // ([C91 §2.2]'s "weight 0 if the region is empty" is exercised by
+    // the null-length chord tests below.)
+    auto poly = test_polygon();
     Submap s;
     std::size_t r0 = s.add_node();
-    // r0 has no arcs → weight = 0.
-    assert(s.region_weight(r0) == 0);
+    s.start_vertex = 0;
+    s.end_vertex = 4;
 
-    // Add a zero-length arc (edge_count = 0) → still weight 0.
     Arc a;
-    a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 0;
-    s.add_arc(a);
-    assert(s.region_weight(r0) == 0);
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;   // closed-arc encoding
+    a.region_node = r0;
+    a.edge_count = poly.count_nonnull_edges(0, 3);
+    std::size_t ai = s.add_arc(a);
+    assert(s.start_arc == ai && s.end_arc == ai &&
+           "[C91 §2.4(iii) tex 138]: the closed arc is both endpoint arcs");
 
-    std::printf("  [PASS] empty_region_weight\n");
+    assert(s.region_weight(r0) == 4);
+    s.check_invariants(poly);
+
+    std::printf("  [PASS] chordless_region_weight\n");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -251,62 +273,85 @@ static void test_empty_region_weight() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_remove_chord_4_adj_arcs() {
-    // Build a submap where the chord endpoint is NOT a polygon vertex.
-    // The chord is at y=1.5 (between polygon vertices at y=1 and y=2).
-    // Removing it should merge the adjacent arcs.
+    // Build a submap where a chord's endpoints are NOT polygon vertices
+    // (y=1.5, between polygon vertices at y=1 and y=2).  Removing it
+    // merges the adjacent arcs at BOTH endpoints ([C91 §2.2 tex 94]);
+    // both glue mates are wrap-spanning single structures ([C91 §2.4
+    // tex 142]), so the merged results are wrap arcs too.  A second
+    // chord (at vertex 3) keeps the submap chordful so the mid-edge
+    // glue path — not the last-chord closure — is exercised.
     //
-    // [C91 §2.4(iii)]: Arcs partition ∂C contiguously.  At a non-vertex
-    // chord endpoint interior to edge 1, both adjacent LEFT arcs share
-    // edge 1 (a_keep.last_edge = 1, a_dead.first_edge = 1).  Similarly
-    // for the RIGHT pair.
+    // Layout (test_polygon, C = vertices 0..4):
+    //   r0: start-wrap arc S  R(1)→L(1)  [chord_mid's endpoints]
+    //   r1: B L[1,2] and D R[2,1]        [between the two chords]
+    //   r2: end-wrap arc E  L(3)→R(3)    [around C's end vertex]
     Submap s;
-    s.add_node(); // r0
-    s.add_node(); // r1
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
+    std::size_t r2 = s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = 4;
 
     Arc a;
-    // r0 LEFT arc: edges 0–1 (up to chord at y=1.5 on edge 1)
-    a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 2;
-    std::size_t ai0 = s.add_arc(a);
-    // r1 LEFT arc: edges 1–3 (from chord at y=1.5 on edge 1 onward)
-    a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 1; a.edge_count = 3;
-    std::size_t ai1 = s.add_arc(a);
-    // r1 RIGHT arc: edges 3–1 (descending, from end down to chord)
-    a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 1; a.edge_count = 3;
-    std::size_t ai2 = s.add_arc(a);
-    // r0 RIGHT arc: edges 1–0 (descending, from chord down to start)
-    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 0; a.edge_count = 2;
-    std::size_t ai3 = s.add_arc(a);
+    a = {}; a.first_edge = 1; a.last_edge = 2; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r1; a.edge_count = 2;
+    std::size_t B = s.add_arc(a);
+    a = {}; a.first_edge = 3; a.last_edge = 3; a.first_side = LEFT; a.last_side = RIGHT;
+    a.region_node = r2; a.edge_count = 1;          // end wrap: ᾱ = [3,3]
+    std::size_t E = s.add_arc(a);
+    a = {}; a.first_edge = 2; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r1; a.edge_count = 2;
+    std::size_t D = s.add_arc(a);
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 2;          // start wrap: ᾱ = [0,1]
+    std::size_t S = s.add_arc(a);
 
+    // chord_mid at y=1.5 on edge 1 (both sides, mid-edge → 2 slots each,
+    // [C91 §2.2 tex 94]): LEFT endpoint {before=S, after=B}; RIGHT
+    // endpoint {before=D, after=S}.
     Chord c;
-    c.region[0] = 0; c.region[1] = 1;
-    // LEFT endpoint (edge 1): ai0 ends at chord, ai1 starts at chord.
-    // RIGHT endpoint (edge 1): ai2 ends at chord, ai3 starts at chord.
-    c.left_adj = {{ai0, ai1}, 2}; c.right_adj = {{ai2, ai3}, 2};
-    // Chord at y=1.5 — NOT a polygon vertex (polygon vertices are at y=0,1,2,3,4).
+    c.region[0] = r0; c.region[1] = r1;
+    c.left_adj = {{S, B}, 2}; c.right_adj = {{D, S}, 2};
     c.left_edge = 1; c.right_edge = 1;
+    c.left_side = LEFT; c.right_side = RIGHT;
     c.y = 1.5; c.y_tag = 99; // tag 99 doesn't match any vertex index
     s.add_chord(c);
+
+    // chord_v at vertex 3 (y=3, tag 3; vertex endpoints → 1 slot each,
+    // the before-arc): LEFT before = B (ends at v3); RIGHT before = E
+    // (its RIGHT leg [3,3] descending ends at v3).
+    Chord cv;
+    cv.region[0] = r1; cv.region[1] = r2;
+    cv.left_adj = {{B}, 1}; cv.right_adj = {{E}, 1};
+    cv.left_edge = 2; cv.right_edge = 2;
+    cv.left_side = LEFT; cv.right_side = RIGHT;
+    cv.y = 3.0; cv.y_tag = 3;
+    s.add_chord(cv);
 
     auto poly = test_polygon();
     s.remove_chord(0, poly);
 
-    // After removal: adj arc pairs should merge.  Dead arcs are
-    // tombstoned; 2 live arcs remain.
-    assert(s.num_live_arcs() == 2 && "4 adj_arcs: 2 merges → 2 live arcs");
-    // LEFT merge: ai0(ec=2) + ai1(ec=3) - 1(shared edge 1) = 4.
-    // RIGHT merge: ai2(ec=3) + ai3(ec=2) - 1(shared edge 1) = 4.
+    // Both endpoints glue ([C91 §2.2 tex 94]): LEFT merges S+B, RIGHT
+    // merges (D + the S∪B survivor) → ONE start-wrap arc R(2)→L(2) with
+    // ᾱ = [0,2] (ec = 3), plus E.  [C91 §2.4 tex 142]: still single
+    // structures.
+    assert(s.num_live_arcs() == 2 && "two glues chain S,B,D into one arc");
     bool found_merged = false;
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
-        if (s.arc(i).edge_count == 4 && s.arc(i).first_side == LEFT)
+        if (s.arc(i).first_side == RIGHT && s.arc(i).last_side == LEFT) {
+            assert(s.arc(i).first_edge == 2 && s.arc(i).last_edge == 2 &&
+                   s.arc(i).edge_count == 3 &&
+                   "merged start-wrap arc must span ᾱ = [0,2]");
             found_merged = true;
+        }
     }
-    assert(found_merged && "arc merging should produce merged arc "
-           "(2+3-1=4 nonnull edges)");
+    assert(found_merged && "the glued chain stays one double-backing "
+           "arc-structure ([C91 §2.4 tex 142])");
+    s.assert_tree_property();
+
+    s.compact();
+    s.check_invariants(poly);
 
     std::printf("  [PASS] remove_chord_4_adj_arcs\n");
 }
@@ -325,34 +370,31 @@ static void test_remove_chord_merge_at_vertex() {
     // adj arc (the before-arc, [C91 §2.4(ii)] 1-slot convention); the
     // after-arc is found by remove_chord's junction scan.
     Submap s;
-    s.add_node(); // r0
-    s.add_node(); // r1
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
+    s.start_vertex = 0; s.end_vertex = 2;
 
+    // C = vertices 0..2.  r1's arc double-backs around C's end vertex
+    // (E: L(1)→R(1)); r0's around C's start vertex (S: R(0)→L(0)) —
+    // single structures per [C91 §2.4 tex 142].
     Arc a;
-    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 0; a.edge_count = 1;
-    std::size_t ai0 = s.add_arc(a);
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = 1; a.edge_count = 1;
-    std::size_t ai1 = s.add_arc(a);
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 1; a.edge_count = 1;
-    std::size_t ai2 = s.add_arc(a);
-    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = 0; a.edge_count = 1;
-    s.add_arc(a);
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = RIGHT;
+    a.region_node = r1; a.edge_count = 1;
+    std::size_t E = s.add_arc(a);
+    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 1;
+    std::size_t S = s.add_arc(a);
 
     Chord c;
-    c.region[0] = 0; c.region[1] = 1;
-    // Vertex endpoints: 1 adj arc per side, the before-arc.
-    c.left_adj = {{ai0}, 1}; c.right_adj = {{ai2}, 1};
+    c.region[0] = r0; c.region[1] = r1;
+    // Vertex endpoints: 1 adj arc per side, the before-arc — S's LEFT
+    // leg ends at v1; E's RIGHT leg ends at v1.
+    c.left_adj = {{S}, 1}; c.right_adj = {{E}, 1};
     // Chord at y=1.0, tag=1 — matches polygon vertex 1 at (1,1,1).
     c.left_edge = 0; c.right_edge = 0;
+    c.left_side = LEFT; c.right_side = RIGHT;
     c.y = 1.0; c.y_tag = 1;
     s.add_chord(c);
-
-    s.start_arc = ai0; s.end_arc = ai1;
-    s.start_vertex = 0; s.end_vertex = 2;
 
     auto poly = test_polygon();
     // Pre-removal: full normal-form validation (endpoint↔count rule).
@@ -360,14 +402,20 @@ static void test_remove_chord_merge_at_vertex() {
 
     s.remove_chord(0, poly);
 
-    // [C91 §2.2 tex 96]: one glue per endpoint — a0+a1 on LEFT, a2+a3 on
-    // RIGHT — leaving one two-edge arc per ∂C side.
-    assert(s.num_live_arcs() == 2 &&
+    // [C91 §2.2 tex 94/96]: the chord was the submap's LAST chord, so
+    // gluing at both vertex endpoints closes ∂C into the single closed
+    // arc covering all of C ([C91 §2.4 tex 142]), stored cut at C's
+    // start turnaround.
+    assert(s.num_live_arcs() == 1 &&
            "[C91 §2.2 tex 96]: vertex endpoints must glue their arcs");
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
+        assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
+               s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
+               "closed arc is cut at C's start turnaround "
+               "([C91 §2.4(iii) tex 138])");
         assert(s.arc(i).edge_count == 2 &&
-               "glued arc spans both edges through the vertex");
+               "closed arc spans all of C through the vertex");
     }
 
     s.compact();
@@ -382,61 +430,65 @@ static void test_remove_chord_merge_at_vertex() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_remove_chord_2_adj_arcs() {
-    // [C91 §2.4(ii)]: "two... arcs adjacent to it."
-    // Total adj_arcs = 2 happens only when both endpoints are at
-    // C's start or end vertex, where only 1 arc exists per side.
-    // Both endpoints are polygon vertices → no merging.
+    // [C91 §2.4(ii) tex 137]: "two... arcs adjacent to it."  Total
+    // adj_arcs = 2 happens when both endpoints are the companion
+    // duplicates of one C endpoint ([C91 §2.1 tex 72] case 3: "possibly
+    // the same chord for the two companions").  The chord separates the
+    // turnaround cap — bounded by the zero-length wrap arc Z passing
+    // through C's start turnaround ([C91 §2.4 tex 142]) — from the main
+    // region, whose single arc M double-backs around C's END vertex.
     Submap s;
-    std::size_t r0 = s.add_node();
-    std::size_t r1 = s.add_node();
+    std::size_t r_main = s.add_node();
+    std::size_t r_cap = s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = 4;
 
     Arc a;
-    // Region r0: arcs near C's start (edges 0-1)
-    a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 2;
-    std::size_t ai0 = s.add_arc(a);
+    // M: from the LEFT start-companion up the whole LEFT side, around
+    // C's end vertex, down the whole RIGHT side to the RIGHT
+    // start-companion — one end-wrap structure, ᾱ = all of C.
+    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = RIGHT;
+    a.region_node = r_main; a.edge_count = 4;
+    std::size_t M = s.add_arc(a);
 
-    // Region r1: arcs away from C's start (edges 2-3)
-    a = {}; a.first_edge = 2; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r1; a.edge_count = 2;
-    std::size_t ai1 = s.add_arc(a);
+    // Z: the zero-length passage between the two start companions,
+    // through C's start turnaround ([C91 §2.1 tex 72] case 3).
+    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = LEFT;
+    a.region_node = r_cap; a.edge_count = 0;
+    std::size_t Z = s.add_arc(a);
 
-    // RIGHT arcs (descending first_edge)
-    a = {}; a.first_edge = 3; a.last_edge = 2; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r1; a.edge_count = 2;
-    s.add_arc(a);
-
-    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 2;
-    std::size_t ai3 = s.add_arc(a);
-
-    // Chord at vertex 0 (C's start): y=0, tag=0 matches vertex 0.
-    // LEFT endpoint on edge 0: only a0 starts here → count=1.
-    // RIGHT endpoint on edge 0: only a3 ends here → count=1.
+    // The companion chord at vertex 0 (y=0, tag=0): LEFT endpoint's
+    // before-arc = Z (ends at the LEFT companion); RIGHT endpoint's
+    // before-arc = M (ends at the RIGHT companion).
     Chord c;
-    c.region[0] = r0; c.region[1] = r1;
-    c.left_adj = {{ai0}, 1}; c.right_adj = {{ai3}, 1};
+    c.region[0] = r_main; c.region[1] = r_cap;
+    c.left_adj = {{Z}, 1}; c.right_adj = {{M}, 1};
     c.left_edge = 0; c.right_edge = 0;
     c.left_side = LEFT; c.right_side = RIGHT;
     c.y = 0.0; c.y_tag = 0;
     s.add_chord(c);
 
-    s.start_arc = ai0;
-    s.end_arc = ai1;
-    s.start_vertex = 0;
-    s.end_vertex = 4;
+    assert(s.start_arc == Z && s.end_arc == M &&
+           "[C91 §2.4(iii) tex 138]: endpoint arcs auto-registered");
 
     auto poly = test_polygon();
     s.remove_chord(0, poly);
 
-    // Both endpoints are polygon vertices → no arcs merged.
-    assert(s.num_live_arcs() == 4 &&
-           "2 adj_arcs at C's start: no arc should be killed");
+    // [C91 §2.2 tex 94]: removing the LAST chord glues at both
+    // companions, closing ∂C into the single closed arc.
+    assert(s.num_live_arcs() == 1 &&
+           "companion-chord removal closes ∂C into one arc");
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
-        assert(s.arc(i).edge_count == 2);
+        assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
+               s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
+               s.arc(i).edge_count == 4 &&
+               "[C91 §2.4 tex 142]: closed arc covering all of C");
     }
     s.assert_tree_property();
+
+    s.compact();
+    s.check_invariants(poly);
 
     std::printf("  [PASS] remove_chord_2_adj_arcs\n");
 }
@@ -454,65 +506,64 @@ static Polygon non_monotone_polygon() {
 }
 
 static void test_remove_chord_3_adj_arcs() {
-    // [C91 §2.4(ii)]: "three... arcs adjacent to it."
-    // LEFT endpoint at vertex 0 (C's start) → count=1, vertex, no merge.
-    // RIGHT endpoint at y=0 on edge 2 (non-vertex) → count=2, merge.
+    // [C91 §2.4(ii) tex 137]: "three... arcs adjacent to it."
+    // LEFT endpoint at vertex 0 (C's start LEFT companion) → count=1.
+    // RIGHT endpoint at y=0 on edge 2 (non-vertex) → count=2.
+    //
+    // r0's arc double-backs around C's END vertex (E: from the LEFT
+    // companion of v0 all the way up and back down to the chord's
+    // mid-edge endpoint on RIGHT edge 2); r1's arc double-backs around
+    // C's START vertex (S: from the mid-edge endpoint down to v0 and
+    // through the turnaround, ending at the LEFT companion) — single
+    // structures per [C91 §2.4 tex 142].
     Submap s;
     std::size_t r0 = s.add_node();
     std::size_t r1 = s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = 4;
 
     Arc a;
-    // Region r0: LEFT arc spanning entire LEFT side (edges 0-3)
-    a = {}; a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+    // E: L(0)→R(2); ᾱ = [0,3] (4 nonnull edges).
+    a = {}; a.first_edge = 0; a.last_edge = 2; a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = r0; a.edge_count = 4;
-    std::size_t ai0 = s.add_arc(a);
+    std::size_t E = s.add_arc(a);
 
-    // Region r0: RIGHT arc from v4 to P (edges 3-2 on RIGHT)
-    a = {}; a.first_edge = 3; a.last_edge = 2; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 2;
-    std::size_t ai1 = s.add_arc(a);
-
-    // Region r1: RIGHT arc from P to v0 (edges 2-0 on RIGHT)
-    a = {}; a.first_edge = 2; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    // S: R(2)→L(0); ᾱ = [0,2] (3 nonnull edges).
+    a = {}; a.first_edge = 2; a.last_edge = 0; a.first_side = RIGHT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 3;
-    std::size_t ai2 = s.add_arc(a);
+    std::size_t S = s.add_arc(a);
 
     // Chord at y=0, tag=0.
-    // LEFT endpoint on edge 0 → vertex 0 (match), count=1.
+    // LEFT endpoint on edge 0 → vertex 0 (match), count=1: before-arc =
+    // S (its LEFT leg ends at the companion).
     // RIGHT endpoint on edge 2 → v2(y=-5,tag=2) and v3(y=5,tag=3),
-    //   neither matches (0.0, 0), so non-vertex, count=2.
+    //   neither matches (0.0, 0), so non-vertex, count=2: before = E,
+    //   after = S.
     Chord c;
     c.region[0] = r0; c.region[1] = r1;
-    c.left_adj = {{ai0}, 1};
-    c.right_adj = {{ai1, ai2}, 2};
+    c.left_adj = {{S}, 1};
+    c.right_adj = {{E, S}, 2};
     c.left_edge = 0; c.left_side = LEFT;
     c.right_edge = 2; c.right_side = RIGHT;
     c.y = 0.0; c.y_tag = 0;
     s.add_chord(c);
 
-    s.start_arc = ai0;
-    s.end_arc = ai0;
-    s.start_vertex = 0;
-    s.end_vertex = 4;
+    assert(s.start_arc == S && s.end_arc == E);
 
     auto poly = non_monotone_polygon();
     s.remove_chord(0, poly);
 
-    // LEFT: vertex endpoint → no merge. a0 survives (ec=4).
-    // RIGHT: non-vertex → merge a1+a2. shared_edge=2, nonnull=1.
-    //   merged_count = 2 + 3 - 1 = 4.
-    assert(s.num_live_arcs() == 2 && "3 adj_arcs: 2 live arcs remain");
-    bool found_left = false, found_merged = false;
+    // The chord is the submap's LAST chord: gluing at the vertex
+    // endpoint and the mid-edge endpoint chains E and S into the single
+    // closed arc ([C91 §2.2 tex 94] / [C91 §2.4 tex 142]).
+    assert(s.num_live_arcs() == 1 && "last-chord removal closes ∂C");
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
-        if (s.arc(i).first_side == LEFT && s.arc(i).edge_count == 4)
-            found_left = true;
-        if (s.arc(i).first_side == RIGHT && s.arc(i).edge_count == 4)
-            found_merged = true;
+        assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
+               s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
+               s.arc(i).edge_count == 4 &&
+               "closed arc covering all of C");
     }
-    assert(found_left && "LEFT arc should survive unmerged (ec=4)");
-    assert(found_merged && "RIGHT arcs should merge (2+3-1=4)");
-
     s.assert_tree_property();
 
     std::printf("  [PASS] remove_chord_3_adj_arcs\n");
@@ -526,63 +577,57 @@ static void test_remove_chord_3_adj_arcs() {
 static void test_remove_chord_shared_arc_left() {
     // [C91 §2.3 tex 121]: granularity condition (ii) contracts edges
     // incident on degree-<3 nodes; a degree-1 leaf region bounded by one
-    // chord and ONE arc is the canonical target.  With both chord
-    // endpoints mid-edge (non-vertex), [C91 §2.2 tex 94] glues ∂C at
-    // BOTH points, chaining three arcs into one.
-    //
-    // ∂C traversal: X (r0, ends at chord) → A (r1, spans between the
-    // chord's endpoints) → Y (r0, starts at chord).
+    // chord and ONE arc is the canonical target.  Both chord endpoints
+    // sit mid-edge on the LEFT side, so r0's single arc W runs the LONG
+    // way around — through BOTH of C's endpoint turnarounds — and is
+    // stored as ONE DOUBLE-WRAP structure ([C91 §2.4 tex 142]: "an arc
+    // might wrap around both sides of C"): first=(3,LEFT) > last=
+    // (1,LEFT) encodes the double-backing; ᾱ = all of C.
     Submap s;
     std::size_t r0 = s.add_node();
     std::size_t r1 = s.add_node();
+    s.start_vertex = 0; s.end_vertex = 4;
 
     Arc a;
-    a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 2;
-    std::size_t X = s.add_arc(a);
+    // A: the leaf arc between the chord's endpoints (r1).
     a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 3;
     std::size_t A = s.add_arc(a);
-    a = {}; a.first_edge = 3; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 1;
-    std::size_t Y = s.add_arc(a);
-    a = {}; a.first_edge = 3; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
+    // W: double-wrap arc of r0 — LEFT [3,3] + all of RIGHT + LEFT [0,1].
+    a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r0; a.edge_count = 4;
-    s.add_arc(a);
+    std::size_t W = s.add_arc(a);
 
     Chord c;
     c.region[0] = r0; c.region[1] = r1;
     c.left_edge = 1;  c.left_side = LEFT;
     c.right_edge = 3; c.right_side = LEFT;
     c.y = 1.5; c.y_tag = 99;          // matches no vertex → both non-vertex
-    c.left_adj  = {{X, A}, 2};        // X ends at chord, A starts
-    c.right_adj = {{A, Y}, 2};        // A ends at chord, Y starts
+    c.left_adj  = {{W, A}, 2};        // W ends at chord, A starts
+    c.right_adj = {{A, W}, 2};        // A ends at chord, W starts
     s.add_chord(c);
 
-    s.start_arc = X; s.end_arc = Y;
-    s.start_vertex = 0; s.end_vertex = 4;
+    // [C91 §2.4 tex 142/138]: the double-wrap arc passes through BOTH
+    // turnarounds, so it is both endpoint arcs.
+    assert(s.start_arc == W && s.end_arc == W);
 
     auto poly = test_polygon();
 
-    // [C91 §2.3 tex 121]: contraction weight must reflect the full
-    // X+A+Y chain (4 nonnull edges), not a pairwise merge.
+    // [C91 §2.3 tex 121]: contracting the LAST chord closes ∂C — the
+    // merged weight is the nonnull count of all of C.
     assert(s.simulated_contraction_weight(0, poly) == 4);
 
     s.remove_chord(0, poly);
     s.assert_tree_property();
-    assert(s.num_live_arcs() == 2 &&
-           "shared-arc removal: X+A+Y chain → 1 LEFT arc + 1 RIGHT arc");
-    bool found_chain = false;
+    assert(s.num_live_arcs() == 1 &&
+           "shared-arc removal of the last chord closes ∂C into one arc");
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
-        if (s.arc(i).first_side == LEFT) {
-            assert(s.arc(i).first_edge == 0 && s.arc(i).last_edge == 3 &&
-                   s.arc(i).edge_count == 4 &&
-                   "chained arc must span the full glued range");
-            found_chain = true;
-        }
+        assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
+               s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
+               s.arc(i).edge_count == 4 &&
+               "closed arc must span the full glued range");
     }
-    assert(found_chain);
 
     s.compact();
     s.check_invariants(poly);
@@ -591,25 +636,23 @@ static void test_remove_chord_shared_arc_left() {
 }
 
 static void test_remove_chord_shared_arc_right() {
-    // Mirror orientation: the leaf arc A lies on the RIGHT side, so ∂C
-    // traversal meets the chord's endpoints in the opposite order and A
-    // is killed by the SECOND glue (as arcs[1]) instead of the first.
+    // Mirror orientation: the leaf arc A lies on the RIGHT side, so
+    // r0's double-wrap arc W has the RIGHT-side encoding —
+    // first=(1,RIGHT) < last=(3,RIGHT) ([C91 §2.4 tex 142]): RIGHT
+    // [0,1] + all of LEFT + RIGHT [3,3]; ᾱ = all of C.
     Submap s;
     std::size_t r0 = s.add_node();
     std::size_t r1 = s.add_node();
+    s.start_vertex = 0; s.end_vertex = 4;
 
     Arc a;
-    a = {}; a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 4;
-    std::size_t L = s.add_arc(a);
-    a = {}; a.first_edge = 3; a.last_edge = 3; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 1;
-    std::size_t V = s.add_arc(a);
+    // A: the leaf arc between the chord's endpoints (r1, RIGHT side).
     a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r1; a.edge_count = 3;
     std::size_t A = s.add_arc(a);
-    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 2;
+    // W: double-wrap arc of r0 (no LEFT-starting arcs exist).
+    a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = 4;
     std::size_t W = s.add_arc(a);
 
     Chord c;
@@ -617,26 +660,25 @@ static void test_remove_chord_shared_arc_right() {
     c.left_edge = 3;  c.left_side = RIGHT;
     c.right_edge = 1; c.right_side = RIGHT;
     c.y = 1.5; c.y_tag = 99;
-    c.left_adj  = {{V, A}, 2};        // V ends at chord, A starts
+    c.left_adj  = {{W, A}, 2};        // W ends at chord, A starts
     c.right_adj = {{A, W}, 2};        // A ends at chord, W starts
     s.add_chord(c);
 
-    s.start_arc = L; s.end_arc = L;
-    s.start_vertex = 0; s.end_vertex = 4;
+    assert(s.start_arc == W && s.end_arc == W &&
+           "[C91 §2.4 tex 142]: the double-wrap arc is both endpoint arcs");
 
     auto poly = test_polygon();
     assert(s.simulated_contraction_weight(0, poly) == 4);
 
     s.remove_chord(0, poly);
     s.assert_tree_property();
-    assert(s.num_live_arcs() == 2);
+    assert(s.num_live_arcs() == 1);
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
-        if (s.arc(i).first_side == RIGHT) {
-            assert(s.arc(i).first_edge == 3 && s.arc(i).last_edge == 0 &&
-                   s.arc(i).edge_count == 4 &&
-                   "chained RIGHT arc must span the full glued range");
-        }
+        assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
+               s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
+               s.arc(i).edge_count == 4 &&
+               "closed arc must span the full glued range");
     }
 
     s.compact();
@@ -646,52 +688,65 @@ static void test_remove_chord_shared_arc_right() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  8f. Death: removing a chord whose endpoints are ∂C's ONLY
-//      subdivision points ([C91 §2.2 tex 94] impossibility)
+//  8f. Removing a chord whose endpoints are ∂C's ONLY subdivision
+//      points closes ∂C ([C91 §2.2 tex 94] + [C91 §2.4 tex 142])
 // ════════════════════════════════════════════════════════════════
 
-static void test_remove_chord_fully_wrapped_fires() {
+static void test_remove_chord_fully_wrapped_closes() {
     // Both regions are single-arc leaves (each arc wraps around one C
-    // endpoint).  Gluing at both chord endpoints would close ∂C into an
-    // unbroken loop with no arc boundary at all.  This state is
-    // unreachable from V(C) by removals — C's endpoints are vertices of
-    // C, so removals never glue ∂C there ([C91 §2.2 tex 94]) and the arc
-    // boundaries at C's endpoints persist.  remove_chord asserts.
-    assert(assert_fires([]{
-        auto poly = test_polygon();
-        Submap s;
-        std::size_t r0 = s.add_node();
-        std::size_t r1 = s.add_node();
+    // endpoint).  Removing the chord glues ∂C at both of its endpoints
+    // ([C91 §2.2 tex 94]) — since they are ∂C's only subdivision
+    // points, the boundary closes into the chordless submap's single
+    // closed arc covering all of ∂C, stored cut at C's start
+    // turnaround ([C91 §2.4 tex 142/138]).
+    auto poly = test_polygon();
+    Submap s;
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
+    s.start_vertex = 0; s.end_vertex = 4;
 
-        // A: LEFT edge 1 → wraps C's end vertex → RIGHT edge 2 (r1).
-        Arc a;
-        a = {}; a.first_edge = 1; a.last_edge = 2;
-        a.first_side = LEFT; a.last_side = RIGHT;
-        a.region_node = r1;
-        a.edge_count = poly.count_nonnull_edges(1, 3);
-        std::size_t A = s.add_arc(a);
-        // B: RIGHT edge 2 → wraps C's start vertex → LEFT edge 1 (r0).
-        a = {}; a.first_edge = 2; a.last_edge = 1;
-        a.first_side = RIGHT; a.last_side = LEFT;
-        a.region_node = r0;
-        a.edge_count = poly.count_nonnull_edges(0, 2);
-        std::size_t B = s.add_arc(a);
+    // A: LEFT edge 1 → wraps C's end vertex → RIGHT edge 2 (r1).
+    Arc a;
+    a = {}; a.first_edge = 1; a.last_edge = 2;
+    a.first_side = LEFT; a.last_side = RIGHT;
+    a.region_node = r1;
+    a.edge_count = poly.count_nonnull_edges(1, 3);
+    std::size_t A = s.add_arc(a);
+    // B: RIGHT edge 2 → wraps C's start vertex → LEFT edge 1 (r0).
+    a = {}; a.first_edge = 2; a.last_edge = 1;
+    a.first_side = RIGHT; a.last_side = LEFT;
+    a.region_node = r0;
+    a.edge_count = poly.count_nonnull_edges(0, 2);
+    std::size_t B = s.add_arc(a);
 
-        Chord c;
-        c.region[0] = r0; c.region[1] = r1;
-        c.left_edge = 1;  c.left_side = LEFT;
-        c.right_edge = 2; c.right_side = RIGHT;
-        c.y = 1.5; c.y_tag = 99;
-        c.left_adj  = {{B, A}, 2};    // B ends at chord, A starts
-        c.right_adj = {{A, B}, 2};    // A ends at chord, B starts
-        s.add_chord(c);
+    Chord c;
+    c.region[0] = r0; c.region[1] = r1;
+    c.left_edge = 1;  c.left_side = LEFT;
+    c.right_edge = 2; c.right_side = RIGHT;
+    c.y = 1.5; c.y_tag = 99;
+    c.left_adj  = {{B, A}, 2};    // B ends at chord, A starts
+    c.right_adj = {{A, B}, 2};    // A ends at chord, B starts
+    s.add_chord(c);
 
-        s.start_arc = A; s.end_arc = A;
-        s.start_vertex = 0; s.end_vertex = 4;
+    assert(s.start_arc == B && s.end_arc == A &&
+           "[C91 §2.4(iii) tex 138]: wrap arcs auto-registered");
 
-        s.remove_chord(0, poly);      // ← must fire: ai == aj
-    }));
-    std::printf("  [PASS] remove_chord_fully_wrapped_fires\n");
+    s.remove_chord(0, poly);
+
+    assert(s.num_live_nodes() == 1 && s.num_live_chords() == 0);
+    assert(s.num_live_arcs() == 1 &&
+           "[C91 §2.2 tex 94]: last-chord removal closes ∂C");
+    for (std::size_t i = 0; i < s.num_arcs(); ++i) {
+        if (s.arc(i).dead) continue;
+        assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
+               s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
+               s.arc(i).edge_count == 4 &&
+               "[C91 §2.4 tex 142]: the closed arc covers all of C");
+    }
+    s.compact();
+    s.check_invariants(poly);
+
+    std::printf("  [PASS] remove_chord_fully_wrapped_closes\n");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -699,47 +754,50 @@ static void test_remove_chord_fully_wrapped_fires() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_null_length_chord() {
-    // [C91 §2.1]: "one of these pairs... gives rise to a chord of
-    // null length."  Null-length chords create empty regions.
+    // [C91 §2.1 tex 72]: "one of these pairs... gives rise to a chord of
+    // null length."  Null-length chords create empty regions.  C =
+    // vertices 0..2 with the null chord at vertex 1: the outer region's
+    // single arc W runs from the null position the long way around ∂C —
+    // through BOTH of C's endpoint turnarounds — back to the null
+    // position: ONE double-wrap structure ([C91 §2.4 tex 142]),
+    // first=(1,LEFT) > last=(0,LEFT).
     Submap s;
     std::size_t r0 = s.add_node(); // main region
     std::size_t r1 = s.add_node(); // empty region inside the null-length chord
-
-    // LEFT arc before the null-length chord.
-    Arc a;
-    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 1;
-    std::size_t ai0 = s.add_arc(a);
+    s.start_vertex = 0;
+    s.end_vertex = 2;
 
     // Zero-length arc inside the null-length chord's empty region.
+    Arc a;
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 0;
-    std::size_t ai1 = s.add_arc(a);
+    std::size_t N = s.add_arc(a);
 
-    // LEFT arc after the null-length chord.
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 1;
-    [[maybe_unused]] std::size_t ai2 = s.add_arc(a);
+    // W: outer double-wrap arc — LEFT [1,1] + all of RIGHT + LEFT [0,0].
+    a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 2;
+    std::size_t W = s.add_arc(a);
 
-    // RIGHT arc.
-    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 1;
-    s.add_arc(a);
-
-    // Null-length chord.
+    // Null-length chord at vertex 1: one adj arc per slot ([C91 §2.1
+    // tex 72]); the outer slot holds W (ends at the first duplicate),
+    // the other the inner null arc.
     Chord c;
     c.region[0] = r0; c.region[1] = r1;
-    c.left_adj = {{ai0}, 1}; c.right_adj = {{ai1}, 1};
+    c.left_adj = {{W}, 1}; c.right_adj = {{N}, 1};
     c.left_edge = 1; c.right_edge = 1;
     c.left_side = LEFT; c.right_side = LEFT;
     c.is_null_length = true;
     c.y = 1.0; c.y_tag = 1;
     s.add_chord(c);
 
+    assert(s.start_arc == W && s.end_arc == W &&
+           "[C91 §2.4 tex 142]: the double-wrap arc is both endpoint arcs");
+
     assert(s.chord(0).is_null_length);
     assert(s.node(r1).degree() == 1); // pendant
 
-    // The null-length chord's interior is empty (weight 0).
+    // [C91 §2.2 tex 106]: the null-length chord's interior is empty
+    // (weight 0).
     assert(s.region_weight(r1) == 0);
 
     // Tree property holds.
@@ -748,6 +806,21 @@ static void test_null_length_chord() {
     // Symbolic y accessor.
     SymbolicY sy = s.chord(0).symbolic_y();
     assert(sy.y == 1.0 && sy.tag == 1);
+
+    // [C91 §2.2 tex 108]: "once removed, a chord of zero length ceases
+    // to separate any arcs" — removing the LAST chord (a null one)
+    // closes ∂C into the single closed arc.
+    auto poly = Polygon({{0,0,0}, {1,1,1}, {2,2,2}});
+    s.remove_chord(0, poly);
+    assert(s.num_live_arcs() == 1 && s.num_live_nodes() == 1);
+    for (std::size_t i = 0; i < s.num_arcs(); ++i) {
+        if (s.arc(i).dead) continue;
+        assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
+               s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
+               s.arc(i).edge_count == 2);
+    }
+    s.compact();
+    s.check_invariants(poly);
 
     std::printf("  [PASS] null_length_chord\n");
 }
@@ -765,33 +838,33 @@ static void test_null_length_chord_right_side() {
     Submap s;
     std::size_t r0 = s.add_node();
     std::size_t r1 = s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = 2;
 
+    // Zero-length arc inside the null-length chord's empty region.
     Arc a;
-    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 1;
-    s.add_arc(a);
-
-    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 1;
-    std::size_t ai_pre = s.add_arc(a);
-
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r1; a.edge_count = 0;
-    std::size_t ai_null = s.add_arc(a);
+    std::size_t N = s.add_arc(a);
 
-    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 1;
-    s.add_arc(a);
+    // W: outer double-wrap arc — RIGHT [0,0] + all of LEFT + RIGHT
+    // [1,1] ([C91 §2.4 tex 142]; the vertex-adjacent pointers record
+    // the incident edge reflecting each end's true extent direction).
+    a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
+    a.region_node = r0; a.edge_count = 2;
+    std::size_t W = s.add_arc(a);
 
     Chord c;
     c.region[0] = r0; c.region[1] = r1;
-    c.left_adj = {{ai_pre}, 1}; c.right_adj = {{ai_null}, 1};
+    c.left_adj = {{W}, 1}; c.right_adj = {{N}, 1};
     c.left_edge = 1; c.right_edge = 1;
     c.left_side = RIGHT; c.right_side = RIGHT;
     c.is_null_length = true;
     c.y = 1.0; c.y_tag = 1;
     s.add_chord(c);
 
+    assert(s.start_arc == W && s.end_arc == W &&
+           "[C91 §2.4 tex 142]: the double-wrap arc is both endpoint arcs");
     assert(s.chord(0).is_null_length);
     assert(s.node(r1).degree() == 1);
     assert(s.region_weight(r1) == 0);
@@ -955,20 +1028,16 @@ static void test_wrong_edge_count_fires() {
         Polygon poly({{0,0,0}, {1,3,1}, {2,1,2}, {3,4,3}, {4,2,4}});
         Submap s;
         s.add_node();
+        s.start_vertex = 0; s.end_vertex = 4;
 
+        // The chordless submap's single closed arc ([C91 §2.4 tex
+        // 142/138]) with a corrupted count cache.
         Arc a;
-        a = {}; a.first_edge = 0; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
+        a = {}; a.first_edge = 0; a.last_edge = 0;
+        a.first_side = LEFT; a.last_side = RIGHT;
         a.region_node = 0;
         a.edge_count = 99;                            // ← wrong (truth = 4)
-        std::size_t ai0 = s.add_arc(a);
-
-        a = {}; a.first_edge = 3; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-        a.region_node = 0;
-        a.edge_count = poly.count_nonnull_edges(0, 3);
         s.add_arc(a);
-
-        s.start_arc = ai0; s.end_arc = ai0;
-        s.start_vertex = 0; s.end_vertex = 4;
 
         s.check_invariants(poly);                     // ← cache mismatch must fire
     }));
@@ -985,14 +1054,14 @@ int main() {
     test_region_weight();
     test_remove_chord();
     test_remove_all_chords();
-    test_empty_region_weight();
+    test_chordless_region_weight();
     test_remove_chord_4_adj_arcs();
     test_remove_chord_merge_at_vertex();
     test_remove_chord_2_adj_arcs();
     test_remove_chord_3_adj_arcs();
     test_remove_chord_shared_arc_left();
     test_remove_chord_shared_arc_right();
-    test_remove_chord_fully_wrapped_fires();
+    test_remove_chord_fully_wrapped_closes();
     test_null_length_chord();
     test_null_length_chord_right_side();
     test_empty_submap_fires();

@@ -71,21 +71,21 @@ static Polygon make_C2() {
                     {22,25,11}, {24,1,12}});
 }
 
+// One region bounded by the single closed arc — all of ∂C, one
+// arc-structure stored cut at C's start turnaround
+// ([C91 §2.4 tex 142/138]).
 static Submap make_chordless_normal(const Polygon& poly) {
     Submap s;
     s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = poly.num_vertices() - 1;
     Arc a{};
-    a.first_edge = 0; a.last_edge = poly.num_edges() - 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
-    a.first_edge = poly.num_edges() - 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    s.add_arc(a);
-    s.start_arc = ai0; s.end_arc = ai0;
-    s.start_vertex = 0;
-    s.end_vertex = poly.num_vertices() - 1;
+    assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
     return s;
 }
@@ -113,24 +113,25 @@ struct CombFixture {
             a.edge_count = count;
             return S.add_arc(a);
         };
-        add(0, LEFT, 6, LEFT, 0, 7);      // 0  L1
-        add(7, LEFT, 7, LEFT, 7, 0);      // 1  Lz  (cAPEX inner, ∅)
-        add(7, LEFT, 11, LEFT, 0, 5);     // 2  A2
-        add(11, RIGHT, 11, RIGHT, 0, 1);  // 3  R1
-        add(11, RIGHT, 10, RIGHT, 6, 2);  // 4  P6
-        add(9, RIGHT, 9, RIGHT, 0, 0);    // 5  Z5  (v10 outside pair, ∅)
-        add(9, RIGHT, 8, RIGHT, 5, 2);    // 6  P5
-        add(8, RIGHT, 7, RIGHT, 0, 2);    // 7  R2
-        add(7, RIGHT, 7, RIGHT, 4, 1);    // 8  P4a
-        add(7, RIGHT, 7, RIGHT, 8, 0);    // 9  Nz  (n7 inner, ∅)
-        add(6, RIGHT, 6, RIGHT, 4, 1);    // 10 P4b
-        add(5, RIGHT, 5, RIGHT, 0, 0);    // 11 Z3  (v6 outside pair, ∅)
-        add(5, RIGHT, 4, RIGHT, 3, 2);    // 12 P3
-        add(4, RIGHT, 3, RIGHT, 0, 2);    // 13 R3
-        add(3, RIGHT, 2, RIGHT, 2, 2);    // 14 P2
-        add(1, RIGHT, 1, RIGHT, 0, 0);    // 15 Z1  (v2 outside pair, ∅)
-        add(1, RIGHT, 0, RIGHT, 1, 2);    // 16 P1
-        add(0, RIGHT, 0, RIGHT, 0, 1);    // 17 R4
+        S.start_vertex = 0;
+        S.end_vertex = 12;
+
+        add(7, LEFT, 7, LEFT, 7, 0);      // 0  Lz  (cAPEX inner, ∅)
+        add(7, LEFT, 11, RIGHT, 0, 5);    // 1  E*  (end wrap, ᾱ=[7,11])
+        add(11, RIGHT, 10, RIGHT, 6, 2);  // 2  P6
+        add(9, RIGHT, 9, RIGHT, 0, 0);    // 3  Z5  (v10 outside pair, ∅)
+        add(9, RIGHT, 8, RIGHT, 5, 2);    // 4  P5
+        add(8, RIGHT, 7, RIGHT, 0, 2);    // 5  R2
+        add(7, RIGHT, 7, RIGHT, 4, 1);    // 6  P4a
+        add(7, RIGHT, 7, RIGHT, 8, 0);    // 7  Nz  (n7 inner, ∅)
+        add(6, RIGHT, 6, RIGHT, 4, 1);    // 8  P4b
+        add(5, RIGHT, 5, RIGHT, 0, 0);    // 9  Z3  (v6 outside pair, ∅)
+        add(5, RIGHT, 4, RIGHT, 3, 2);    // 10 P3
+        add(4, RIGHT, 3, RIGHT, 0, 2);    // 11 R3
+        add(3, RIGHT, 2, RIGHT, 2, 2);    // 12 P2
+        add(1, RIGHT, 1, RIGHT, 0, 0);    // 13 Z1  (v2 outside pair, ∅)
+        add(1, RIGHT, 0, RIGHT, 1, 2);    // 14 P1
+        add(0, RIGHT, 6, LEFT, 0, 7);     // 15 S*  (start wrap, ᾱ=[0,6])
 
         auto chord = [&](std::size_t le, Side lsd, Chord::AdjArcs ladj,
                          std::size_t re, Side rsd, Chord::AdjArcs radj,
@@ -146,26 +147,25 @@ struct CombFixture {
             S.add_chord(c);
         };
         // c0 v1w
-        chord(0, RIGHT, {{16, 17}, 2}, 1, RIGHT, {{15}, 1}, 6.0, 2, 0, 1);
+        chord(0, RIGHT, {{14, 15}, 2}, 1, RIGHT, {{13}, 1}, 6.0, 2, 0, 1);
         // c1 v1e
-        chord(2, RIGHT, {{14}, 1}, 3, RIGHT, {{13, 14}, 2}, 6.0, 2, 0, 2);
+        chord(2, RIGHT, {{12}, 1}, 3, RIGHT, {{11, 12}, 2}, 6.0, 2, 0, 2);
         // c2 v3w
-        chord(4, RIGHT, {{12, 13}, 2}, 5, RIGHT, {{11}, 1}, 5.0, 6, 0, 3);
+        chord(4, RIGHT, {{10, 11}, 2}, 5, RIGHT, {{9}, 1}, 5.0, 6, 0, 3);
         // c3 v3e
-        chord(6, RIGHT, {{10}, 1}, 7, RIGHT, {{7, 8}, 2}, 5.0, 6, 0, 4);
+        chord(6, RIGHT, {{8}, 1}, 7, RIGHT, {{5, 6}, 2}, 5.0, 6, 0, 4);
         // c4 v5w
-        chord(8, RIGHT, {{6, 7}, 2}, 9, RIGHT, {{5}, 1}, 4.5, 10, 0, 5);
+        chord(8, RIGHT, {{4, 5}, 2}, 9, RIGHT, {{3}, 1}, 4.5, 10, 0, 5);
         // c5 v5e
-        chord(10, RIGHT, {{4}, 1}, 11, RIGHT, {{3, 4}, 2}, 4.5, 10, 0, 6);
+        chord(10, RIGHT, {{2}, 1}, 11, RIGHT, {{1, 2}, 2}, 4.5, 10, 0, 6);
         // c6 cAPEX (junction outside pair; zero length, distinct ∂C points)
-        chord(6, LEFT, {{0}, 1}, 7, LEFT, {{1}, 1}, 26.0, 7, 0, 7);
+        chord(6, LEFT, {{15}, 1}, 7, LEFT, {{0}, 1}, 26.0, 7, 0, 7);
         // c7 n7 (junction inside pair, null length [C91 §2.1 tex 72])
-        chord(7, RIGHT, {{8}, 1}, 7, RIGHT, {{9}, 1}, 26.0, 7, 4, 8, true);
+        chord(7, RIGHT, {{6}, 1}, 7, RIGHT, {{7}, 1}, 26.0, 7, 4, 8, true);
 
-        S.start_arc = 0;
-        S.end_arc = 2;
-        S.start_vertex = 0;
-        S.end_vertex = 12;
+        // [C91 §2.4(iii) tex 138]: add_arc auto-registered the wrap
+        // arcs as the endpoint pointers ([C91 §2.4 tex 142]).
+        assert(S.start_arc == 15 && S.end_arc == 1);
     }
 };
 
@@ -195,20 +195,10 @@ struct GeomRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side dir, std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
         SymbolicY sy{p.y, p.index};
-        struct Leg { std::size_t lo, hi; Side side; };
-        Leg legs[2];
-        std::size_t nl = 0;
-        if (target.first_side == target.last_side) {
-            legs[nl++] = {std::min(target.first_edge, target.last_edge),
-                          std::max(target.first_edge, target.last_edge),
-                          target.first_side};
-        } else if (target.first_side == LEFT) {
-            legs[nl++] = {target.first_edge, Ci->num_edges() - 1, LEFT};
-            legs[nl++] = {target.last_edge, Ci->num_edges() - 1, RIGHT};
-        } else {
-            legs[nl++] = {0, target.first_edge, RIGHT};
-            legs[nl++] = {0, target.last_edge, LEFT};
-        }
+        // [C91 §2.4 tex 142]: wrap-spanning targets decompose per leg.
+        ArcLeg legs[3];
+        std::size_t nl = subarc_legs(target, 0, Ci->num_vertices() - 1,
+                                     legs);
 
         RayHit best;
         best.hit = false;
@@ -279,10 +269,30 @@ struct GeomArcCutter : ArcCuttingOracle {
         return false;
     }
 
-    std::vector<ArcPiece> cut(std::size_t /*arc_idx*/,
+    std::vector<ArcPiece> cut(std::size_t arc_idx,
                               const Subarc& target) const override {
-        assert(target.first_side == target.last_side &&
-               "test cutter: chordless Sᵢ fixtures yield single-side units");
+        // [C91 §3.0(ii)(2) tex 170]: pieces must not double-back — a
+        // wrap-spanning target is first split at Cᵢ's endpoint
+        // turnaround(s) into its single-side legs ([C91 §2.4 tex 142]),
+        // each cut recursively, pieces emitted in traversal order.
+        if (target.first_side != target.last_side ||
+            (target.first_side == LEFT &&
+             target.first_edge > target.last_edge) ||
+            (target.first_side == RIGHT &&
+             target.first_edge < target.last_edge)) {
+            ArcLeg legs[3];
+            std::size_t nl = subarc_legs(target, 0,
+                                         Ci->num_vertices() - 1, legs);
+            std::vector<ArcPiece> out;
+            for (std::size_t g = 0; g < nl; ++g) {
+                Subarc leg_sub = (legs[g].side == LEFT)
+                    ? Subarc{legs[g].lo, LEFT, legs[g].hi, LEFT}
+                    : Subarc{legs[g].hi, RIGHT, legs[g].lo, RIGHT};
+                auto pieces = cut(arc_idx, leg_sub);
+                out.insert(out.end(), pieces.begin(), pieces.end());
+            }
+            return out;
+        }
         const Side s = target.first_side;
         const std::size_t lo = std::min(target.first_edge, target.last_edge);
         const std::size_t hi = std::max(target.first_edge, target.last_edge);
@@ -325,6 +335,12 @@ struct GeomArcCutter : ArcCuttingOracle {
         }
 
         std::vector<ArcPiece> out;
+        if (lo == hi && low_partial && high_partial) {
+            // Single-edge target partial at both ends: ONE boundary
+            // piece covers it ([C91 §3.0(ii)(3) tex 170]).
+            out.push_back(boundary_piece(lo));
+            return out;
+        }
         if (s == LEFT) {
             if (low_partial) out.push_back(boundary_piece(lo));
             for (std::size_t k = 0; k < chunk_lo.size(); ++k)
@@ -376,45 +392,47 @@ static Polygon chain_polygon() {
     return Polygon({{0,0,0}, {1,1,1}, {2,2,2}, {3,3,3}, {4,4,4}});
 }
 
+// [C91 §2.4 tex 142]: r2's arc double-backs around C's end vertex (E:
+// L(2)→R(2), ᾱ=[2,3]) and r0's around its start vertex (S: R(0)→L(0),
+// ᾱ=[0,0]) — single structures, never split.
 static Submap build_3region_submap() {
     Submap s;
     std::size_t r0 = s.add_node();
     std::size_t r1 = s.add_node();
     std::size_t r2 = s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = 4;
 
     Arc a{};
-    auto add = [&](std::size_t fe, std::size_t le, Side sd,
+    auto add = [&](std::size_t fe, Side fs, std::size_t le, Side ls,
                    std::size_t region, std::size_t count) {
         a = {};
         a.first_edge = fe; a.last_edge = le;
-        a.first_side = sd; a.last_side = sd;
+        a.first_side = fs; a.last_side = ls;
         a.region_node = region; a.edge_count = count;
         return s.add_arc(a);
     };
-    std::size_t ai0 = add(0, 0, LEFT, r0, 1);
-    std::size_t ai1 = add(1, 1, LEFT, r1, 1);
-    std::size_t ai2 = add(2, 3, LEFT, r2, 2);
-    std::size_t ai3 = add(3, 2, RIGHT, r2, 2);
-    std::size_t ai4 = add(1, 1, RIGHT, r1, 1);
-    add(0, 0, RIGHT, r0, 1);
+    std::size_t a1 = add(1, LEFT, 1, LEFT, r1, 1);
+    std::size_t aE = add(2, LEFT, 2, RIGHT, r2, 2);   // end wrap
+    std::size_t a4 = add(1, RIGHT, 1, RIGHT, r1, 1);
+    std::size_t aS = add(0, RIGHT, 0, LEFT, r0, 1);   // start wrap
 
-    // Vertex-endpoint chords: ONE adj arc per endpoint (before-arc).
+    // Vertex-endpoint chords: ONE adj arc per endpoint (before-arc,
+    // [C91 §2.2 tex 94 + §2.4(ii)] 1-slot convention).
     Chord c0{};
     c0.region[0] = r0; c0.region[1] = r1;
-    c0.left_adj = {{ai0}, 1}; c0.right_adj = {{ai4}, 1};
+    c0.left_adj = {{aS}, 1}; c0.right_adj = {{a4}, 1};
     c0.left_edge = 0; c0.right_edge = 0; c0.y = 1.0; c0.y_tag = 1;
     s.add_chord(c0);
 
     Chord c1{};
     c1.region[0] = r1; c1.region[1] = r2;
-    c1.left_adj = {{ai1}, 1}; c1.right_adj = {{ai3}, 1};
+    c1.left_adj = {{a1}, 1}; c1.right_adj = {{aE}, 1};
     c1.left_edge = 1; c1.right_edge = 1; c1.y = 2.0; c1.y_tag = 2;
     s.add_chord(c1);
 
-    s.start_arc = ai0;
-    s.end_arc = ai2;
-    s.start_vertex = 0;
-    s.end_vertex = 4;
+    assert(s.start_arc == aS && s.end_arc == aE &&
+           "[C91 §2.4(iii) tex 138]: endpoint arcs auto-registered");
     return s;
 }
 
@@ -424,9 +442,10 @@ static Submap build_3region_submap() {
 
 static void test_enforce_3region_partial() {
     // γ = 2: c0 is removable (deg(r0) = 1 < 3; contraction glues
-    // a0+a1 → [0..1] ec 2 and a4+a5 → [1..0] ec 2, so merged weight
-    // 2 ≤ γ).  After it, c1's contraction glues to [0..3]/[3..0]
-    // (ec 4 > γ) — kept.  [C91 §2.3 tex 121] criterion (ii) holds.
+    // S+a1 and a4+(the merged arc) into ONE start-wrap arc R(1)→L(1)
+    // with ᾱ=[0,1] (ec 2 ≤ γ, [C91 §2.4 tex 142]).  After it, c1's
+    // contraction would close ∂C (ec 4 > γ) — kept.  [C91 §2.3
+    // tex 121] criterion (ii) holds.
     Submap s = build_3region_submap();
     Polygon poly = chain_polygon();
     s.check_invariants(poly);
@@ -436,11 +455,14 @@ static void test_enforce_3region_partial() {
     assert(s.num_live_nodes() == 2 && s.num_live_chords() == 1);
     assert(!s.chord(1).dead && "c1's contraction weight 4 > γ = 2: kept");
 
-    // Glued arcs: [0..1] and [1..0], each ec 2.
+    // Live arcs: the merged start-wrap arc (ᾱ=[0,1], ec 2) and E
+    // (ᾱ=[2,3], ec 2) — both single double-backing structures
+    // ([C91 §2.4 tex 142]).
+    assert(s.num_live_arcs() == 2);
     std::size_t two_edge = 0;
     for (std::size_t ai = 0; ai < s.num_arcs(); ++ai)
         if (!s.arc(ai).dead && s.arc(ai).edge_count == 2) ++two_edge;
-    assert(two_edge == 4 && "a0+a1, a4+a5 glued; a2, a3 untouched (all ec 2)");
+    assert(two_edge == 2 && "S+a1+a4 glued into one wrap arc; E untouched");
 
     // [C91 §3.3 tex 276]: "We can now put S in normal form."
     s.normalize(poly);
@@ -475,11 +497,17 @@ static void test_enforce_3region_full() {
     enforce_granularity(s, poly, 4);
 
     assert(s.num_live_nodes() == 1 && s.num_live_chords() == 0);
-    assert(s.num_live_arcs() == 2 &&
-           "full contraction leaves one arc per ∂C side");
+    // [C91 §2.2 tex 94 / §2.4 tex 142]: removing the last chord closes
+    // ∂C into the single closed arc covering all of C.
+    assert(s.num_live_arcs() == 1 &&
+           "full contraction leaves the single closed arc");
     for (std::size_t ai = 0; ai < s.num_arcs(); ++ai)
-        if (!s.arc(ai).dead)
+        if (!s.arc(ai).dead) {
+            assert(s.arc(ai).first_side == LEFT &&
+                   s.arc(ai).last_side == RIGHT &&
+                   s.arc(ai).first_edge == 0 && s.arc(ai).last_edge == 0);
             assert(s.arc(ai).edge_count == 4);
+        }
 
     s.normalize(poly);
     s.check_invariants(poly);
@@ -500,30 +528,30 @@ static void test_comb_glue_chains() {
     fx.S.check_invariants(fx.C);
 
     // ── Remove c3 (v3e): LEFT endpoint at v6's east duplicate (vertex
-    // junction) glues P4b(10) with the zero-length Z3(11) — a
+    // junction) glues P4b(8) with the zero-length Z3(9) — a
     // zero-length mate contributes no edges, so P4b keeps ec 1.
-    // RIGHT endpoint (15.75, 5) is mid-edge: glues R2(7) + P4a(8) →
+    // RIGHT endpoint (15.75, 5) is mid-edge: glues R2(5) + P4a(6) →
     // [8..7], ec 2.
     fx.S.remove_chord(3, fx.C);
     fx.S.assert_tree_property();
     assert(fx.S.node(4).dead && "pocket P4 merged into the outer region");
-    assert(!fx.S.arc(10).dead && fx.S.arc(10).edge_count == 1 &&
+    assert(!fx.S.arc(8).dead && fx.S.arc(8).edge_count == 1 &&
            "P4b + zero-length Z3: ec unchanged");
-    assert(fx.S.arc(11).dead && "Z3 tombstoned by the vertex glue");
-    assert(!fx.S.arc(7).dead && fx.S.arc(7).edge_count == 2 &&
+    assert(fx.S.arc(9).dead && "Z3 tombstoned by the vertex glue");
+    assert(!fx.S.arc(5).dead && fx.S.arc(5).edge_count == 2 &&
            "R2 + P4a glued at the mid-edge endpoint (ec 2)");
-    assert(fx.S.arc(8).dead && "P4a tombstoned by the mid-edge glue");
+    assert(fx.S.arc(6).dead && "P4a tombstoned by the mid-edge glue");
 
     // ── Remove n7 (null-length, [C91 §2.2 tex 108]): the outer
-    // before-arc (glued R2, arc 7), the inner null arc Nz(9), and the
-    // outer after-arc P4b(10) fuse into one arc [8..6], ec 3.
+    // before-arc (glued R2, arc 5), the inner null arc Nz(7), and the
+    // outer after-arc P4b(8) fuse into one arc [8..6], ec 3.
     fx.S.remove_chord(7, fx.C);
     fx.S.assert_tree_property();
     assert(fx.S.node(8).dead && "n7's empty inner region merged");
-    assert(!fx.S.arc(7).dead && fx.S.arc(7).edge_count == 3 &&
+    assert(!fx.S.arc(5).dead && fx.S.arc(5).edge_count == 3 &&
            "[C91 §2.2 tex 108]: null chord removal fuses "
            "before + null + after into one arc");
-    assert(fx.S.arc(9).dead && fx.S.arc(10).dead);
+    assert(fx.S.arc(7).dead && fx.S.arc(8).dead);
 
     // Weights readable through chord adjacency + C-endpoint pointers.
     assert(fx.S.region_weight(0) == brute_region_weight(fx.S, 0));
@@ -691,6 +719,8 @@ static void test_degree_drop_recheck() {
         clone.add_node();
         clone.node(r).dead = fx.S.node(r).dead;
     }
+    clone.start_vertex = fx.S.start_vertex;
+    clone.end_vertex = fx.S.end_vertex;
     for (std::size_t ai = 0; ai < fx.S.num_arcs(); ++ai)
         clone.add_arc(fx.S.arc(ai));
     for (std::size_t ci = nch; ci-- > 0; ) {
@@ -699,7 +729,6 @@ static void test_degree_drop_recheck() {
     }
     clone.start_arc = fx.S.start_arc;
     clone.end_arc = fx.S.end_arc;
-    clone.tail_arc = fx.S.tail_arc;
     clone.start_vertex = fx.S.start_vertex;
     clone.end_vertex = fx.S.end_vertex;
     clone.check_invariants(fx.C);

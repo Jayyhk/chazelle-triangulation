@@ -31,16 +31,17 @@ struct FusionVertex {
 };
 
 // [C91 §3.1 tex 181]: Fixed-capacity result for collect_region_arcs.
-// Conformality bounds a region to ≤ 4 PAPER arcs ("at most four arcs
-// need to be checked"), but our single-side arc table splits a paper
-// arc at each of C's two endpoint wraps ([C91 §2.4 tex 142]), adding
-// ≤ 2 table arcs — so a wrap-straddling region has up to 6.
+// Conformality bounds a region to ≤ 4 arcs ([C91 §2.3 tex 114]: degree
+// ≤ 4; [C91 §2.2 tex 96]: the boundary alternates arcs and exit
+// chords, so arc-structure count == degree) — a wrap-spanning arc is
+// ONE arc-structure ([C91 §2.4 tex 142]), never split.
 struct RegionArcs {
-    static constexpr std::size_t MAX = 6;
+    static constexpr std::size_t MAX = 4;
     std::array<std::size_t, MAX> arcs = {};
     std::size_t count = 0;
     void push(std::size_t arc_idx) {
-        assert(count < MAX);
+        assert(count < MAX &&
+               "[C91 §2.3 tex 114]: conformal region has ≤ 4 arcs");
         arcs[count++] = arc_idx;
     }
     const std::size_t* begin() const { return arcs.data(); }
@@ -48,7 +49,7 @@ struct RegionArcs {
 };
 
 // [C91 §3.1]: All arc indices of a region.  O(1) for conformal submaps
-// (degree ≤ 4 ⟹ at most ~8 arc candidates via chord adjacency).
+// (degree ≤ 4 ⟹ ≤ 16 slot candidates via chord adjacency).
 RegionArcs collect_region_arcs(const Submap& S, std::size_t region);
 
 // [C91 §3.1]: Determine which point of ∂Cᵢ point p sees in Sᵢ, in

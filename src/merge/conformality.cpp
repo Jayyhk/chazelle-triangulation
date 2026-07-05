@@ -67,40 +67,6 @@ bool in_half_open_cyclic(const TourPos& x, const TourPos& lo,
 }
 
 // ════════════════════════════════════════════════════════════════
-//  Sᵢ arc side coverage (wrapped arcs)
-// ════════════════════════════════════════════════════════════════
-
-// [C91 §2.4 tex 142]: does the Sᵢ arc cover (edge, side)?  Wrapped arcs
-// (double-back at a Cᵢ endpoint) cover per-leg ranges.  Mirrors the
-// local-orientation check of [C91 §3.1 tex 220] (fusion.cpp
-// case_i_test::hit_on_arc_side).
-bool si_arc_covers(const Submap& Si, const Arc& a,
-                   std::size_t edge, Side side) {
-    if (a.first_side == a.last_side) {
-        if (side != a.first_side) return false;
-        return edge >= std::min(a.first_edge, a.last_edge) &&
-               edge <= std::max(a.first_edge, a.last_edge);
-    }
-    assert(Si.start_vertex != NONE && Si.end_vertex != NONE &&
-           Si.end_vertex >= 1 &&
-           "[C91 §2.4]: wrapped arc requires Cᵢ endpoints set");
-    if (a.first_side == LEFT) {
-        // LEFT→RIGHT wrap at end_vertex: LEFT leg [first_edge, end−1];
-        // RIGHT leg [last_edge, end−1].
-        std::size_t turn = Si.end_vertex - 1;
-        if (side == LEFT)
-            return edge >= a.first_edge && edge <= turn;
-        return edge >= a.last_edge && edge <= turn;
-    }
-    // RIGHT→LEFT wrap at start_vertex: RIGHT leg [start, first_edge];
-    // LEFT leg [start, last_edge].
-    std::size_t turn = Si.start_vertex;
-    if (side == RIGHT)
-        return edge >= turn && edge <= a.first_edge;
-    return edge >= turn && edge <= a.last_edge;
-}
-
-// ════════════════════════════════════════════════════════════════
 //  Fused-arc endpoint positions
 // ════════════════════════════════════════════════════════════════
 
@@ -119,28 +85,25 @@ TourPos fused_arc_end(const Submap& S, const Polygon& C,
 }
 
 // Does the fused table arc contain the ∂C point (edge, side, y)?
-// Table arcs are single-side ([C91 §3.1 tex 226] rebuild output; §3.2
-// splits preserve this), so the tour interval is linear-comparable.
+// [C91 §2.4 tex 142]: a wrap-spanning arc is one structure — its edge
+// coverage is checked per leg, and its tour interval is cyclic when it
+// crosses C's start turnaround (the tour origin); the end turnaround is
+// linear in tour order (LEFT n−1 → RIGHT n−1 are adjacent positions).
 bool fused_arc_contains(const Submap& S, const Polygon& C,
                         std::size_t arc_idx,
                         std::size_t edge, Side side, SymbolicY y) {
     const Arc& a = S.arc(arc_idx);
-    if (side != a.first_side) return false;
+    assert(S.start_vertex != NONE && S.end_vertex != NONE &&
+           "[C91 §2.4(iii)]: S's C endpoints must be set");
+    if (!a.covers(edge, side, S.start_vertex, S.end_vertex))
+        return false;
     TourPos x = tour_pos(C, edge, side, y);
-    return tour_cmp(fused_arc_start(S, C, arc_idx), x) <= 0 &&
-           tour_cmp(x, fused_arc_end(S, C, arc_idx)) <= 0;
-}
-
-// The table piece of a logical arc containing the ∂C point; asserts hit.
-std::size_t table_arc_containing(const Submap& S, const Polygon& C,
-                                 const LogicalArc& A,
-                                 std::size_t edge, Side side,
-                                 SymbolicY y) {
-    for (std::size_t k = 0; k < A.piece_count; ++k)
-        if (fused_arc_contains(S, C, A.pieces[k], edge, side, y))
-            return A.pieces[k];
-    assert(false && "[C91 §3.2]: point must lie on the logical arc");
-    return NONE;
+    TourPos s = fused_arc_start(S, C, arc_idx);
+    TourPos e = fused_arc_end(S, C, arc_idx);
+    if (tour_cmp(s, e) <= 0)
+        return tour_cmp(s, x) <= 0 && tour_cmp(x, e) <= 0;
+    // Crosses the tour origin (C's start turnaround).
+    return tour_cmp(s, x) <= 0 || tour_cmp(x, e) <= 0;
 }
 
 } // namespace
@@ -162,12 +125,19 @@ std::vector<ArcProvenance> compute_arc_provenance(
         const Arc& a = S.arc(ai);
         assert(!a.dead &&
                "[C91 §3.1 tex 226]: fused submap is freshly built (no dead arcs)");
-        assert(a.first_side == a.last_side &&
-               "[C91 §3.1 tex 226]: fused table arcs are single-side");
+        // [C91 §2.4 tex 142]: a fused arc may double-back around an
+        // endpoint of C — but never around BOTH: a double-wrap arc
+        // would cover a whole ∂C side including the junction, where
+        // chords were added at every companion ([C91 §3.1 tex 224]).
+        assert(!(a.first_side == a.last_side && a.wraps()) &&
+               "[C91 §3.2 tex 244]: no fused arc double-wraps (junction "
+               "chords break both sides)");
 
         // [C91 §3.2 tex 244]: an arc of S "cannot overlap both ∂C₁ and
         // ∂C₂" — chords were added at every junction companion, so no
-        // arc straddles the junction.
+        // arc straddles the junction.  (A wrap arc's two legs flank one
+        // C endpoint, so first/last edges agree on the side of the
+        // junction.)
         const bool on_c1 = a.first_edge < n1e;
         assert((a.last_edge < n1e) == on_c1 &&
                "[C91 §3.2 tex 244]: fused arc must lie on one ∂Cᵢ only");
@@ -190,12 +160,15 @@ std::vector<ArcProvenance> compute_arc_provenance(
         // forward).  Since every Sᵢ chord endpoint is still a chord
         // endpoint of S ([C91 §3.2 tex 244]), the surviving candidate
         // contains the whole fused arc.
+        assert(Si.start_vertex != NONE && Si.end_vertex != NONE &&
+               "[C91 §2.4(iii)]: Sᵢ's C endpoints must be set");
         std::size_t chosen = NONE;
         std::size_t covering_ender = NONE;
         for (std::size_t k = 0; k < cands.count; ++k) {
             std::size_t si_arc = cands.arcs[k];
             const Arc& sa = Si.arc(si_arc);
-            if (!si_arc_covers(Si, sa, edge_i, a.first_side)) continue;
+            if (!sa.covers(edge_i, a.first_side,
+                           Si.start_vertex, Si.end_vertex)) continue;
             bool ends_here =
                 sa.last_edge == edge_i && sa.last_side == a.first_side &&
                 symbolic_y_equal(Si.arc_end_symbolic_y(si_arc, Ci), sy);
@@ -246,106 +219,20 @@ FusedRegionCycle fused_region_cycle(const Submap& S, const Polygon& C,
                   return tour_cmp(a.pos, b.pos) < 0;
               });
 
-    // [C91 §2.1 tex 72 case 3]: a C-endpoint's two ∂C duplicates glue the
-    // boundary through the wrap; the fused table splits arcs there
-    // ([C91 §3.1 tex 226]), so re-merge tour-consecutive pieces meeting
-    // at a wrap — UNLESS a chord endpoint of the region sits at that
-    // wrap (then the boundary passes through the chord, not the glue).
-    const std::size_t n = C.num_edges();
-    const SymbolicY start_v_y = symbolic_y_of(C.vertex(0));
-    const SymbolicY end_v_y = symbolic_y_of(C.vertex(C.num_vertices() - 1));
-
-    auto chord_endpoint_at = [&](std::size_t edge, Side side,
-                                 SymbolicY y) -> bool {
-        for (std::size_t ci : S.node(region).incident_chords) {
-            const Chord& c = S.chord(ci);
-            if (c.dead) continue;
-            if (!symbolic_y_equal(c.symbolic_y(), y)) continue;
-            if ((c.left_edge == edge && c.left_side == side) ||
-                (c.right_edge == edge && c.right_side == side))
-                return true;
-        }
-        return false;
-    };
-
-    // Wrap glue between tour-consecutive pieces a → b?
-    auto glued_at_wrap = [&](std::size_t a, std::size_t b) -> bool {
-        const Arc& aa = S.arc(a);
-        const Arc& ab = S.arc(b);
-        // LEFT→RIGHT wrap at C's end vertex.
-        if (aa.last_side == LEFT && aa.last_edge == n - 1 &&
-            ab.first_side == RIGHT && ab.first_edge == n - 1 &&
-            symbolic_y_equal(S.arc_end_symbolic_y(a, C), end_v_y) &&
-            symbolic_y_equal(S.arc_start_symbolic_y(b, C), end_v_y)) {
-            return !chord_endpoint_at(n - 1, LEFT, end_v_y) &&
-                   !chord_endpoint_at(n - 1, RIGHT, end_v_y);
-        }
-        // RIGHT→LEFT wrap at C's start vertex (cyclic last → first).
-        if (aa.last_side == RIGHT && aa.last_edge == 0 &&
-            ab.first_side == LEFT && ab.first_edge == 0 &&
-            symbolic_y_equal(S.arc_end_symbolic_y(a, C), start_v_y) &&
-            symbolic_y_equal(S.arc_start_symbolic_y(b, C), start_v_y)) {
-            return !chord_endpoint_at(0, RIGHT, start_v_y) &&
-                   !chord_endpoint_at(0, LEFT, start_v_y);
-        }
-        return false;
-    };
-
-    const std::size_t m = sorted.size();
-    // glue[i] — piece i glues onto piece (i+1) mod m through a wrap.
-    std::vector<bool> glue(m, false);
-    std::size_t num_glued = 0;
-    for (std::size_t i = 0; i < m; ++i) {
-        std::size_t j = (i + 1) % m;
-        if (m > 1 && glued_at_wrap(sorted[i].arc, sorted[j].arc)) {
-            glue[i] = true;
-            ++num_glued;
-        }
-    }
-
+    // [C91 §2.4 tex 142]: a wrap-spanning arc is ONE arc-structure that
+    // double-backs around C's endpoint — the table never splits it, so
+    // the sorted arc-structures ARE the boundary cycle.
     FusedRegionCycle cycle;
-    if (num_glued == m && m >= 1) {
-        // Whole boundary is one closed logical arc (chordless region
-        // covering all of ∂C, glued at both wraps).
-        assert(m <= LogicalArc::MAX_PIECES &&
-               "[C91 §3.2 tex 238]: closed logical arc has ≤ 3 pieces");
-        LogicalArc la;
-        for (std::size_t i = 0; i < m; ++i)
-            la.pieces[la.piece_count++] = sorted[i].arc;
-        la.is_zero_length = false;
-        cycle.arcs[cycle.count++] = la;
-        return cycle;
-    }
-
-    // Start each logical arc at a piece whose PREDECESSOR is not glued
-    // to it.
-    std::size_t first = 0;
-    while (first < m && glue[(first + m - 1) % m]) ++first;
-    assert(first < m);
-
-    std::size_t i = first;
-    do {
-        LogicalArc la;
-        std::size_t k = i;
-        while (true) {
-            assert(la.piece_count < LogicalArc::MAX_PIECES &&
-                   "[C91 §2.1 tex 72]: at most two wraps ⟹ ≤ 3 pieces");
-            la.pieces[la.piece_count++] = sorted[k].arc;
-            if (!glue[k]) break;
-            k = (k + 1) % m;
-        }
-        // [C91 §2.2 tex 96]: "some arcs may be of zero length."  Under
-        // [C91 §2.1] every P-edge is nonnull, so edge_count == 0 ⟺ the
-        // arc has zero geometric extent.
-        la.is_zero_length =
-            (la.piece_count == 1 && S.arc(la.pieces[0]).edge_count == 0);
+    for (const Keyed& k : sorted) {
         assert(cycle.count < FusedRegionCycle::MAX_ARCS &&
                "[C91 §3.2 tex 238]: fused region arc count is bounded "
                "(≤ 2 runs of constant length)");
-        cycle.arcs[cycle.count++] = la;
-        i = (k + 1) % m;
-    } while (i != first);
-
+        // [C91 §2.2 tex 96]: "some arcs may be of zero length."  Under
+        // [C91 §2.1] every P-edge is nonnull, so edge_count == 0 ⟺ the
+        // arc has zero geometric extent.
+        cycle.arcs[cycle.count++] =
+            CycleArc{k.arc, S.arc(k.arc).edge_count == 0};
+    }
     return cycle;
 }
 
@@ -371,8 +258,8 @@ RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
     best.hit = false;
 
     for (std::size_t li = 0; li < cycle.count; ++li) {
-        for (std::size_t pi = 0; pi < cycle.arcs[li].piece_count; ++pi) {
-            const std::size_t ai = cycle.arcs[li].pieces[pi];
+        {
+            const std::size_t ai = cycle.arcs[li].arc;
             const Arc& a = S.arc(ai);
             const ArcProvenance& pr = (*ctx.provenance)[ai];
             const std::size_t off = pr.on_c1 ? 0 : n1e;
@@ -380,7 +267,10 @@ RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
                 pr.on_c1 ? *ctx.ray1 : *ctx.ray2;
 
             // [C91 §3.2 tex 244]: shoot into the Sᵢ arc containing this
-            // fused arc, restricted to the fused arc's span.
+            // fused arc, restricted to the fused arc's span — one call
+            // per arc-structure; a wrap-spanning target keeps its
+            // double-backing side flags ([C91 §2.4 tex 142] /
+            // [C91 §3.0(i) tex 169]).
             Subarc target;
             target.first_edge = a.first_edge - off;
             target.first_side = a.first_side;
@@ -576,7 +466,7 @@ RealizedVisibility region_chord_at(const Submap& S, std::size_t region,
 // realized by an existing chord ([C91 §2.1 tex 70]) never qualify.
 SiteShot try_site(std::size_t edge_c, Side side, SymbolicY y,
                   const Submap& S, const Polygon& C, std::size_t region,
-                  const LogicalArc& A2, const FusedRegionCycle& cycle,
+                  std::size_t A2, const FusedRegionCycle& cycle,
                   const FusedShootContext& fctx) {
     if (region_chord_at(S, region, edge_c, side, y).realized)
         return SiteShot{};
@@ -587,10 +477,7 @@ SiteShot try_site(std::size_t edge_c, Side side, SymbolicY y,
 
     SiteShot out;
     out.hit = hit;
-    bool on_A2 = false;
-    for (std::size_t k = 0; k < A2.piece_count; ++k)
-        if (hit.hit_arc_idx == A2.pieces[k]) on_A2 = true;
-    out.success = on_A2 &&
+    out.success = hit.hit_arc_idx == A2 &&
         !duplicates_region_chord(S, region, y, edge_c, side,
                                  hit.edge, hit.side);
     return out;
@@ -610,8 +497,8 @@ struct PieceSearchContext {
     const Submap* S;
     const Polygon* C;
     std::size_t region;
-    const LogicalArc* A1;
-    const LogicalArc* A2;
+    std::size_t A1;              // region arc of S (table index)
+    std::size_t A2;
     const FusedRegionCycle* cycle;
     const FusedShootContext* fctx;
     // The subarc α and its submap S_α ([C91 §3.0(ii) tex 170] cond (3)).
@@ -634,8 +521,10 @@ VisiblePoint make_success(const PieceSearchContext& ctx,
                           SymbolicY y, const RayHit& hit) {
     VisiblePoint vp;
     vp.found = true;
-    vp.p_table_arc = table_arc_containing(*ctx.S, *ctx.C, *ctx.A1,
-                                          p_edge_c, p_side, y);
+    assert(fused_arc_contains(*ctx.S, *ctx.C, ctx.A1, p_edge_c, p_side,
+                              y) &&
+           "[C91 §3.2]: the site must lie on A₁");
+    vp.p_table_arc = ctx.A1;
     vp.p_edge = p_edge_c;
     vp.p_side = p_side;
     vp.p_x = edge_x_at_y(*ctx.C, p_edge_c, y);
@@ -743,7 +632,7 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
         }
         SiteShot shot = try_site(from.edge_c, from.side, y_ab,
                                  *ctx.S, *ctx.C, ctx.region,
-                                 *ctx.A2, *ctx.cycle, *ctx.fctx);
+                                 ctx.A2, *ctx.cycle, *ctx.fctx);
         // The other chord endpoint is a ∂C point ON the ray, so a direct
         // crossing exists at d_other and the first hit — on ∂R by
         // [C91 §2.2 Lemma 2.1] — is direct (never through infinity).
@@ -956,26 +845,17 @@ VisiblePoint search_piece(const PieceSearchContext& ctx) {
     RegionArcs arcs = collect_region_arcs(Sa, leaf_region);
     for (std::size_t k = 0; k < arcs.count; ++k) {
         const Arc& ra = Sa.arc(arcs.arcs[k]);
-        // Enumerate the arc's side-s legs (a wrapped arc has one leg per
-        // side, [C91 §2.4 tex 142]).
-        struct Leg { std::size_t elo, ehi; };
-        Leg legs[2];
-        std::size_t num_legs = 0;
-        if (ra.first_side == ra.last_side) {
-            if (ra.first_side == ctx.s)
-                legs[num_legs++] = {std::min(ra.first_edge, ra.last_edge),
-                                    std::max(ra.first_edge, ra.last_edge)};
-        } else if (ra.first_side == LEFT) {
-            std::size_t turn = Sa.end_vertex - 1;
-            if (ctx.s == LEFT) legs[num_legs++] = {ra.first_edge, turn};
-            else legs[num_legs++] = {ra.last_edge, turn};
-        } else {
-            std::size_t turn = Sa.start_vertex;
-            if (ctx.s == RIGHT) legs[num_legs++] = {turn, ra.first_edge};
-            else legs[num_legs++] = {turn, ra.last_edge};
-        }
-        for (std::size_t g = 0; g < num_legs; ++g) {
-            for (std::size_t ee = legs[g].elo; ee <= legs[g].ehi; ++ee) {
+        // Enumerate the arc's side-s legs ([C91 §2.4 tex 142]: a wrapped
+        // arc covers per-leg edge ranges).
+        assert(Sa.start_vertex != NONE && Sa.end_vertex != NONE &&
+               "[C91 §2.4(iii)]: S_α's endpoints must be set");
+        ArcLeg all_legs[3];
+        std::size_t total_legs =
+            ra.legs(Sa.start_vertex, Sa.end_vertex, all_legs);
+        for (std::size_t g = 0; g < total_legs; ++g) {
+            if (all_legs[g].side != ctx.s) continue;
+            for (std::size_t ee = all_legs[g].lo; ee <= all_legs[g].hi;
+                 ++ee) {
                 // Both endpoint vertices of edge ee (ᾱ vertex indices
                 // ee and ee+1).
                 for (std::size_t vv = ee; vv <= ee + 1; ++vv) {
@@ -1007,7 +887,7 @@ VisiblePoint search_piece(const PieceSearchContext& ctx) {
                     std::size_t edge_c = ctx.edge_off + ctx.lo + ee;
                     SiteShot shot = try_site(edge_c, ctx.s, vy,
                                              *ctx.S, *ctx.C, ctx.region,
-                                             *ctx.A2, *ctx.cycle, *ctx.fctx);
+                                             ctx.A2, *ctx.cycle, *ctx.fctx);
                     if (shot.success)
                         return make_success(ctx, edge_c, ctx.s, vy,
                                             shot.hit);
@@ -1023,14 +903,13 @@ VisiblePoint search_piece(const PieceSearchContext& ctx) {
 
 VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
                                 std::size_t region,
-                                const LogicalArc& A1, const LogicalArc& A2,
+                                std::size_t A1, std::size_t A2,
                                 const FusedRegionCycle& cycle,
                                 const std::vector<ArcProvenance>& provenance,
                                 const ConformalityOracles& oracles) {
-    assert(!A1.is_zero_length && !A2.is_zero_length &&
+    assert(S.arc(A1).edge_count > 0 && S.arc(A2).edge_count > 0 &&
            "[C91 §2.1 tex 70/72]: zero-length arcs are single ∂C points "
            "whose visibility is already realized — never candidates");
-    assert(A1.piece_count >= 1 && A2.piece_count >= 1);
 
     const std::size_t n1e = oracles.C1->num_edges();
 
@@ -1044,32 +923,22 @@ VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
     fctx.provenance = &provenance;
 
     // A₂'s exact span (C frame) for the shielding test.
-    TourPos a2_start = fused_arc_start(S, C, A2.pieces[0]);
-    TourPos a2_end = fused_arc_end(S, C, A2.pieces[A2.piece_count - 1]);
+    TourPos a2_start = fused_arc_start(S, C, A2);
+    TourPos a2_end = fused_arc_end(S, C, A2);
 
     // Is the ∂C point on A₁?  (Sites are only valid shooting locations
     // when they lie on the region's boundary.)
     auto on_A1 = [&](std::size_t edge_c, Side side, SymbolicY y) -> bool {
-        for (std::size_t k = 0; k < A1.piece_count; ++k)
-            if (fused_arc_contains(S, C, A1.pieces[k], edge_c, side, y))
-                return true;
-        return false;
+        return fused_arc_contains(S, C, A1, edge_c, side, y);
     };
 
     // [C91 §3.2 tex 244/248]: "we invoke the arc-cutter associated with
-    // the arc of S₁ or S₂ containing A₁."  A logical arc glued across a
-    // C-endpoint wrap spans two Sᵢ arc-structures (the table splits
-    // boundary arcs at Cᵢ's endpoints, [C91 §2.4(iii) tex 138]), so cut
-    // each maximal same-provenance run of pieces as one unit — coverage
-    // of A₁'s vertices is identical and the cut count stays O(1).
-    std::size_t unit_begin = 0;
-    while (unit_begin < A1.piece_count) {
-        const ArcProvenance& pr = provenance[A1.pieces[unit_begin]];
-        std::size_t unit_end = unit_begin + 1;
-        while (unit_end < A1.piece_count &&
-               provenance[A1.pieces[unit_end]].on_c1 == pr.on_c1 &&
-               provenance[A1.pieces[unit_end]].arc_in_si == pr.arc_in_si)
-            ++unit_end;
+    // the arc of S₁ or S₂ containing A₁."  A₁ is one arc-structure —
+    // wrap-spanning arcs included ([C91 §2.4 tex 142]) — inside one Sᵢ
+    // arc, so a single cut covers it; the cutter subdivides any
+    // double-backing ([C91 §3.0(ii)(2) tex 170]).
+    {
+        const ArcProvenance& pr = provenance[A1];
 
         const std::size_t off = pr.on_c1 ? 0 : n1e;
         const Polygon& Ci = pr.on_c1 ? *oracles.C1 : *oracles.C2;
@@ -1080,13 +949,12 @@ VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
         const std::size_t h_bound = pr.on_c1 ? oracles.h_gamma1
                                              : oracles.h_gamma2;
 
-        const Arc& first_piece = S.arc(A1.pieces[unit_begin]);
-        const Arc& last_piece = S.arc(A1.pieces[unit_end - 1]);
+        const Arc& a1_struct = S.arc(A1);
         Subarc target;
-        target.first_edge = first_piece.first_edge - off;
-        target.first_side = first_piece.first_side;
-        target.last_edge = last_piece.last_edge - off;
-        target.last_side = last_piece.last_side;
+        target.first_edge = a1_struct.first_edge - off;
+        target.first_side = a1_struct.first_side;
+        target.last_edge = a1_struct.last_edge - off;
+        target.last_side = a1_struct.last_side;
         assert_subarc_clockwise(target);
 
         std::vector<ArcPiece> pieces = cutter.cut(pr.arc_in_si, target);
@@ -1125,8 +993,7 @@ VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
                     if (shot.success) {
                         VisiblePoint vp;
                         vp.found = true;
-                        vp.p_table_arc = table_arc_containing(
-                            S, C, A1, off + e, s, vy);
+                        vp.p_table_arc = A1;   // on_A1 verified above
                         vp.p_edge = off + e;
                         vp.p_side = s;
                         vp.p_x = edge_x_at_y(C, off + e, vy);
@@ -1160,8 +1027,8 @@ VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
             pctx.S = &S;
             pctx.C = &C;
             pctx.region = region;
-            pctx.A1 = &A1;
-            pctx.A2 = &A2;
+            pctx.A1 = A1;
+            pctx.A2 = A2;
             pctx.cycle = &cycle;
             pctx.fctx = &fctx;
             pctx.piece = &piece;
@@ -1200,8 +1067,6 @@ VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
             VisiblePoint vp = search_piece(pctx);
             if (vp.found) return vp;
         }
-
-        unit_begin = unit_end;
     }
 
     return VisiblePoint{};
@@ -1256,16 +1121,15 @@ void restore_conformality(Submap& S, const Polygon& C,
                 if (cycle.arcs[j].is_zero_length) continue;
 
                 VisiblePoint vp = find_visible_point(
-                    S, C, r, cycle.arcs[i], cycle.arcs[j],
+                    S, C, r, cycle.arcs[i].arc, cycle.arcs[j].arc,
                     cycle, provenance, oracles);
                 if (!vp.found) continue;
 
-                // Flatten the cycle to table arcs for insert_chord.
+                // The cycle's table arcs, in boundary order, for
+                // insert_chord.
                 std::vector<std::size_t> flat;
                 for (std::size_t li = 0; li < k; ++li)
-                    for (std::size_t pi = 0;
-                         pi < cycle.arcs[li].piece_count; ++pi)
-                        flat.push_back(cycle.arcs[li].pieces[pi]);
+                    flat.push_back(cycle.arcs[li].arc);
 
                 Submap::ChordPointSpec p{vp.p_table_arc, vp.p_edge,
                                          vp.p_side, vp.p_x};
@@ -1307,8 +1171,8 @@ void restore_conformality(Submap& S, const Polygon& C,
 
     // [C91 §3.2 tex 264]: "we iterate on this process until no region
     // has more than four arcs" — postcondition.  A region's boundary
-    // alternates logical arcs and chords, so ≤ 4 arcs ⟺ degree ≤ 4 =
-    // conformality ([C91 §2.3 tex 114]).
+    // alternates arcs and chords ([C91 §2.2 tex 96]), so ≤ 4
+    // arc-structures ⟺ degree ≤ 4 = conformality ([C91 §2.3 tex 114]).
 #ifndef NDEBUG
     for (std::size_t r = 0; r < S.num_nodes(); ++r) {
         if (S.node(r).dead || region_arcs.size() <= r) continue;

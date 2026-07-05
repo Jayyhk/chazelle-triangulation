@@ -92,30 +92,24 @@ static Polygon make_C2() {
     return Polygon({{5,5,2}, {7,2,3}, {10,8,4}});
 }
 
-// Single-region conformal submap (no chords → granular by default).
+// Single-region conformal submap (no chords → granular by default):
+// one region bounded by the single closed arc — all of ∂C, one
+// arc-structure stored cut at C's start turnaround
+// ([C91 §2.4 tex 142/138]).
 static Submap make_single_region_submap(const Polygon& poly) {
     Submap s;
     s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = poly.num_vertices() - 1;
     Arc a{};
     a.first_edge = 0;
-    a.last_edge = poly.num_edges() - 1;
+    a.last_edge = 0;
     a.first_side = LEFT;
-    a.last_side = LEFT;
+    a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
-
-    a.first_edge = poly.num_edges() - 1;
-    a.last_edge = 0;
-    a.first_side = RIGHT;
-    a.last_side = RIGHT;
-    std::size_t ai1 = s.add_arc(a);
-
-    // [C91 §2.4 tex 144]: end_arc = last LEFT arc (left_right_boundary_ - 1).
-    s.start_arc = ai0;
-    s.end_arc = ai0;
-    s.start_vertex = 0;
-    s.end_vertex = poly.num_vertices() - 1;
+    assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
     return s;
 }
@@ -281,15 +275,14 @@ static Polygon make_segment_curve() {
 static Submap make_segment_submap(const Polygon& C) {
     Submap s;
     s.add_node();
+    s.start_vertex = 0; s.end_vertex = 1;
+    // The single closed arc ([C91 §2.4 tex 142/138]).
     Arc a{};
-    a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = C.count_nonnull_edges(0, 0);
     std::size_t ai0 = s.add_arc(a);
-    a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = RIGHT;
-    s.add_arc(a);
-    s.start_arc = ai0; s.end_arc = ai0;
-    s.start_vertex = 0; s.end_vertex = 1;
+    assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
     return s;
 }

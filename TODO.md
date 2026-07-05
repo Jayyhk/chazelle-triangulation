@@ -56,55 +56,6 @@ deviation.
     `tests/s3.3-tests.cpp::test_degree_drop_recheck` pins the
     counterexample shape permanently.
 
-- **[C91 §2.4 tex 142]'s double-backing arc-structure — we split
-  instead.** An *equivalence*, not a correction: the paper's
-  representation is correct; we choose a different-but-equivalent one so
-  that the arc-sequence table is uniformly single-side.
-
-  - **What the paper says.** A single arc that wraps around a C-endpoint
-    ("double-backing") is stored as ONE arc-structure with two
-    input-table pointers e₁, eₜ ([C91 §2.4 tex 142]: "an arc might wrap
-    around both sides of C ... detected... as soon as we reach an edge
-    of P incident upon an endpoint of C").
-  - **What we do.** `rebuild_submap` (the §3.1 fusion-output builder)
-    and `Submap::normalize` emit only single-side arc-structures
-    (`first_side == last_side`): each wrap-spanning arc is split at the
-    C-endpoint into a LEFT leg and a RIGHT leg — two separate table
-    entries. (The `Arc` type can still express double-backing, and
-    `double_identify` retains seam handling for it, but the merge/normal
-    -form path never produces one.)
-  - **Why.** The arc-sequence table is a total order — LEFT arcs
-    ascending by `first_edge`, then RIGHT descending ([C91 §2.4(iii)
-    tex 138]; enforced by `add_arc`). `double_identify` ([C91 §2.4
-    tex 144]) breaks the circular sequence into those two linear halves
-    and binary-searches each by (edge, y). A double-backing arc
-    straddles both halves — it sorts into one run but is invisible to
-    the other half's search — so the paper has to special-case the ≤ 2
-    endpoint arcs at the seam. Splitting keeps every entry in exactly
-    one half, so the O(log m) search — and every arc traversal, weight
-    sum, and region-cycle walk — needs no per-arc "is this wrapped?"
-    branch. (No recorded rationale from the original §2 author; this is
-    the reconstructed engineering benefit, and it is the invariant the
-    rest of the codebase is actually built on.)
-  - **Cost / consequence.** ≤ 2 extra arc-structures per submap (one per
-    C-endpoint wrap). Conformality still bounds a region to ≤ 4 PAPER
-    arcs (degree ≤ 4, [C91 §2.3 tex 114]), but a region straddling both
-    wraps then holds up to 4 + 2 = 6 arc-STRUCTURES.
-    `fused_region_cycle` re-glues the legs into `LogicalArc`s wherever
-    the paper's arc COUNT is meant (§3.2's "≤ 4 arcs" target);
-    `is_conformal` (degree) is the paper invariant. Relied on by §2.4
-    `double_identify`, §3.1 `collect_region_arcs` (the four C-endpoint
-    arcs), §3.2 `LogicalArc`, and §3.4
-    `RayShootingStructure::build_faces` (whose per-region assert is
-    therefore ≤ 6, not ≤ 4 — the ≤ 4 form silently crashed on the first
-    conformal fixture with a wrap-straddling region, 2026-07-04).
-  - **Equivalence, not correction.** The paper itself conceptually
-    splits the circular arc sequence into two linear sequences at the
-    same two C-endpoints ([C91 §2.4 tex 144]); we make that split
-    physical. Both representations encode the same V(C), and Lemma 2.3's
-    bounds (O(n/γ) regions, O(γ) edges per region) are untouched by the
-    O(1) extra structures.
-
 ## Blocked on future sections
 
 1. **e2e `double_identify` completeness** — owned by **§4** (up-phase).

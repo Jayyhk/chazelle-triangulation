@@ -47,17 +47,15 @@ std::vector<ArcProvenance> compute_arc_provenance(
 
 // ── [C91 §3.2 tex 238]: Fused region cycles ─────────────────────
 //
-// The paper's arcs are maximal ∂C pieces between chord endpoints; the
-// fused table additionally splits them at C's two endpoint wraps
-// (rebuild_submap emits single-side arcs only).  A LogicalArc re-glues
-// wrap-adjacent table pieces so that the cycle counts PAPER arcs —
-// Lemma 3.3's "k > 4" and the conformality target "four arcs or less"
-// (tex 264) are stated for paper arcs.
+// The paper's arcs are maximal ∂C pieces between chord endpoints, and
+// the table stores each as ONE arc-structure — a wrap-spanning arc
+// double-backs rather than splitting ([C91 §2.4 tex 142]) — so the
+// cycle is simply the region's arc-structures in clockwise boundary
+// order.  Lemma 3.3's "k > 4" and the conformality target "four arcs
+// or less" (tex 264) apply to it directly.
 
-struct LogicalArc {
-    static constexpr std::size_t MAX_PIECES = 3;  // both wraps + between
-    std::size_t pieces[MAX_PIECES] = {NONE, NONE, NONE};
-    std::size_t piece_count = 0;
+struct CycleArc {
+    std::size_t arc = NONE;      // table arc index in S
     // [C91 §2.2 tex 96] "some arcs may be of zero length": a zero-length
     // arc is a single ∂C point.  Its visibility is settled — it is (or
     // duplicates) a chord endpoint, whose horizontal visibility is
@@ -67,18 +65,18 @@ struct LogicalArc {
 };
 
 struct FusedRegionCycle {
-    // [C91 §3.2 tex 238]: ≤ 2 runs × (4 midst exit chords + ≤ 4 new
-    // junction chords + 1 junction null chord + 1) = 20 paper arcs;
-    // generous headroom for the ≤ 2 extra wrap pieces at table level.
-    static constexpr std::size_t MAX_ARCS = 24;
-    LogicalArc arcs[MAX_ARCS];
+    // [C91 §3.2 tex 238]: the arcs of a fused region partition into at
+    // most 2 runs, each with ≤ 4 exit chords in its midst plus the new
+    // junction chords and the junction null chord — ≤ 2 × (4 + 4 + 1
+    // + 1) = 20 arcs.
+    static constexpr std::size_t MAX_ARCS = 20;
+    CycleArc arcs[MAX_ARCS];
     std::size_t count = 0;
 };
 
 // Build the region's boundary cycle from its (unordered) live arc list.
 // [C91 §2.2 tex 96] Lemma 2.2: sorting by clockwise ∂C position yields
-// the region's boundary order.  Wrap-adjacent table pieces (no chord
-// endpoint between them) are merged into one logical arc.
+// the region's boundary order.
 FusedRegionCycle fused_region_cycle(const Submap& S, const Polygon& C,
                                     std::size_t region,
                                     const std::vector<std::size_t>& arcs_of_region);
@@ -150,13 +148,14 @@ struct ConformalityOracles {
 
 // [C91 §3.2 Lemma 3.2]: if A₁ has a vertex of C that sees A₂ (with
 // respect to C), find a point of A₁ that sees A₂ in
-// O(f(γ₂)g(γ₂)(h(γ₂) + log γ₂)) time.  Sound also when the premise
-// fails: success is only reported after an actual local shoot lands on
-// A₂, so a not-found result simply means this ordered pair contributes
-// no chord.
+// O(f(γ₂)g(γ₂)(h(γ₂) + log γ₂)) time.  A₁/A₂ are region arcs of S
+// (table indices — one arc-structure each, wrap-spanning or not,
+// [C91 §2.4 tex 142]).  Sound also when the premise fails: success is
+// only reported after an actual local shoot lands on A₂, so a
+// not-found result simply means this ordered pair contributes no chord.
 VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
                                 std::size_t region,
-                                const LogicalArc& A1, const LogicalArc& A2,
+                                std::size_t A1, std::size_t A2,
                                 const FusedRegionCycle& cycle,
                                 const std::vector<ArcProvenance>& provenance,
                                 const ConformalityOracles& oracles);

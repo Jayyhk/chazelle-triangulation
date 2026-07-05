@@ -34,18 +34,10 @@ std::size_t Submap::add_arc(Arc arc) {
     std::size_t idx = arc_sequence_.size();
 
     // [C91 §2.4 tex 133]: arc edges "in clockwise order along the double
-    // boundary" — LEFT ascends within the arc, RIGHT descends.  Wrapping
-    // arcs (first_side != last_side) have their legs validated inline by
-    // Arc::underlying_edge_range's asserts at every call site.
-    if (arc.first_side == arc.last_side) {
-        if (arc.first_side == LEFT) {
-            assert(arc.first_edge <= arc.last_edge &&
-                   "[C91 §2.4 tex 133]: LEFT arc edges must ascend (cw on ∂C)");
-        } else {
-            assert(arc.first_edge >= arc.last_edge &&
-                   "[C91 §2.4 tex 133]: RIGHT arc edges must descend (cw on ∂C)");
-        }
-    }
+    // boundary" — LEFT ascends within the arc, RIGHT descends.  A
+    // same-side arc violating the order is a DOUBLE-WRAP arc ([C91 §2.4
+    // tex 142]: wraps around both endpoints of C), whose legs are
+    // validated by Arc::legs' asserts at every call site.
 
     // [C91 §2.4(iii) tex 138]: arc-sequence is in canonical ∂C order — LEFT
     // ascending first_edge, then RIGHT descending.  left_right_boundary_
@@ -66,12 +58,22 @@ std::size_t Submap::add_arc(Arc arc) {
 
     if (arc.first_side == LEFT)
         left_right_boundary_ = idx + 1;
-    else
-        // [C91 §2.4(iii) tex 138]: canonical insertion order (asserted
-        // above) makes the last RIGHT arc added the arc ending at C's
-        // start wrap — the "arc passing through the endpoint" pointer.
-        tail_arc = idx;
     arc_sequence_.push_back(arc);
+
+    // [C91 §2.4(iii) tex 138]: "pointers to the arc-structures whose
+    // corresponding arcs pass through the endpoints" — the wrap classes
+    // identify them directly ([C91 §2.4 tex 142]).  Canonical insertion
+    // order puts the start-turn arc last, so a later genuine end-wrap
+    // arc never overwrites an earlier start claim, and the closed-arc
+    // encoding (end wrap with first == last == C's first edge) claims
+    // the start turn unless a later arc does.
+    if (arc.wraps_end()) end_arc = idx;
+    bool closed_encoding =
+        arc.first_side == LEFT && arc.last_side == RIGHT &&
+        arc.first_edge == arc.last_edge &&
+        start_vertex != NONE && arc.first_edge == start_vertex;
+    if (arc.wraps_start() || closed_encoding) start_arc = idx;
+
     tree_decomp_dirty_ = true;
     return idx;
 }
@@ -141,6 +143,7 @@ std::size_t Submap::add_chord(Chord chord) {
     }
 
     chords_.push_back(chord);
+    ++live_chords_;
 
     // [C91 §2.4(i)]: update region adjacency; both regions must be live.
     for (std::size_t r : chord.region) {
@@ -173,10 +176,6 @@ std::size_t Submap::find_junction_arc(const Chord& c,
            (vertex_idx == polygon.edge(edge).start_idx ||
             vertex_idx == polygon.edge(edge).end_idx) &&
            "[C91 §2.2 tex 96]: junction vertex must bound the endpoint edge");
-    assert(vertex_idx != start_vertex && vertex_idx != end_vertex &&
-           "[C91 §2.4 tex 142]: wrap caps are never glued (split "
-           "representation of double-backing)");
-    assert(vertex_idx > 0 && "interior vertex has a predecessor edge");
 
     SymbolicY jy = c.symbolic_y();
 
@@ -216,8 +215,11 @@ std::size_t Submap::find_junction_arc(const Chord& c,
     };
 
     // Candidates: adjacency slots of both regions' incident chords
-    // ([C91 §2.4(ii)]) plus the C-endpoint arcs, which end at wraps and
-    // may appear in no slot ([C91 §2.4(iii) tex 138]).
+    // ([C91 §2.4(ii)]).  Exhaustive: under full junction gluing every
+    // live arc ends at a live chord endpoint of its region and is that
+    // chord's recorded before-arc ([C91 §2.2 tex 96] alternation), and
+    // wrap-spanning arcs are single structures with chord-bounded ends
+    // ([C91 §2.4 tex 142]) — no arc hides at a chord-free wrap.
     for (std::size_t r : c.region) {
         for (std::size_t ci : nodes_[r].incident_chords) {
             const Chord& ch = chords_[ci];
@@ -228,9 +230,6 @@ std::size_t Submap::find_junction_arc(const Chord& c,
                 consider(ch.right_adj.arcs[k]);
         }
     }
-    consider(start_arc);
-    consider(end_arc);
-    consider(tail_arc);
 
     std::size_t result = (found_zero != NONE) ? found_zero : found_nonzero;
     assert(result != NONE &&
@@ -246,8 +245,8 @@ std::size_t Submap::find_junction_arc(const Chord& c,
 // [C91 §2.2 tex 96]: region boundaries ALTERNATE exit chords with arcs,
 // so the two arcs meeting at EVERY endpoint of the removed chord fuse
 // into one (tex 108: a removed chord "ceases to separate any arcs") —
-// except at C's endpoint wraps, where the table representation keeps
-// arcs split ([C91 §2.4 tex 142] double-backing convention).
+// including at C's endpoint companions, where the merged arc double-backs
+// around the endpoint as ONE arc-structure ([C91 §2.4 tex 142]).
 // [C91 §3.3]: must be O(1) per removal to keep the submap-tree-linear bound.
 // We tombstone instead of erasing; indices stay stable.  compact() strips
 // dead entries before normal form.
@@ -262,6 +261,57 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     std::size_t r0 = c.region[0];
     std::size_t r1 = c.region[1];
     assert(!nodes_[r0].dead && !nodes_[r1].dead);
+
+    // ── [C91 §2.2 tex 94/96]: removing the LAST chord closes ∂C into a
+    // single arc.  The chord's ≤ 2 endpoint junctions glue its regions'
+    // arcs into a chain whose two ends meet each other, so the result is
+    // the chordless submap's single closed arc covering all of ∂C — one
+    // arc-structure, stored cut at the canonical traversal origin (C's
+    // start turnaround, [C91 §2.4(iii) tex 138] / [C91 §2.4 tex 142]).
+    if (num_live_chords() == 1) {
+        assert(start_vertex != NONE && end_vertex != NONE &&
+               end_vertex > start_vertex &&
+               "[C91 §2.4(iii) tex 138]: C endpoints must be identified");
+        // The ≤ 2 live arcs (one per region, [C91 §2.2 tex 96]
+        // alternation with a single chord) all appear in the chord's own
+        // adjacency slots.
+        std::size_t keep = NONE;
+        auto sweep_slots = [&](const Chord::AdjArcs& adj) {
+            for (std::size_t k = 0; k < adj.count; ++k) {
+                std::size_t ai = adj.arcs[k];
+                assert(ai != NONE && ai < arc_sequence_.size() &&
+                       "[C91 §2.4(ii)]: adj_arc must be valid");
+                if (keep == NONE) {
+                    assert(!arc_sequence_[ai].dead &&
+                           "[C91 §2.4(ii)]: adj_arc must be live");
+                    keep = ai;
+                } else if (ai != keep && !arc_sequence_[ai].dead) {
+                    arc_sequence_[ai].dead = true;
+                    compacted_ = false;
+                }
+            }
+        };
+        sweep_slots(c.left_adj);
+        sweep_slots(c.right_adj);
+        assert(keep != NONE &&
+               "[C91 §2.4(ii)]: a chord references its regions' arcs");
+
+        Arc& a = arc_sequence_[keep];
+        a.first_edge = start_vertex;  a.first_side = LEFT;
+        a.last_edge  = start_vertex;  a.last_side  = RIGHT;
+        a.edge_count =
+            polygon.count_nonnull_edges(start_vertex, end_vertex - 1);
+        a.region_node = r0;
+        start_arc = keep;
+        end_arc = keep;
+
+        c.dead = true;
+        --live_chords_;
+        nodes_[r1].dead = true;
+        nodes_[r0].incident_chords.clear();
+        tree_decomp_dirty_ = true;
+        return r0;
+    }
 
     // The polygon vertex at an endpoint, or NONE if the endpoint strands
     // mid-edge.  (Chord's symbolic y matches one of the edge's endpoints.)
@@ -291,16 +341,14 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
                !arc_sequence_[ai].dead && !arc_sequence_[aj].dead &&
                "[C91 §2.4(ii)]: adj_arc must be valid + live");
 
-        // [C91 §2.2 tex 94 + §2.1 tex 72]: the two arcs glued at an
-        // endpoint are always distinct.  ai == aj would require this
-        // chord's two endpoints to be the ONLY subdivision points of ∂C
-        // (both regions leaf-with-single-arc), which cannot happen in a
-        // submap of V(C): C's endpoints give rise to ∂C vertices (tex 72
-        // case 3) that are vertices of C, and removals never glue ∂C at
-        // vertices of C (tex 94) — so the arc boundaries at C's endpoints
-        // persist under every chord removal.
+        // [C91 §2.2 tex 94 + §2.2 tex 102]: the two arcs glued at an
+        // endpoint are always distinct here.  ai == aj would require
+        // this chord's two endpoints to be the ONLY subdivision points
+        // of ∂C — i.e. this is the submap's last chord, which is
+        // handled by the closed-arc path before any gluing runs.
         assert(ai != aj &&
-               "[C91 §2.2 tex 94]: glued arc pair must be distinct");
+               "[C91 §2.2 tex 94]: glued arc pair must be distinct "
+               "(the last-chord closure path handles ai == aj)");
 
         auto& a_keep = arc_sequence_[ai];
         auto& a_dead = arc_sequence_[aj];
@@ -329,15 +377,35 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         // index is boundary-ambiguous (either edge incident on the
         // vertex, [C91 §2.1 tex 72]), so folding it into the merged
         // range could pick up an edge the arc does not span.
+        //
+        // Exception: a zero-length WRAP piece (first_side != last_side —
+        // the geometrically-empty passage around an endpoint of C
+        // between its two companions, [C91 §2.1 tex 72] case 3) must
+        // donate its side crossing, or the merged structure would lose
+        // the double-backing ([C91 §2.4 tex 142]).  Its edges are
+        // unambiguous: a C endpoint has a single incident edge.
         if (a_dead.edge_count == 0) {
-            // Merged arc = a_keep plus a point at its end: unchanged.
+            if (a_dead.first_side != a_dead.last_side) {
+                a_keep.last_edge = a_dead.last_edge;
+                a_keep.last_side = a_dead.last_side;
+                // edge_count unchanged: the wrap piece spans no edges,
+                // and the turnaround edge is already in a_keep's range.
+            }
+            // else: merged arc = a_keep plus a point at its end.
         } else if (a_keep.edge_count == 0) {
-            // Merged arc = a point plus a_dead's span: adopt it.
-            a_keep.first_edge = a_dead.first_edge;
-            a_keep.first_side = a_dead.first_side;
-            a_keep.last_edge  = a_dead.last_edge;
-            a_keep.last_side  = a_dead.last_side;
-            a_keep.edge_count = a_dead.edge_count;
+            if (a_keep.first_side != a_keep.last_side) {
+                // Keep the crossing at a_keep's start; adopt the span.
+                a_keep.last_edge  = a_dead.last_edge;
+                a_keep.last_side  = a_dead.last_side;
+                a_keep.edge_count = a_dead.edge_count;
+            } else {
+                // Merged arc = a point plus a_dead's span: adopt it.
+                a_keep.first_edge = a_dead.first_edge;
+                a_keep.first_side = a_dead.first_side;
+                a_keep.last_edge  = a_dead.last_edge;
+                a_keep.last_side  = a_dead.last_side;
+                a_keep.edge_count = a_dead.edge_count;
+            }
         } else {
             a_keep.last_edge = a_dead.last_edge;
             a_keep.last_side = a_dead.last_side;
@@ -356,10 +424,9 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
 
         // [C91 §2.4(iii)]: If the dead arc was a C-endpoint arc pointer,
         // redirect to the surviving arc (which now covers the merged
-        // range including the endpoint).
+        // range including the endpoint's turnaround).
         if (start_arc == aj) start_arc = ai;
         if (end_arc == aj)   end_arc = ai;
-        if (tail_arc == aj)  tail_arc = ai;
 
         // Update adj arcs of chords incident on either region to point to
         // the surviving arc.  O(degree) = O(1) for conformal submaps.
@@ -450,9 +517,10 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         // [C91 §2.2 tex 94/96]: mid-edge endpoint ⟹ both halves recorded
         // (2 adj arcs) and the stranded point vanishes; vertex endpoint ⟹
         // the before-arc is recorded and the after-arc is found by
-        // scanning ([C91 §2.4(ii)] 1-slot convention).  Both glue, except
-        // at C's endpoint companions where the table keeps the wrap split
-        // ([C91 §2.4 tex 142] double-backing representation).
+        // scanning ([C91 §2.4(ii)] 1-slot convention).  Both glue —
+        // including at C's endpoint companions, where the merged arc
+        // double-backs around the endpoint of C as one arc-structure
+        // ([C91 §2.4 tex 142]).
         auto glue_endpoint = [&](const Chord::AdjArcs& adj,
                                  std::size_t edge, Side side,
                                  std::size_t vtx) {
@@ -462,8 +530,6 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
                 do_merge(adj.arcs[0], adj.arcs[1]);
                 return;
             }
-            if (vtx == start_vertex || vtx == end_vertex)
-                return;     // wrap cap: keep the split representation
             assert(adj.count == 1 &&
                    "[C91 §2.2 tex 94]: vertex endpoint records one adj arc");
             std::size_t before = adj.arcs[0];
@@ -500,18 +566,10 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     reassign_live(c.left_adj);
     reassign_live(c.right_adj);
 
-    // [C91 §2.4(iii) tex 138]: the C-endpoint arcs end at a wrap rather
-    // than a chord, so when their start sits at a vertex chord-endpoint
-    // (1-slot convention) the slot walk above cannot reach them —
-    // reassign them directly.  Every other arc of r1 ends at a live
-    // chord endpoint of r1 and is that chord's recorded before-arc.
-    for (std::size_t special : {start_arc, end_arc, tail_arc}) {
-        if (special == NONE) continue;
-        assert(special < arc_sequence_.size());
-        if (!arc_sequence_[special].dead &&
-            arc_sequence_[special].region_node == r1)
-            arc_sequence_[special].region_node = r0;
-    }
+    // ([C91 §2.2 tex 96]: under full junction gluing every live arc of
+    // r1 ends at a live chord endpoint of r1 and is that chord's
+    // recorded before-arc — the slot walk above is exhaustive, wrap
+    // arcs included, [C91 §2.4 tex 142].)
 
     // Move r1's other incident chords to r0, and rewrite their region
     // pointers from r1 → r0.
@@ -531,6 +589,7 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     }
 
     c.dead = true;
+    --live_chords_;
     nodes_[r1].dead = true;
     tree_decomp_dirty_ = true;
     return r0;
@@ -672,10 +731,6 @@ void Submap::compact() {
         assert(arc_map[end_arc] != NONE);
         end_arc = arc_map[end_arc];
     }
-    if (tail_arc != NONE) {
-        assert(arc_map[tail_arc] != NONE);
-        tail_arc = arc_map[tail_arc];
-    }
 
     // Recompute left_right_boundary_.
     left_right_boundary_ = 0;
@@ -784,7 +839,6 @@ void Submap::normalize(const Polygon& polygon) {
         }
         if (start_arc != NONE) start_arc = arc_map[start_arc];
         if (end_arc != NONE)   end_arc = arc_map[end_arc];
-        if (tail_arc != NONE)  tail_arc = arc_map[tail_arc];
 
         // [C91 §2.4 tex 144]: recompute the LEFT/RIGHT boundary.
         left_right_boundary_ = 0;
@@ -812,9 +866,12 @@ std::size_t Submap::num_live_nodes() const noexcept {
 }
 
 std::size_t Submap::num_live_chords() const noexcept {
+#ifndef NDEBUG
     std::size_t n = 0;
     for (const auto& ch : chords_) if (!ch.dead) ++n;
-    return n;
+    assert(n == live_chords_ && "live chord counter must match the table");
+#endif
+    return live_chords_;
 }
 
 std::size_t Submap::num_live_arcs() const noexcept {
@@ -913,7 +970,12 @@ void Submap::check_invariants() const {
         }
     }
 
-    // [C91 §2.4(iii) tex 138]: endpoint arc pointers.
+    // [C91 §2.4(iii) tex 138 + §2.4 tex 142]: endpoint arc pointers.
+    // C's two turnaround points are never chord endpoints ([C91 §2.1
+    // tex 72] case 3: chords end at the companion vertices flanking the
+    // turn), so exactly one live arc passes through each turnaround and
+    // it double-backs there — a wrap-spanning arc is ONE arc-structure,
+    // never split.
     if (num_live_arcs() > 0) {
         assert(start_arc != NONE &&
                "[C91 §2.4(iii)]: start_arc must be set when arcs exist");
@@ -925,83 +987,82 @@ void Submap::check_invariants() const {
         assert(end_arc < arc_sequence_.size() &&
                !arc_sequence_[end_arc].dead &&
                "[C91 §2.4(iii)]: end_arc out of range or dead");
-
-        // [C91 §2.4(iii) tex 138 + tex 144]: canonical layout has LEFT arcs
-        // first (ascending), then RIGHT (descending).  The endpoints sit
-        // at the LEFT-half boundaries — required by double_identify's
-        // two-linear-sequence binary search.
-        assert(arc_sequence_[start_arc].first_side == LEFT &&
-               "[C91 §2.4(iii)]: start_arc must be LEFT-side");
-        assert(arc_sequence_[end_arc].first_side == LEFT &&
-               "[C91 §2.4(iii)]: end_arc must be LEFT-side");
-        assert(start_arc == 0 &&
-               "[C91 §2.4(iii)]: start_arc must be index 0");
-        assert(end_arc + 1 == left_right_boundary_ &&
-               "[C91 §2.4 tex 144]: end_arc must be the last LEFT arc");
-
         assert(start_vertex != NONE &&
                "[C91 §2.4(iii)]: start_vertex required when arcs exist");
-        {
-            // [C91 §2.4(iii)]: start_arc must pass through C's start vertex.
-            // Vertex v lies on arc [first_edge, last_edge] iff
-            //   first_edge ≤ v ≤ last_edge + 1 (non-wrapped).
-            // For wrapped arcs, the range extends through the C endpoint.
-            const auto& sa = arc_sequence_[start_arc];
-            std::size_t elo = std::min(sa.first_edge, sa.last_edge);
-            std::size_t ehi = std::max(sa.first_edge, sa.last_edge) + 1;
-            if (sa.first_side != sa.last_side)
-                elo = std::min(elo, start_vertex);
-            assert(start_vertex >= elo && start_vertex <= ehi &&
-                   "[C91 §2.4(iii)]: start_arc must pass through start_vertex");
-        }
-
-        assert(end_vertex != NONE && end_vertex > 0 &&
+        assert(end_vertex != NONE && end_vertex > start_vertex &&
                "[C91 §2.4(iii)]: end_vertex required when arcs exist");
-        {
-            // [C91 §2.4(iii)]: end_arc must pass through C's end vertex.
-            // C's last edge is end_vertex - 1.
-            const auto& ea = arc_sequence_[end_arc];
-            std::size_t c_end_edge = end_vertex - 1;
-            std::size_t elo = std::min(ea.first_edge, ea.last_edge);
-            std::size_t ehi = std::max(ea.first_edge, ea.last_edge);
-            if (ea.first_side != ea.last_side)
-                ehi = std::max(ehi, c_end_edge);
-            assert(c_end_edge >= elo && c_end_edge <= ehi &&
-                   "[C91 §2.4(iii)]: end_arc must pass through end_vertex");
+
+        std::size_t last_live = NONE;
+        std::size_t last_live_left = NONE;
+        std::size_t wrap_count = 0;
+        for (std::size_t i = 0; i < arc_sequence_.size(); ++i) {
+            const Arc& a = arc_sequence_[i];
+            if (a.dead) continue;
+            last_live = i;
+            if (a.first_side == LEFT) last_live_left = i;
+            if (a.wraps()) ++wrap_count;
         }
 
-        // [C91 §2.4(iii) tex 138]: "pointers to the arc-structures whose
-        // corresponding arcs pass through the endpoints" — the second
-        // arc through C's start is the last RIGHT arc, ending at the
-        // C-start wrap.  add_arc maintains it for canonical insertion
-        // order, so it must be set whenever RIGHT arcs exist.
-        {
-            bool have_right = false;
-            for (std::size_t i = 0; i < arc_sequence_.size(); ++i)
-                if (!arc_sequence_[i].dead &&
-                    arc_sequence_[i].first_side == RIGHT) {
-                    have_right = true;
-                    break;
-                }
-            if (have_right) {
-                assert(tail_arc != NONE &&
-                       tail_arc < arc_sequence_.size() &&
-                       !arc_sequence_[tail_arc].dead &&
-                       "[C91 §2.4(iii) tex 138]: tail_arc must be set and "
-                       "live when RIGHT arcs exist");
-                const auto& ta = arc_sequence_[tail_arc];
-                assert(ta.first_side == RIGHT &&
-                       "[C91 §2.4(iii)]: tail_arc starts on the RIGHT half");
-                // Must pass through C's start vertex: a RIGHT arc
-                // [f..l] (descending) covers vertices [l, f+1]; wrapped
-                // tails contain the start by construction.
-                if (ta.first_side == ta.last_side) {
-                    assert(ta.last_edge <= start_vertex &&
-                           start_vertex <= ta.first_edge + 1 &&
-                           "[C91 §2.4(iii)]: tail_arc must pass through "
-                           "start_vertex");
-                }
-            }
+        // [C91 §2.4(iii) tex 138]: start_arc passes through C's start
+        // turnaround — the latest clockwise start position, hence the
+        // LAST table entry.
+        assert(start_arc == last_live &&
+               "[C91 §2.4(iii) tex 138]: start_arc must be the last "
+               "table entry (its cw start position is maximal)");
+
+        // [C91 §2.4 tex 142/144]: end_arc passes through C's end
+        // turnaround — the last LEFT-starting arc when one exists
+        // (first_side LEFT, last position past the turn); otherwise the
+        // submap's arcs all start on the RIGHT half and the double-wrap
+        // arc at the table's end covers both turns.
+        if (last_live_left != NONE) {
+            assert(end_arc == last_live_left &&
+                   "[C91 §2.4 tex 144]: end_arc must be the last "
+                   "LEFT-starting arc");
+        } else {
+            assert(end_arc == last_live &&
+                   "[C91 §2.4 tex 142]: with no LEFT-starting arc the "
+                   "double-wrap arc covers both turnarounds");
+        }
+
+        const Arc& sa = arc_sequence_[start_arc];
+        const Arc& ea = arc_sequence_[end_arc];
+
+        // Wrap classes ([C91 §2.4 tex 142]): end_arc double-backs at
+        // C's end; start_arc at C's start.  The closed arc of a
+        // chordless submap uses the end-wrap encoding cut at the start
+        // turnaround (first == last == C's first edge).
+        bool closed = (num_live_chords() == 0);
+        if (closed) {
+            assert(num_live_arcs() == 1 && start_arc == end_arc &&
+                   "[C91 §2.2 tex 96]: a chordless submap is one region "
+                   "bounded by the single closed arc (all of ∂C)");
+            assert(sa.first_side == LEFT && sa.last_side == RIGHT &&
+                   sa.first_edge == start_vertex &&
+                   sa.last_edge == start_vertex &&
+                   "[C91 §2.4 tex 142/138]: the closed arc is stored cut "
+                   "at C's start turnaround");
+        } else {
+            assert(ea.wraps_end() &&
+                   "[C91 §2.4 tex 142]: end_arc must double-back around "
+                   "C's end vertex (one arc-structure, never split)");
+            assert(sa.wraps_start() &&
+                   "[C91 §2.4 tex 142]: start_arc must double-back around "
+                   "C's start vertex (one arc-structure, never split)");
+        }
+
+        // [C91 §2.4 tex 142]: the wrap-class arcs are exactly the ≤ 2
+        // endpoint arcs (they coincide for a double-wrap/closed arc).
+        std::size_t expected_wraps = (start_arc == end_arc) ? 1 : 2;
+        assert(wrap_count == expected_wraps &&
+               "[C91 §2.4 tex 142]: only the arcs passing through C's "
+               "endpoints double-back");
+        for (std::size_t i = 0; i < arc_sequence_.size(); ++i) {
+            const Arc& a = arc_sequence_[i];
+            if (a.dead || !a.wraps()) continue;
+            assert((i == start_arc || i == end_arc) &&
+                   "[C91 §2.4 tex 142]: a wrapping arc must be an "
+                   "endpoint arc");
         }
     }
 }
@@ -1074,10 +1135,9 @@ void Submap::check_invariants(const Polygon& polygon) const {
     // polygon edge has nonzero length, so edge_count == 0 uniquely
     // identifies null-length arcs — skip the cache check for them.
     //
-    // Wrapped arcs: underlying_edge_range (arc.h) covers both legs as a
-    // contiguous range.  Wrapped arcs don't appear in canonical normal
-    // form ([C91 §3.0(ii)](2) "no double-backing"); only start_arc / end_arc
-    // may wrap, counted via the same union range.
+    // Wrapped arcs ([C91 §2.4 tex 142]): underlying_edge_range (arc.h)
+    // covers all legs as one contiguous C range — exactly the arcs
+    // passing through C's endpoints (start_arc / end_arc) wrap.
     if (num_live_arcs() > 0) {
         assert(start_vertex != NONE && end_vertex != NONE &&
                end_vertex > 0 &&
@@ -1150,14 +1210,13 @@ void Submap::check_invariants(const Polygon& polygon) const {
         // the polygon vertex c.y_tag (no split there).  Verify the vertex
         // lies in the adj arc's edge range.
         auto arc_spans_vertex = [&](std::size_t arc_idx) -> bool {
+            // [C91 §2.4 tex 142]: the underlying range ᾱ covers every C
+            // edge the arc touches on either side; vertex v lies on
+            // edge v−1 or v.
             const auto& a = arc_sequence_[arc_idx];
-            std::size_t elo = std::min(a.first_edge, a.last_edge);
-            std::size_t ehi = std::max(a.first_edge, a.last_edge) + 1;
-            if (a.first_side != a.last_side) {
-                if (a.first_side == LEFT) ehi = std::max(ehi, end_vertex);
-                else                       elo = std::min(elo, start_vertex);
-            }
-            return c.y_tag >= elo && c.y_tag <= ehi;
+            auto [elo, ehi] =
+                a.underlying_edge_range(start_vertex, end_vertex);
+            return c.y_tag >= elo && c.y_tag <= ehi + 1;
         };
         if (c.left_adj.count == 1) {
             assert(arc_spans_vertex(c.left_adj.arcs[0]) &&
@@ -1188,25 +1247,34 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
 
     // [C91 §2.4 tex 144]: "break up the circular arc sequence into two linear
     // sequences" anchored at C's endpoints.  Normal-form layout:
-    //   LEFT  half: [start_arc=0, ..., end_arc] = [0, lrb)
-    //   RIGHT half: [end_arc+1, ..., end)       = [lrb, end)
-    assert(start_arc == 0 && "[C91 §2.4]: start_arc must be index 0");
-    assert(end_arc == left_right_boundary_ - 1 &&
-           "[C91 §2.4 tex 144]: end_arc must be the last LEFT arc");
+    //   LEFT  half: [0, lrb)   — LEFT-starting arcs, ascending first_edge
+    //   RIGHT half: [lrb, end) — RIGHT-starting arcs, descending
+    // The ≤ 2 arcs passing through C's endpoints double-back across the
+    // seams ([C91 §2.4 tex 142]): the start-turn arc (last table entry)
+    // re-enters the LEFT sequence's front, and the end-turn arc (end_arc)
+    // re-enters the RIGHT sequence's front.
+    assert(start_arc == arc_sequence_.size() - 1 &&
+           "[C91 §2.4(iii) tex 138]: start_arc must be the last table entry");
+    assert((left_right_boundary_ == 0 ||
+            end_arc == left_right_boundary_ - 1) &&
+           "[C91 §2.4 tex 144]: end_arc must be the last LEFT-starting arc");
 
-    std::size_t left_begin  = start_arc;
-    std::size_t left_end    = end_arc + 1;
-    std::size_t right_begin = left_end;
+    std::size_t left_begin  = 0;
+    std::size_t left_end    = left_right_boundary_;
+    std::size_t right_begin = left_right_boundary_;
     std::size_t right_end   = arc_sequence_.size();
 
     // [C91 §2.4 tex 144]: two-phase binary search.
     //   Phase 1: bsearch by first_edge → contiguous run of arcs on edge_idx.
     //   Phase 2: bsearch by start-y within that run → arc(s) at y.
-    //   Plus O(1) check at run's left neighbor for a boundary arc with
-    //   first_edge < edge_idx but last_edge ≥ edge_idx.
+    //   Plus O(1) check for a boundary arc covering edge_idx from before
+    //   the run: the run's predecessor within the half, or — when the
+    //   run has no predecessor — the half's SEAM arc, whose double-backed
+    //   leg(s) cover the sequence's front ([C91 §2.4 tex 142/144]).
     // Total: O(log m).
-    auto search_half = [&](std::size_t lo, std::size_t hi, bool ascending) {
-        if (lo >= hi) return;
+    auto search_half = [&](std::size_t lo, std::size_t hi, bool ascending,
+                           std::size_t seam) {
+        const Side half_side = ascending ? LEFT : RIGHT;
 
         // Phase 1: bsearch for blo = first arc with first_edge ≥ edge_idx
         // (LEFT half ascending; RIGHT half descending uses the opposite).
@@ -1233,32 +1301,29 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
             bend = slo;
         }
 
-        // [C91 §2.4 tex 142]: boundary arc at blo-1 may cover edge_idx via
-        // double-backing.  Only start_arc and end_arc may wrap in a
-        // normal-form submap ([C91 §3.0(ii)](2) tex 170 + [C91 §2.4(iii) tex 138]).
+        // [C91 §2.4 tex 142]: side-aware edge coverage via the arc's legs.
         auto arc_contains_edge = [&](std::size_t ai) -> bool {
             assert(ai < arc_sequence_.size() && "[C91 §2.4]: invalid arc index");
             const auto& a = arc_sequence_[ai];
             assert(!a.dead && "[C91 §2.4]: arc_contains_edge on dead arc");
-            std::size_t elo = std::min(a.first_edge, a.last_edge);
-            std::size_t ehi = std::max(a.first_edge, a.last_edge);
-            if (a.first_side != a.last_side) {
-                assert((ai == start_arc || ai == end_arc) &&
-                       "[C91 §3.0(ii)(2)/§2.4(iii)]: only start/end_arc may "
-                       "double-back in a normal-form submap");
-                if (ai == start_arc)
-                    elo = std::min(elo, start_vertex);
-                if (ai == end_arc) {
-                    assert(end_vertex > 0 && "[C91 §2.1]: end_vertex ≥ 1");
-                    ehi = std::max(ehi, end_vertex - 1);
-                }
-            }
-            return edge_idx >= elo && edge_idx <= ehi;
+            assert(!a.wraps() || ai == start_arc || ai == end_arc);
+            return a.covers(edge_idx, half_side, start_vertex, end_vertex);
         };
 
+        // The pre-run portion of edge_idx belongs to exactly one arc
+        // (arcs tile ∂C): the run's in-half predecessor, or the seam arc
+        // when the run sits at the sequence's front — never both (an
+        // in-half predecessor's start would lie inside the seam arc's
+        // leg otherwise).
         std::size_t boundary_arc = NONE;
-        if (blo > lo && arc_contains_edge(blo - 1))
-            boundary_arc = blo - 1;
+        if (blo > lo) {
+            if (arc_contains_edge(blo - 1))
+                boundary_arc = blo - 1;
+        } else if (seam != NONE && !arc_sequence_[seam].dead &&
+                   !(seam >= blo && seam < bend) &&
+                   arc_contains_edge(seam)) {
+            boundary_arc = seam;
+        }
 
         std::size_t interval_len = bend - blo;
 
@@ -1368,8 +1433,17 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
         // Boundary arc (if present) always covers edge_idx; its y-range
         // runs from its start-y to the first interval arc's start-y.
         if (boundary_arc != NONE) {
-            SymbolicY b_y = arc_start_symbolic_y(boundary_arc, polygon);
-            if (symbolic_y_equal(b_y, y)) {
+            const Arc& ba = arc_sequence_[boundary_arc];
+            // "Query is exactly the boundary arc's start point" only
+            // makes sense when that start lies on THIS edge and side —
+            // a seam arc's start sits on another leg entirely
+            // ([C91 §2.4 tex 142]), where an equal symbolic y names a
+            // different ∂C point.
+            bool starts_here = ba.first_edge == edge_idx &&
+                               ba.first_side == half_side;
+            if (starts_here &&
+                symbolic_y_equal(arc_start_symbolic_y(boundary_arc,
+                                                      polygon), y)) {
                 result.push(boundary_arc);
             } else {
                 // The boundary arc's range extends from the edge start
@@ -1386,12 +1460,16 @@ Submap::double_identify(std::size_t edge_idx, SymbolicY y,
     };
 
     // [C91 §2.4 tex 144]: at most 3 arcs per ∂C half (= arc + null-length
-    // chord + arc at a y-extremum); total ≤ 6 across both halves.
-    search_half(left_begin, left_end, /*ascending=*/true);
+    // chord + arc at a y-extremum); total ≤ 6 across both halves.  Seam
+    // arcs: the start-turn arc (last table entry) doubles back into the
+    // LEFT sequence's front; the end-turn arc (end_arc) into the RIGHT's.
+    search_half(left_begin, left_end, /*ascending=*/true,
+                /*seam=*/arc_sequence_.size() - 1);
     assert(result.count <= 3 && "[C91 §2.4 tex 144]: ≤ 3 arcs per ∂C half");
 
     std::size_t left_count = result.count;
-    search_half(right_begin, right_end, /*ascending=*/false);
+    search_half(right_begin, right_end, /*ascending=*/false,
+                /*seam=*/end_arc);
     assert(result.count - left_count <= 3 && "[C91 §2.4 tex 144]: ≤ 3 arcs per ∂C half");
     assert(result.count <= DoubleIdentifyResult::MAX &&
            "[C91 §2.4 tex 144]: ≤ 6 arcs at any point");
@@ -1436,11 +1514,11 @@ SymbolicY Submap::arc_start_symbolic_y(std::size_t arc_idx,
             return c.symbolic_y();
     }
 
-    // [C91 §2.1 tex 72]: arc-endpoints not at chords sit at polygon
+    // [C91 §2.1 tex 72]: arc-starts not at chords sit at polygon
     // vertices — the outside-pair companions of an interior y-extremum
-    // (tex 72 case 2), the C-endpoints' companions (case 3), or any
-    // junction vertex between two same-region arcs after a non-merging
-    // chord removal ([C91 §2.2 tex 94]).  The polygon's input table
+    // (tex 72 case 2), the outer after-arc of a null-length chord's
+    // duplicate pair, or the closed arc's canonical cut at C's start
+    // turnaround ([C91 §2.4 tex 142/138]).  The polygon's input table
     // ([C91 §2.4(iii) tex 138]) carries the y directly: edge first_edge
     // starts at vertex(first_edge) under LEFT traversal (ascending) and
     // at vertex(first_edge+1) under RIGHT traversal (descending).
@@ -1491,8 +1569,9 @@ SymbolicY Submap::arc_end_symbolic_y(std::size_t arc_idx,
     }
 
     // [C91 §2.1 tex 72 / §2.4(iii) tex 138]: no bounding chord at the end —
-    // the arc ends at a polygon vertex (C-endpoint wrap or a companion
-    // vertex); the input table carries the y directly.  Under LEFT
+    // the arc ends at a polygon vertex (an extremum companion, or the
+    // closed arc's canonical cut at C's start turnaround,
+    // [C91 §2.4 tex 142]); the input table carries the y directly.  Under LEFT
     // traversal (ascending) edge last_edge ends at vertex(last_edge + 1);
     // under RIGHT traversal (descending) at vertex(last_edge).
     assert(a.last_edge < polygon.num_edges() &&
@@ -1570,17 +1649,15 @@ Submap::InsertChordResult Submap::insert_chord(
         SymbolicY end_y   = arc_end_symbolic_y(sp.arc, polygon);
 
         Arc before = arc_sequence_[sp.arc];
-        assert(before.first_side == before.last_side &&
-               before.first_side == sp.side &&
-               "[C91 §3.1 tex 226]: fused-submap arcs are single-side "
-               "(rebuild_submap output; §3.2 splits preserve this)");
-        assert(sp.edge >= std::min(before.first_edge, before.last_edge) &&
-               sp.edge <= std::max(before.first_edge, before.last_edge) &&
-               "[C91 §3.2]: split point must lie on the arc");
+        assert(before.covers(sp.edge, sp.side, start_vertex, end_vertex) &&
+               "[C91 §3.2]: split point must lie on the arc "
+               "([C91 §2.4 tex 142]: wrap arcs cover per-leg)");
 
         bool at_start = (sp.edge == before.first_edge &&
+                         sp.side == before.first_side &&
                          symbolic_y_equal(y, start_y));
         bool at_end   = (sp.edge == before.last_edge &&
+                         sp.side == before.last_side &&
                          symbolic_y_equal(y, end_y));
         // Both at once would make the arc zero-length; zero-length arcs
         // ([C91 §2.2 tex 96]) carry no visibility candidates and are never
@@ -1588,9 +1665,15 @@ Submap::InsertChordResult Submap::insert_chord(
         assert(!(at_start && at_end) &&
                "[C91 §3.2]: cannot split a zero-length arc");
 
+        // [C91 §2.4 tex 142]: cutting an arc at a ∂C point yields two
+        // arcs whose (first, last) encodings — and hence wrap classes —
+        // emerge directly: the half containing a turnaround keeps its
+        // double-backing.
         Arc after = before;
-        after.first_edge = sp.edge;          // side unchanged
+        after.first_edge = sp.edge;
+        after.first_side = sp.side;
         before.last_edge = sp.edge;
+        before.last_side = sp.side;
 
         // [C91 §2.4 tex 133]: the arc-structure's edge pointers are the
         // edges the arc actually spans.  A MID-EDGE split point divides
@@ -1605,6 +1688,13 @@ Submap::InsertChordResult Submap::insert_chord(
         // Without this, the vertex half's range over-counts an edge and
         // its derived start/end position (the [C91 §2.4(iii) tex 138]
         // input-table vertex derivation) reads the wrong vertex.
+        //
+        // Exception: when the vertex is an ENDPOINT OF C (the split
+        // point is a companion vertex, [C91 §2.1 tex 72] case 3), the
+        // adjacent half continues THROUGH the turnaround onto the other
+        // ∂C side ([C91 §2.4 tex 142]) — its pointer stays on sp.edge
+        // (the turnaround's single incident edge) and the half's wrap
+        // class encodes the crossing.
         if (!at_start && !at_end) {
             const auto& pe = polygon.edge(sp.edge);
             SymbolicY y_lo = symbolic_y_of(polygon.vertex(pe.start_idx));
@@ -1619,30 +1709,46 @@ Submap::InsertChordResult Submap::insert_chord(
                    "[C91 §2 tex 47 (SoS)]: an edge's endpoints have "
                    "distinct symbolic ys");
             if (at_trav_end) {
-                after.first_edge = (sp.side == LEFT) ? sp.edge + 1
-                                                     : sp.edge - 1;
-                assert(after.first_edge < polygon.num_edges() &&
-                       "[C91 §3.2]: vertex split's after-half must have "
-                       "a following edge (its span is nonempty)");
+                std::size_t trav_end_v = (sp.side == LEFT)
+                    ? pe.end_idx : pe.start_idx;
+                if (trav_end_v != start_vertex && trav_end_v != end_vertex) {
+                    after.first_edge = (sp.side == LEFT) ? sp.edge + 1
+                                                         : sp.edge - 1;
+                    assert(after.first_edge < polygon.num_edges() &&
+                           "[C91 §3.2]: vertex split's after-half must have "
+                           "a following edge (its span is nonempty)");
+                }
             } else if (at_trav_start) {
-                before.last_edge = (sp.side == LEFT) ? sp.edge - 1
-                                                     : sp.edge + 1;
-                assert(before.last_edge < polygon.num_edges() &&
-                       "[C91 §3.2]: vertex split's before-half must have "
-                       "a preceding edge (its span is nonempty)");
+                std::size_t trav_start_v = (sp.side == LEFT)
+                    ? pe.start_idx : pe.end_idx;
+                if (trav_start_v != start_vertex &&
+                    trav_start_v != end_vertex) {
+                    before.last_edge = (sp.side == LEFT) ? sp.edge - 1
+                                                         : sp.edge + 1;
+                    assert(before.last_edge < polygon.num_edges() &&
+                           "[C91 §3.2]: vertex split's before-half must have "
+                           "a preceding edge (its span is nonempty)");
+                }
             }
         }
 
         // [C91 §2.2 tex 106]: edge_count = nonnull P-edges over the covered
-        // range; zero-length halves get 0 ([C91 §2.4 tex 133] null arcs).
-        before.edge_count = at_start ? 0
-            : polygon.count_nonnull_edges(
-                  std::min(before.first_edge, before.last_edge),
-                  std::max(before.first_edge, before.last_edge));
-        after.edge_count = at_end ? 0
-            : polygon.count_nonnull_edges(
-                  std::min(after.first_edge, after.last_edge),
-                  std::max(after.first_edge, after.last_edge));
+        // range ([C91 §2.4 tex 142]: the union range for wrap halves);
+        // zero-length halves get 0 ([C91 §2.4 tex 133] null arcs).
+        if (at_start) {
+            before.edge_count = 0;
+        } else {
+            auto [blo, bhi] =
+                before.underlying_edge_range(start_vertex, end_vertex);
+            before.edge_count = polygon.count_nonnull_edges(blo, bhi);
+        }
+        if (at_end) {
+            after.edge_count = 0;
+        } else {
+            auto [alo, ahi] =
+                after.underlying_edge_range(start_vertex, end_vertex);
+            after.edge_count = polygon.count_nonnull_edges(alo, ahi);
+        }
 
         arc_sequence_[sp.arc] = before;
         std::size_t after_idx = arc_sequence_.size();
@@ -1763,15 +1869,23 @@ Submap::InsertChordResult Submap::insert_chord(
     nc.right_adj = make_adj(rp, r_after);
     std::size_t chord_idx = add_chord(nc);
 
-    // ── [C91 §2.4(iii) tex 138]: keep the C-endpoint arc pointers
-    // semantically correct.  start_arc starts at C's start vertex — the
-    // before-half keeps that (and the table slot).  end_arc ENDS at the
-    // C-end wrap and tail_arc at the C-start wrap, which the after-halves
-    // now hold.
-    if (end_arc == p.arc) end_arc = p_after;
-    if (end_arc == q.arc) end_arc = q_after;
-    if (tail_arc == p.arc) tail_arc = p_after;
-    if (tail_arc == q.arc) tail_arc = q_after;
+    // ── [C91 §2.4(iii) tex 138]: keep the C-endpoint arc pointers on
+    // the arcs passing through the turnarounds — splitting a wrap arc
+    // leaves the double-backing in exactly one half ([C91 §2.4 tex 142]),
+    // read off its wrap class.
+    auto repoint_wrap = [&](const ChordPointSpec& sp,
+                            std::size_t after_idx) {
+        if (end_arc == sp.arc &&
+            !arc_sequence_[sp.arc].wraps_end() &&
+            arc_sequence_[after_idx].wraps_end())
+            end_arc = after_idx;
+        if (start_arc == sp.arc &&
+            !arc_sequence_[sp.arc].wraps_start() &&
+            arc_sequence_[after_idx].wraps_start())
+            start_arc = after_idx;
+    };
+    repoint_wrap(p, p_after);
+    repoint_wrap(q, q_after);
 
     // The appended after-halves break the canonical arc-sequence order
     // ([C91 §2.4(iii) tex 138]); [C91 §3.3 tex 276] re-normalizes.  Clear
@@ -1824,19 +1938,22 @@ std::size_t Submap::region_weight(std::size_t node_idx) const noexcept {
         check_adj(ch.right_adj);
     }
 
-    // [C91 §2.4(iii) tex 138]: arcs passing through C's endpoints end at
-    // a wrap rather than a chord endpoint, so when such an arc STARTS at
-    // a vertex chord-endpoint (the [C91 §2.4(ii)] 1-slot convention
-    // records only before-arcs there) it appears in no adjacency slot.
-    // Every other arc ends at a live chord endpoint and is that chord's
-    // recorded before-arc, so the walk above reaches it.  Check the
-    // C-endpoint arcs directly — O(1).
-    for (std::size_t special : {start_arc, end_arc, tail_arc}) {
-        if (special == NONE) continue;
-        assert(special < arc_sequence_.size() &&
-               !arc_sequence_[special].dead &&
-               "[C91 §2.4(iii)]: C-endpoint arc pointers must be valid + live");
-        const auto& a = arc_sequence_[special];
+    // [C91 §2.2 tex 96]: under full junction gluing every live arc ends
+    // at a live chord endpoint of its region and is that chord's recorded
+    // before-arc — the slot walk above is exhaustive ([C91 §2.4 tex 142]:
+    // wrap-spanning arcs are single chord-bounded structures).  The one
+    // exception is the chordless submap's single closed arc, reachable
+    // through the C-endpoint pointers ([C91 §2.4(iii) tex 138]).
+    if (nd.incident_chords.empty()) {
+        assert(num_live_chords() == 0 &&
+               "[C91 §2.2 tex 102]: a chord-free region exists only in "
+               "the chordless (single-region) submap");
+        assert(start_arc != NONE && start_arc == end_arc &&
+               start_arc < arc_sequence_.size() &&
+               !arc_sequence_[start_arc].dead &&
+               "[C91 §2.4(iii) tex 138]: the chordless submap's closed "
+               "arc is the endpoint arc");
+        const auto& a = arc_sequence_[start_arc];
         if (a.region_node == node_idx && a.edge_count > max_count)
             max_count = a.edge_count;
     }
@@ -1887,9 +2004,21 @@ std::size_t Submap::simulated_contraction_weight(
     // [C91 §2.3 tex 121/123]: merged region's weight = max over both
     // regions' arcs, plus the arcs glued at the removed chord's
     // endpoints — simulated with exactly remove_chord's semantics
-    // ([C91 §2.2 tex 96/108]: glue at every endpoint; wrap caps keep the
-    // split representation).
+    // ([C91 §2.2 tex 96/108]: glue at every endpoint, C-endpoint
+    // companions included).
     std::size_t max_count = std::max(w0, w1);
+
+    // [C91 §2.2 tex 94 / §2.4 tex 142]: contracting the LAST chord
+    // closes ∂C into the single closed arc spanning all of C — mirror
+    // of remove_chord's closure path.
+    if (num_live_chords() == 1) {
+        assert(start_vertex != NONE && end_vertex != NONE &&
+               end_vertex > start_vertex &&
+               "[C91 §2.4(iii) tex 138]: C endpoints must be identified");
+        std::size_t merged =
+            polygon.count_nonnull_edges(start_vertex, end_vertex - 1);
+        return std::max(max_count, merged);
+    }
 
     auto endpoint_vertex = [&](std::size_t edge) -> std::size_t {
         assert(edge < polygon.num_edges() && "[C91 §2.2]: invalid edge");
@@ -1945,8 +2074,6 @@ std::size_t Submap::simulated_contraction_weight(
                 pairs[np++] = {adj.arcs[0], adj.arcs[1]};
                 return;
             }
-            if (v == start_vertex || v == end_vertex)
-                return;     // wrap cap: no glue ([C91 §2.4 tex 142])
             assert(adj.count == 1 &&
                    "[C91 §2.2 tex 94]: vertex endpoint records one adj arc");
             std::size_t after = find_junction_arc(
@@ -1996,11 +2123,12 @@ std::size_t Submap::simulated_contraction_weight(
                pairs[0].after != pairs[1].after &&
                "[C91 §2.2 tex 94]: an arc cannot take the same junction "
                "role at both chord endpoints");
-        // Both sharings at once ⟺ ∂C has only these two subdivision
-        // points — impossible; see the matching assert in remove_chord.
+        // Both sharings at once ⟺ this chord's endpoints are the ONLY
+        // subdivision points of ∂C — the last-chord case, handled by the
+        // closure early-return above.
         assert(!(shared_lr && shared_rl) &&
-               "[C91 §2.2 tex 94]: chord endpoints cannot be the only "
-               "subdivision points of ∂C");
+               "[C91 §2.2 tex 102]: doubly-shared glue pairs occur only "
+               "for the last chord (closure early-return)");
         if (shared_lr) {
             std::size_t chain[3] = {pairs[0].before, pairs[0].after,
                                     pairs[1].after};

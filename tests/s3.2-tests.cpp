@@ -65,22 +65,21 @@ static Polygon make_C2() {
                     {22,25,11}, {24,1,12}});
 }
 
-// Chordless single-region normal-form submap (the standard 2-arc form).
+// Chordless single-region normal-form submap: one region bounded by
+// the single closed arc — all of ∂C, one arc-structure stored cut at
+// C's start turnaround ([C91 §2.4 tex 142/138]).
 static Submap make_chordless_normal(const Polygon& poly) {
     Submap s;
     s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = poly.num_vertices() - 1;
     Arc a{};
-    a.first_edge = 0; a.last_edge = poly.num_edges() - 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
-    a.first_edge = poly.num_edges() - 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    s.add_arc(a);
-    s.start_arc = ai0; s.end_arc = ai0;
-    s.start_vertex = 0;
-    s.end_vertex = poly.num_vertices() - 1;
+    assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
     return s;
 }
@@ -99,14 +98,20 @@ static Submap make_chordless_normal(const Polygon& poly) {
 //    c6 cAPEX: junction outside-pair chord at the apex (zero length)
 //    c7 n7:  junction inside-pair null-length chord ([C91 §2.1 tex 72])
 //
-//  Regions: 0 = R_big (7 logical arcs!), 1..6 = tent pockets P1..P6,
-//  7 = cAPEX's empty inner, 8 = n7's empty inner.
+//  Regions: 0 = R_big (7 arcs — not yet conformal), 1..6 = tent
+//  pockets P1..P6, 7 = cAPEX's empty inner, 8 = n7's empty inner.
+//
+//  [C91 §2.4 tex 142]: R_big's two arcs through C's endpoint
+//  turnarounds are single double-backing structures — E* around C's
+//  end vertex (LEFT [7..11] + RIGHT [11]) and S* around its start
+//  vertex (RIGHT [0] + LEFT [0..6]).
 //
 //  Table arc indices (canonical order [C91 §2.4(iii) tex 138]):
-//    LEFT:  0 L1[0..6], 1 Lz[7..7]∅, 2 A2[7..11]
-//    RIGHT: 3 R1[11], 4 P6[11..10], 5 Z5[9]∅, 6 P5[9..8], 7 R2[8..7],
-//           8 P4a[7], 9 Nz[7]∅, 10 P4b[6], 11 Z3[5]∅, 12 P3[5..4],
-//           13 R3[4..3], 14 P2[3..2], 15 Z1[1]∅, 16 P1[1..0], 17 R4[0]
+//    LEFT-starting:  0 Lz[7..7]∅, 1 E* (7,L)→(11,R)
+//    RIGHT-starting: 2 P6[11..10], 3 Z5[9]∅, 4 P5[9..8], 5 R2[8..7],
+//           6 P4a[7], 7 Nz[7]∅, 8 P4b[6], 9 Z3[5]∅, 10 P3[5..4],
+//           11 R3[4..3], 12 P2[3..2], 13 Z1[1]∅, 14 P1[1..0],
+//           15 S* (0,R)→(6,L)
 
 struct CombFixture {
     Polygon C, C1, C2;
@@ -131,24 +136,25 @@ struct CombFixture {
             a.edge_count = count;
             return S.add_arc(a);
         };
-        add(0, LEFT, 6, LEFT, 0, 7);      // 0  L1
-        add(7, LEFT, 7, LEFT, 7, 0);      // 1  Lz  (cAPEX inner, ∅)
-        add(7, LEFT, 11, LEFT, 0, 5);     // 2  A2
-        add(11, RIGHT, 11, RIGHT, 0, 1);  // 3  R1
-        add(11, RIGHT, 10, RIGHT, 6, 2);  // 4  P6
-        add(9, RIGHT, 9, RIGHT, 0, 0);    // 5  Z5  (v10 outside pair, ∅)
-        add(9, RIGHT, 8, RIGHT, 5, 2);    // 6  P5
-        add(8, RIGHT, 7, RIGHT, 0, 2);    // 7  R2
-        add(7, RIGHT, 7, RIGHT, 4, 1);    // 8  P4a
-        add(7, RIGHT, 7, RIGHT, 8, 0);    // 9  Nz  (n7 inner, ∅)
-        add(6, RIGHT, 6, RIGHT, 4, 1);    // 10 P4b
-        add(5, RIGHT, 5, RIGHT, 0, 0);    // 11 Z3  (v6 outside pair, ∅)
-        add(5, RIGHT, 4, RIGHT, 3, 2);    // 12 P3
-        add(4, RIGHT, 3, RIGHT, 0, 2);    // 13 R3
-        add(3, RIGHT, 2, RIGHT, 2, 2);    // 14 P2
-        add(1, RIGHT, 1, RIGHT, 0, 0);    // 15 Z1  (v2 outside pair, ∅)
-        add(1, RIGHT, 0, RIGHT, 1, 2);    // 16 P1
-        add(0, RIGHT, 0, RIGHT, 0, 1);    // 17 R4
+        S.start_vertex = 0;
+        S.end_vertex = 12;
+
+        add(7, LEFT, 7, LEFT, 7, 0);      // 0  Lz  (cAPEX inner, ∅)
+        add(7, LEFT, 11, RIGHT, 0, 5);    // 1  E*  (end wrap, ᾱ=[7,11])
+        add(11, RIGHT, 10, RIGHT, 6, 2);  // 2  P6
+        add(9, RIGHT, 9, RIGHT, 0, 0);    // 3  Z5  (v10 outside pair, ∅)
+        add(9, RIGHT, 8, RIGHT, 5, 2);    // 4  P5
+        add(8, RIGHT, 7, RIGHT, 0, 2);    // 5  R2
+        add(7, RIGHT, 7, RIGHT, 4, 1);    // 6  P4a
+        add(7, RIGHT, 7, RIGHT, 8, 0);    // 7  Nz  (n7 inner, ∅)
+        add(6, RIGHT, 6, RIGHT, 4, 1);    // 8  P4b
+        add(5, RIGHT, 5, RIGHT, 0, 0);    // 9  Z3  (v6 outside pair, ∅)
+        add(5, RIGHT, 4, RIGHT, 3, 2);    // 10 P3
+        add(4, RIGHT, 3, RIGHT, 0, 2);    // 11 R3
+        add(3, RIGHT, 2, RIGHT, 2, 2);    // 12 P2
+        add(1, RIGHT, 1, RIGHT, 0, 0);    // 13 Z1  (v2 outside pair, ∅)
+        add(1, RIGHT, 0, RIGHT, 1, 2);    // 14 P1
+        add(0, RIGHT, 6, LEFT, 0, 7);     // 15 S*  (start wrap, ᾱ=[0,6])
 
         auto chord = [&](std::size_t le, Side lsd, Chord::AdjArcs ladj,
                          std::size_t re, Side rsd, Chord::AdjArcs radj,
@@ -164,26 +170,25 @@ struct CombFixture {
             S.add_chord(c);
         };
         // c0 v1w
-        chord(0, RIGHT, {{16, 17}, 2}, 1, RIGHT, {{15}, 1}, 6.0, 2, 0, 1);
+        chord(0, RIGHT, {{14, 15}, 2}, 1, RIGHT, {{13}, 1}, 6.0, 2, 0, 1);
         // c1 v1e
-        chord(2, RIGHT, {{14}, 1}, 3, RIGHT, {{13, 14}, 2}, 6.0, 2, 0, 2);
+        chord(2, RIGHT, {{12}, 1}, 3, RIGHT, {{11, 12}, 2}, 6.0, 2, 0, 2);
         // c2 v3w
-        chord(4, RIGHT, {{12, 13}, 2}, 5, RIGHT, {{11}, 1}, 5.0, 6, 0, 3);
+        chord(4, RIGHT, {{10, 11}, 2}, 5, RIGHT, {{9}, 1}, 5.0, 6, 0, 3);
         // c3 v3e
-        chord(6, RIGHT, {{10}, 1}, 7, RIGHT, {{7, 8}, 2}, 5.0, 6, 0, 4);
+        chord(6, RIGHT, {{8}, 1}, 7, RIGHT, {{5, 6}, 2}, 5.0, 6, 0, 4);
         // c4 v5w
-        chord(8, RIGHT, {{6, 7}, 2}, 9, RIGHT, {{5}, 1}, 4.5, 10, 0, 5);
+        chord(8, RIGHT, {{4, 5}, 2}, 9, RIGHT, {{3}, 1}, 4.5, 10, 0, 5);
         // c5 v5e
-        chord(10, RIGHT, {{4}, 1}, 11, RIGHT, {{3, 4}, 2}, 4.5, 10, 0, 6);
+        chord(10, RIGHT, {{2}, 1}, 11, RIGHT, {{1, 2}, 2}, 4.5, 10, 0, 6);
         // c6 cAPEX (junction outside pair; zero length, distinct ∂C points)
-        chord(6, LEFT, {{0}, 1}, 7, LEFT, {{1}, 1}, 26.0, 7, 0, 7);
+        chord(6, LEFT, {{15}, 1}, 7, LEFT, {{0}, 1}, 26.0, 7, 0, 7);
         // c7 n7 (junction inside pair, null length [C91 §2.1 tex 72])
-        chord(7, RIGHT, {{8}, 1}, 7, RIGHT, {{9}, 1}, 26.0, 7, 4, 8, true);
+        chord(7, RIGHT, {{6}, 1}, 7, RIGHT, {{7}, 1}, 26.0, 7, 4, 8, true);
 
-        S.start_arc = 0;
-        S.end_arc = 2;
-        S.start_vertex = 0;
-        S.end_vertex = 12;
+        // [C91 §2.4(iii) tex 138]: add_arc auto-registered the wrap
+        // arcs as the endpoint pointers.
+        assert(S.start_arc == 15 && S.end_arc == 1);
     }
 };
 
@@ -220,22 +225,10 @@ struct GeomRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side dir, std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
         SymbolicY sy{p.y, p.index};
-        struct Leg { std::size_t lo, hi; Side side; };
-        Leg legs[2];
-        std::size_t nl = 0;
-        if (target.first_side == target.last_side) {
-            legs[nl++] = {std::min(target.first_edge, target.last_edge),
-                          std::max(target.first_edge, target.last_edge),
-                          target.first_side};
-        } else if (target.first_side == LEFT) {
-            // LEFT→RIGHT wrap at Cᵢ's end ([C91 §2.4 tex 142]).
-            legs[nl++] = {target.first_edge, Ci->num_edges() - 1, LEFT};
-            legs[nl++] = {target.last_edge, Ci->num_edges() - 1, RIGHT};
-        } else {
-            // RIGHT→LEFT wrap at Cᵢ's start.
-            legs[nl++] = {0, target.first_edge, RIGHT};
-            legs[nl++] = {0, target.last_edge, LEFT};
-        }
+        // [C91 §2.4 tex 142]: wrap-spanning targets decompose per leg.
+        ArcLeg legs[3];
+        std::size_t nl = subarc_legs(target, 0, Ci->num_vertices() - 1,
+                                     legs);
 
         RayHit best;
         best.hit = false;
@@ -325,10 +318,30 @@ struct GeomArcCutter : ArcCuttingOracle {
         return make_chordless_normal(alpha);
     }
 
-    std::vector<ArcPiece> cut(std::size_t /*arc_idx*/,
+    std::vector<ArcPiece> cut(std::size_t arc_idx,
                               const Subarc& target) const override {
-        assert(target.first_side == target.last_side &&
-               "test cutter: chordless Sᵢ fixtures yield single-side units");
+        // [C91 §3.0(ii)(2) tex 170]: pieces must not double-back — a
+        // wrap-spanning target is first split at Cᵢ's endpoint
+        // turnaround(s) into its single-side legs ([C91 §2.4 tex 142]),
+        // each cut recursively, pieces emitted in traversal order.
+        if (target.first_side != target.last_side ||
+            (target.first_side == LEFT &&
+             target.first_edge > target.last_edge) ||
+            (target.first_side == RIGHT &&
+             target.first_edge < target.last_edge)) {
+            ArcLeg legs[3];
+            std::size_t nl = subarc_legs(target, 0,
+                                         Ci->num_vertices() - 1, legs);
+            std::vector<ArcPiece> out;
+            for (std::size_t g = 0; g < nl; ++g) {
+                Subarc leg_sub = (legs[g].side == LEFT)
+                    ? Subarc{legs[g].lo, LEFT, legs[g].hi, LEFT}
+                    : Subarc{legs[g].hi, RIGHT, legs[g].lo, RIGHT};
+                auto pieces = cut(arc_idx, leg_sub);
+                out.insert(out.end(), pieces.begin(), pieces.end());
+            }
+            return out;
+        }
         const Side s = target.first_side;
         const std::size_t lo = std::min(target.first_edge, target.last_edge);
         const std::size_t hi = std::max(target.first_edge, target.last_edge);
@@ -378,6 +391,12 @@ struct GeomArcCutter : ArcCuttingOracle {
         }
 
         std::vector<ArcPiece> out;
+        if (lo == hi && low_partial && high_partial) {
+            // Single-edge target partial at both ends: ONE boundary
+            // piece covers it ([C91 §3.0(ii)(3) tex 170]).
+            out.push_back(boundary_piece(lo));
+            return out;
+        }
         if (s == LEFT) {
             if (low_partial) out.push_back(boundary_piece(lo));
             for (std::size_t k = 0; k < chunk_lo.size(); ++k)
@@ -460,19 +479,20 @@ static void test_fixture_and_arc_end_y() {
     fx.S.assert_tree_property();
     assert(!fx.S.is_conformal() && "R_big has degree 7 — not conformal yet");
 
-    // arc_end_symbolic_y: R2 (arc 7) ends at v3e's mid-edge endpoint —
+    // arc_end_symbolic_y: R2 (arc 5) ends at v3e's mid-edge endpoint —
     // the chord's y (5, tag 6), via c3's slot-0 reference.
+    SymbolicY e5 = fx.S.arc_end_symbolic_y(5, fx.C);
+    assert(symbolic_y_equal(e5, SymbolicY{5.0, 6}));
+    // S* (arc 15) ends at cAPEX's vertex endpoint: the apex (26, tag 7)
+    // — its LEFT leg, past C's start turnaround ([C91 §2.4 tex 142]).
+    SymbolicY e15 = fx.S.arc_end_symbolic_y(15, fx.C);
+    assert(symbolic_y_equal(e15, SymbolicY{26.0, 7}));
+    // ...and STARTS at c0's mid-edge endpoint (6, tag 2) on its RIGHT leg.
+    SymbolicY s15 = fx.S.arc_start_symbolic_y(15, fx.C);
+    assert(symbolic_y_equal(s15, SymbolicY{6.0, 2}));
+    // The null arc Nz (arc 7) ends at the null chord's y (26, tag 7).
     SymbolicY e7 = fx.S.arc_end_symbolic_y(7, fx.C);
-    assert(symbolic_y_equal(e7, SymbolicY{5.0, 6}));
-    // L1 (arc 0) ends at cAPEX's vertex endpoint: the apex (26, tag 7).
-    SymbolicY e0 = fx.S.arc_end_symbolic_y(0, fx.C);
-    assert(symbolic_y_equal(e0, SymbolicY{26.0, 7}));
-    // R4 (arc 17) ends at C's start-vertex wrap: vertex 0's y.
-    SymbolicY e17 = fx.S.arc_end_symbolic_y(17, fx.C);
-    assert(symbolic_y_equal(e17, SymbolicY{0.0, 0}));
-    // The null arc Nz (arc 9) ends at the null chord's y (26, tag 7).
-    SymbolicY e9 = fx.S.arc_end_symbolic_y(9, fx.C);
-    assert(symbolic_y_equal(e9, SymbolicY{26.0, 7}));
+    assert(symbolic_y_equal(e7, SymbolicY{26.0, 7}));
 
     std::printf("  [PASS] fixture_and_arc_end_y\n");
 }
@@ -485,21 +505,20 @@ static void test_arc_provenance() {
     CombFixture fx;
     auto prov = compute_arc_provenance(fx.S, fx.C, fx.S1, fx.C1,
                                        fx.S2, fx.C2);
-    assert(prov.size() == 18);
-    // C₁ arcs → S₁ (arc 0 = LEFT whole, arc 1 = RIGHT whole); C₂ → S₂.
+    assert(prov.size() == 16);
+    // Each chordless Sᵢ has ONE closed arc (index 0) covering all of
+    // ∂Cᵢ ([C91 §2.4 tex 142/138]); every fused arc maps into it.
     auto expect = [&](std::size_t ai, bool on_c1, std::size_t si_arc) {
         assert(prov[ai].on_c1 == on_c1);
         assert(prov[ai].arc_in_si == si_arc);
     };
-    expect(0, true, 0);    // L1  ⊂ S₁ LEFT
-    expect(1, false, 0);   // Lz  ⊂ S₂ LEFT (edge 7 = C₂'s edge 0)
-    expect(2, false, 0);   // A2  ⊂ S₂ LEFT
-    expect(3, false, 1);   // R1  ⊂ S₂ RIGHT
-    expect(7, false, 1);   // R2  ⊂ S₂ RIGHT
-    expect(9, false, 1);   // Nz  ⊂ S₂ RIGHT
-    expect(10, true, 1);   // P4b ⊂ S₁ RIGHT
-    expect(13, true, 1);   // R3  ⊂ S₁ RIGHT
-    expect(17, true, 1);   // R4  ⊂ S₁ RIGHT
+    expect(0, false, 0);   // Lz  ⊂ S₂ (edge 7 = C₂'s edge 0)
+    expect(1, false, 0);   // E*  ⊂ S₂
+    expect(5, false, 0);   // R2  ⊂ S₂
+    expect(7, false, 0);   // Nz  ⊂ S₂
+    expect(8, true, 0);    // P4b ⊂ S₁
+    expect(11, true, 0);   // R3  ⊂ S₁
+    expect(15, true, 0);   // S*  ⊂ S₁
 
     std::printf("  [PASS] arc_provenance\n");
 }
@@ -511,30 +530,28 @@ static void test_arc_provenance() {
 static void test_fused_region_cycle() {
     CombFixture fx;
 
-    // R_big: 9 table arcs → 7 logical arcs (two wrap glues:
-    // A2+R1 at C's end, R4+L1 at C's start).
+    // R_big: 7 arc-structures ([C91 §2.4 tex 142]: the wrap-spanning
+    // arcs E* and S* are single structures) — the cycle is the sorted
+    // table arcs directly.
     auto cycle = fused_region_cycle(fx.S, fx.C, 0, region_arcs_of(fx.S, 0));
     assert(cycle.count == 7 &&
-           "[C91 §3.2 tex 238]: the fused big region has 7 (paper) arcs");
-    // Cycle starts at the first logical arc whose predecessor is a
-    // chord: [A2,R1], Z5, R2, Z3, R3, Z1, [R4,L1].
-    assert(cycle.arcs[0].piece_count == 2 &&
-           cycle.arcs[0].pieces[0] == 2 && cycle.arcs[0].pieces[1] == 3);
-    assert(cycle.arcs[1].piece_count == 1 && cycle.arcs[1].pieces[0] == 5 &&
-           cycle.arcs[1].is_zero_length);
-    assert(cycle.arcs[2].pieces[0] == 7 && !cycle.arcs[2].is_zero_length);
-    assert(cycle.arcs[3].pieces[0] == 11 && cycle.arcs[3].is_zero_length);
-    assert(cycle.arcs[4].pieces[0] == 13);
-    assert(cycle.arcs[5].pieces[0] == 15 && cycle.arcs[5].is_zero_length);
-    assert(cycle.arcs[6].piece_count == 2 &&
-           cycle.arcs[6].pieces[0] == 17 && cycle.arcs[6].pieces[1] == 0);
+           "[C91 §3.2 tex 238]: the fused big region has 7 arcs");
+    // Boundary order (by clockwise tour position of each arc's start):
+    // E*, Z5, R2, Z3, R3, Z1, S*.
+    assert(cycle.arcs[0].arc == 1 && !cycle.arcs[0].is_zero_length);
+    assert(cycle.arcs[1].arc == 3 && cycle.arcs[1].is_zero_length);
+    assert(cycle.arcs[2].arc == 5 && !cycle.arcs[2].is_zero_length);
+    assert(cycle.arcs[3].arc == 9 && cycle.arcs[3].is_zero_length);
+    assert(cycle.arcs[4].arc == 11);
+    assert(cycle.arcs[5].arc == 13 && cycle.arcs[5].is_zero_length);
+    assert(cycle.arcs[6].arc == 15 && !cycle.arcs[6].is_zero_length);
 
-    // Pocket P4 (region 4): two logical arcs (split by the junction null
+    // Pocket P4 (region 4): two arcs (split by the junction null
     // chord n7 — exactly why [C91 §3.1 tex 224] adds junction chords).
     auto p4 = fused_region_cycle(fx.S, fx.C, 4, region_arcs_of(fx.S, 4));
     assert(p4.count == 2);
 
-    // cAPEX's inner region: one zero-length logical arc.
+    // cAPEX's inner region: one zero-length arc.
     auto az = fused_region_cycle(fx.S, fx.C, 7, region_arcs_of(fx.S, 7));
     assert(az.count == 1 && az.arcs[0].is_zero_length);
 
@@ -558,29 +575,29 @@ static void test_local_shoot_fused() {
     ctx.provenance = &prov;
 
     // (a) Direct: v4's under-west companion shoots LEFT and hits
-    // edge 0's east wall at (0.4, 4) — on R4 (arc 17).
+    // edge 0's east wall at (0.4, 4) — on S*'s RIGHT leg (arc 15).
     RayHit h = local_shoot_fused(Point{8, 4, 4}, SymbolicY{4.0, 4}, LEFT,
                                  cycle, ctx);
     assert(h.hit && !h.wrapped);
-    assert(h.hit_arc_idx == 17);
+    assert(h.hit_arc_idx == 15);
     assert(h.edge == 0 && h.side == RIGHT);
     assert(h.x == 0.4);
 
     // (b) Direct: v8's under-east companion shoots RIGHT and hits
-    // edge 11's west wall at x = 22 + 2·23/24 — on R1 (arc 3).
+    // edge 11's west wall at x = 22 + 2·23/24 — on E*'s RIGHT leg (arc 1).
     h = local_shoot_fused(Point{16, 2, 8}, SymbolicY{2.0, 8}, RIGHT,
                           cycle, ctx);
     assert(h.hit && !h.wrapped);
-    assert(h.hit_arc_idx == 3);
+    assert(h.hit_arc_idx == 1);
     assert(h.edge == 11 && h.side == RIGHT);
 
     // (c) Wrapped ([C91 §2.1 tex 70]): P1's apex west-outside companion
     // has nothing to its west; the ray wraps and strikes edge 11's east
-    // wall — on A2 (arc 2).
+    // wall — on E*'s LEFT leg (arc 1).
     h = local_shoot_fused(Point{2, 20, 1}, SymbolicY{20.0, 1}, LEFT,
                           cycle, ctx);
     assert(h.hit && h.wrapped);
-    assert(h.hit_arc_idx == 2);
+    assert(h.hit_arc_idx == 1);
     assert(h.edge == 11 && h.side == LEFT);
 
     std::printf("  [PASS] local_shoot_fused\n");
@@ -593,18 +610,20 @@ static void test_local_shoot_fused() {
 static void test_insert_chord() {
     CombFixture fx;
 
-    // Insert v4's under-west chord (0.4,4)–(8,4): p on R3 (arc 13, at
-    // the polygon vertex v4), q on R4 (arc 17, mid-edge on edge 0).
-    std::size_t flat[] = {2, 3, 5, 7, 11, 13, 15, 17, 0};
-    Submap::ChordPointSpec p{13, 3, RIGHT, 8.0};
-    Submap::ChordPointSpec q{17, 0, RIGHT, 0.4};
-    auto res = fx.S.insert_chord(p, q, SymbolicY{4.0, 4}, 0, flat, 9, fx.C);
+    // Insert v4's under-west chord (0.4,4)–(8,4): p on R3 (arc 11, at
+    // the polygon vertex v4), q on S* (arc 15, mid-edge on edge 0's
+    // RIGHT leg — splitting a wrap-spanning structure,
+    // [C91 §2.4 tex 142]).
+    std::size_t flat[] = {1, 3, 5, 9, 11, 13, 15};
+    Submap::ChordPointSpec p{11, 3, RIGHT, 8.0};
+    Submap::ChordPointSpec q{15, 0, RIGHT, 0.4};
+    auto res = fx.S.insert_chord(p, q, SymbolicY{4.0, 4}, 0, flat, 7, fx.C);
 
     assert(res.chord_idx == 8);
     assert(res.new_region == 9);
     assert(fx.S.num_nodes() == 10);
     assert(fx.S.num_chords() == 9);
-    assert(fx.S.num_arcs() == 20);
+    assert(fx.S.num_arcs() == 18);
     fx.S.assert_tree_property();
 
     const Chord& nc = fx.S.chord(8);
@@ -612,39 +631,51 @@ static void test_insert_chord() {
     // right = p (at vertex 4 → 1 adj arc, [C91 §2.2 tex 94]).
     assert(nc.left_edge == 0 && nc.left_side == RIGHT);
     assert(nc.left_adj.count == 2);
-    assert(nc.left_adj.arcs[0] == 17 && nc.left_adj.arcs[1] == res.q_after_arc);
+    assert(nc.left_adj.arcs[0] == 15 && nc.left_adj.arcs[1] == res.q_after_arc);
     assert(nc.right_edge == 3 && nc.right_side == RIGHT);
-    assert(nc.right_adj.count == 1 && nc.right_adj.arcs[0] == 13);
+    assert(nc.right_adj.count == 1 && nc.right_adj.arcs[0] == 11);
     assert(nc.region[0] == 0 && nc.region[1] == 9);
 
-    // Chain: the new region owns R3's after-half, Z1, R4's before-half.
+    // Chain: the new region owns R3's after-half, Z1, S*'s before-half.
     assert(fx.S.arc(res.p_after_arc).region_node == 9);
-    assert(fx.S.arc(15).region_node == 9);          // Z1
-    assert(fx.S.arc(17).region_node == 9);          // R4 before-half
+    assert(fx.S.arc(13).region_node == 9);          // Z1
+    assert(fx.S.arc(15).region_node == 9);          // S* before-half
     assert(fx.S.arc(res.q_after_arc).region_node == 0);
-    assert(fx.S.arc(13).region_node == 0);          // R3 before-half
+    assert(fx.S.arc(11).region_node == 0);          // R3 before-half
 
     // Splits: R3 = [4..3] split AT v4 (edge 3's end vertex) → edge 3
     // belongs entirely to the after-half ([C91 §2.4 tex 133]: the
     // arc-structure's pointers are the edges the arc spans): before
     // [4..4] (ends at v4, ec 1) + after [3..3] (starts at v4, ec 1).
-    assert(fx.S.arc(13).last_edge == 4 && fx.S.arc(13).first_edge == 4);
-    assert(fx.S.arc(13).edge_count == 1);
+    assert(fx.S.arc(11).last_edge == 4 && fx.S.arc(11).first_edge == 4);
+    assert(fx.S.arc(11).edge_count == 1);
     assert(fx.S.arc(res.p_after_arc).first_edge == 3 &&
            fx.S.arc(res.p_after_arc).last_edge == 3);
     assert(fx.S.arc(res.p_after_arc).edge_count == 1);
+
+    // Splitting S* at the mid-edge point on its RIGHT leg leaves the
+    // before-half a plain RIGHT arc [0,0] and gives the double-backing
+    // to the after-half (R(0)→L(6), ᾱ = [0,6], [C91 §2.4 tex 142]);
+    // the start-turn pointer moves with it.
+    assert(fx.S.arc(15).first_side == RIGHT &&
+           fx.S.arc(15).last_side == RIGHT &&
+           fx.S.arc(15).edge_count == 1);
+    assert(fx.S.arc(res.q_after_arc).first_side == RIGHT &&
+           fx.S.arc(res.q_after_arc).last_side == LEFT &&
+           fx.S.arc(res.q_after_arc).edge_count == 7);
+    assert(fx.S.start_arc == res.q_after_arc);
 
     // Adjacency re-pointing: c1 (v1e)'s slot 0 referenced R3 as its
     // ENDING arc — now the after-half; and c1 itself moved to region 9.
     assert(fx.S.chord(1).right_adj.arcs[0] == res.p_after_arc);
     assert(fx.S.chord(1).region[0] == 9);
     // c2 (v3w)'s slot 1 referenced R3 as its STARTING arc — unchanged.
-    assert(fx.S.chord(2).left_adj.arcs[1] == 13);
+    assert(fx.S.chord(2).left_adj.arcs[1] == 11);
     // c0 (v1w) moved to region 9 (its footprint went with the chain).
     assert(fx.S.chord(0).region[0] == 9);
 
-    // Region cycles after the split: new region has 3 logical arcs;
-    // old region 0 now has 6.
+    // Region cycles after the split: new region has 3 arcs; old region
+    // 0 now has 6.
     auto c9 = fused_region_cycle(fx.S, fx.C, 9, region_arcs_of(fx.S, 9));
     assert(c9.count == 3);
     auto c0 = fused_region_cycle(fx.S, fx.C, 0, region_arcs_of(fx.S, 0));
@@ -663,40 +694,41 @@ static void test_find_visible_point() {
     auto prov = compute_arc_provenance(fx.S, fx.C, fx.S1, fx.C1,
                                        fx.S2, fx.C2);
     auto cycle = fused_region_cycle(fx.S, fx.C, 0, region_arcs_of(fx.S, 0));
-    // cycle: 0=[A2,R1], 1=Z5, 2=R2, 3=Z3, 4=R3, 5=Z1, 6=[R4,L1]
+    // cycle: 0=E*, 1=Z5, 2=R2, 3=Z3, 4=R3, 5=Z1, 6=S*
 
-    // (a) R2 → [A2,R1]: v8's under-east companion sees edge 11's west
+    // (a) R2 → E*: v8's under-east companion sees edge 11's west
     // wall (nonconsecutive: indices 2 and 0).  Found via a BOUNDARY
     // piece's vertex ([C91 §3.2 tex 246/248] — R2 spans two partial
     // edges, so the cut has no vertex-to-vertex middle).
-    VisiblePoint vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[2],
-                                         cycle.arcs[0], cycle, prov,
+    VisiblePoint vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[2].arc,
+                                         cycle.arcs[0].arc, cycle, prov,
                                          rig.oracles);
     assert(vp.found);
     assert(symbolic_y_equal(vp.y, SymbolicY{2.0, 8}));
-    assert(vp.p_table_arc == 7 && vp.p_edge == 8 && vp.p_side == RIGHT);
-    assert(vp.q_table_arc == 3 && vp.q_edge == 11 && vp.q_side == RIGHT);
+    assert(vp.p_table_arc == 5 && vp.p_edge == 8 && vp.p_side == RIGHT);
+    assert(vp.q_table_arc == 1 && vp.q_edge == 11 && vp.q_side == RIGHT);
 
-    // (b) R3 → [R4,L1]: v4's under-west companion sees edge 0's east
-    // wall (indices 4 and 6).
-    vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[4], cycle.arcs[6],
-                            cycle, prov, rig.oracles);
+    // (b) R3 → S*: v4's under-west companion sees edge 0's east
+    // wall on S*'s RIGHT leg (indices 4 and 6).
+    vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[4].arc,
+                            cycle.arcs[6].arc, cycle, prov, rig.oracles);
     assert(vp.found);
     assert(symbolic_y_equal(vp.y, SymbolicY{4.0, 4}));
-    assert(vp.q_table_arc == 17 && vp.q_x == 0.4);
+    assert(vp.q_table_arc == 15 && vp.q_x == 0.4);
 
-    // (c) [R4,L1] → R2: no vertex of the outer arc sees the under-comb
+    // (c) S* → R2: no vertex of the outer arc sees the under-comb
     // strip between the teeth — Lemma 3.2 must come back empty (sound
-    // failure; this exercises the multi-provenance unit split at C's
-    // start wrap and the full vertex scan over edges 0..6).
-    vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[6], cycle.arcs[2],
-                            cycle, prov, rig.oracles);
+    // failure; this exercises the arc-cutter's split of the
+    // wrap-spanning target at C's start turnaround ([C91 §3.0(ii)(2)
+    // tex 170]) and the full vertex scan over edges 0..6).
+    vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[6].arc,
+                            cycle.arcs[2].arc, cycle, prov, rig.oracles);
     assert(!vp.found);
 
     // (d) Zero-length arcs are never candidates ([C91 §2.1 tex 70/72]).
     assert(assert_fires([&]{
-        find_visible_point(fx.S, fx.C, 0, cycle.arcs[1], cycle.arcs[4],
-                           cycle, prov, rig.oracles);
+        find_visible_point(fx.S, fx.C, 0, cycle.arcs[1].arc,
+                           cycle.arcs[4].arc, cycle, prov, rig.oracles);
     }));
 
     std::printf("  [PASS] find_visible_point\n");
@@ -707,10 +739,13 @@ static void test_find_visible_point() {
 //     binary search + the [C91 §2.5 Lemma 2.4] shielding test)
 // ════════════════════════════════════════════════════════════════
 
-// Fixture cutter: unit [R4] → one boundary piece; unit [L1] → ONE
-// vertex-to-vertex piece [0..6] whose S_α has a real V(ᾱ) chord (P2's
-// apex east chord (6,24)–(13.81,24)), forcing the descent through an
-// internal TD node.
+// Fixture cutter for the wrap-spanning arc S* ([C91 §2.4 tex 142]):
+// the target R(0)→L(6) is split at C's start turnaround
+// ([C91 §3.0(ii)(2) tex 170]) into a single-edge boundary piece (the
+// RIGHT leg, partial at v1w's mid-edge endpoint) and ONE
+// vertex-to-vertex piece [0..6] on the LEFT whose S_α has a real V(ᾱ)
+// chord (P2's apex east chord (6,24)–(13.81,24)), forcing the descent
+// through an internal TD node.
 struct DescentCutter : ArcCuttingOracle {
     const Polygon* C1;
     mutable std::vector<std::unique_ptr<Polygon>> curves;
@@ -720,18 +755,18 @@ struct DescentCutter : ArcCuttingOracle {
     std::vector<ArcPiece> cut(std::size_t /*arc_idx*/,
                               const Subarc& target) const override {
         std::vector<ArcPiece> out;
-        if (target.first_side == RIGHT) {
-            // Unit [R4]: single edge 0, partial at its high end (v1w's
-            // mid-edge endpoint) → one boundary piece.
-            assert(target.first_edge == 0 && target.last_edge == 0);
+        assert(target.first_edge == 0 && target.first_side == RIGHT &&
+               target.last_edge == 6 && target.last_side == LEFT &&
+               "descent test cuts the wrap-spanning S*");
+        // RIGHT leg: single edge 0, partial at its traversal start
+        // (v1w's mid-edge endpoint) → one boundary piece.
+        {
             ArcPiece p;
             p.subarc = Subarc{0, RIGHT, 0, RIGHT};
             p.is_boundary_piece = true;
             out.push_back(p);
-            return out;
         }
-        // Unit [L1]: vertex-to-vertex [0..6] with a 2-region S_α.
-        assert(target.first_edge == 0 && target.last_edge == 6);
+        // LEFT leg: vertex-to-vertex [0..6] with a 2-region S_α.
         std::vector<Point> vs;
         for (std::size_t v = 0; v <= 7; ++v) vs.push_back(C1->vertex(v));
         curves.push_back(std::make_unique<Polygon>(std::move(vs)));
@@ -739,27 +774,22 @@ struct DescentCutter : ArcCuttingOracle {
         auto sm = std::make_unique<Submap>();
         std::size_t r_out = sm->add_node();
         std::size_t r_pocket = sm->add_node();
+        sm->start_vertex = 0;
+        sm->end_vertex = 7;
+        // [C91 §2.4 tex 142]: r_out's single arc runs from the chord's
+        // mid-edge endpoint through BOTH of ᾱ's endpoint turnarounds
+        // back to the apex — one DOUBLE-WRAP structure W_out
+        // (first=(6,LEFT) > last=(2,LEFT); ᾱ-range = everything).
         Arc a{};
-        a.first_edge = 0; a.last_edge = 2;
-        a.first_side = LEFT; a.last_side = LEFT;
-        a.region_node = r_out; a.edge_count = 3;
-        std::size_t l_head = sm->add_arc(a);          // start → apex P2
-        a = {};
         a.first_edge = 3; a.last_edge = 6;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r_pocket; a.edge_count = 4;
         std::size_t l_pocket = sm->add_arc(a);        // apex → chord end
         a = {};
-        a.first_edge = 6; a.last_edge = 6;
+        a.first_edge = 6; a.last_edge = 2;
         a.first_side = LEFT; a.last_side = LEFT;
-        a.region_node = r_out; a.edge_count = 1;
-        std::size_t l_tail = sm->add_arc(a);          // chord end → v7
-        a = {};
-        a.first_edge = 6; a.last_edge = 0;
-        a.first_side = RIGHT; a.last_side = RIGHT;
-        a.region_node = r_out;
-        a.edge_count = 7;
-        sm->add_arc(a);                               // whole RIGHT side
+        a.region_node = r_out; a.edge_count = 7;
+        std::size_t w_out = sm->add_arc(a);           // chord end → apex
 
         // P2's apex east chord of V(ᾱ): (6,24) → (13.81, 24) on edge 6.
         Chord c{};
@@ -767,13 +797,12 @@ struct DescentCutter : ArcCuttingOracle {
         c.left_edge = 3; c.left_side = LEFT;          // at the apex vertex
         c.right_edge = 6; c.right_side = LEFT;        // mid-edge
         c.y = 24.0; c.y_tag = 3;
-        c.left_adj = {{l_head}, 1};
-        c.right_adj = {{l_pocket, l_tail}, 2};
+        c.left_adj = {{w_out}, 1};
+        c.right_adj = {{l_pocket, w_out}, 2};
         sm->add_chord(c);
-        sm->start_arc = l_head;
-        sm->end_arc = l_tail;
-        sm->start_vertex = 0;
-        sm->end_vertex = 7;
+        assert(sm->start_arc == w_out && sm->end_arc == w_out &&
+               "[C91 §2.4 tex 142]: the double-wrap arc is both "
+               "endpoint arcs");
         sm->build_tree_decomposition();
         submaps.push_back(std::move(sm));
 
@@ -798,21 +827,21 @@ static void test_descent() {
                                        fx.S2, fx.C2);
     auto cycle = fused_region_cycle(fx.S, fx.C, 0, region_arcs_of(fx.S, 0));
 
-    // [R4,L1] → R2: the descent enters S_α's tree at the apex chord,
+    // S* → R2: the descent enters S_α's tree at the apex chord,
     // rejects the pocket side (its α-portion cannot see A₂ — the
     // [C91 §2.5 Lemma 2.4] machinery), reaches the r_out leaf, scans its
     // vertices, and correctly finds nothing.
-    VisiblePoint vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[6],
-                                         cycle.arcs[2], cycle, prov,
+    VisiblePoint vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[6].arc,
+                                         cycle.arcs[2].arc, cycle, prov,
                                          oracles);
     assert(!vp.found);
 
-    // [R4,L1] → R3: v2 (the valley between P1 and P2) is in the POCKET
+    // S* → R3: v2 (the valley between P1 and P2) is in the POCKET
     // side... it is not on r_out's leaf.  But R3 is seen from v4's own
-    // arc, not from [R4,L1]; the outer arc's vertices cannot see the
+    // arc, not from S*; the outer arc's vertices cannot see the
     // under-comb strip here either.
-    vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[6], cycle.arcs[4],
-                            cycle, prov, oracles);
+    vp = find_visible_point(fx.S, fx.C, 0, cycle.arcs[6].arc,
+                            cycle.arcs[4].arc, cycle, prov, oracles);
     assert(!vp.found);
 
     std::printf("  [PASS] descent\n");
@@ -879,21 +908,21 @@ static void test_insert_chord_asserts() {
     // must fire ([C91 §2.1 tex 70]: visibility already realized).
     assert(assert_fires([]{
         CombFixture fx;
-        std::size_t flat[] = {2, 3, 5, 7, 11, 13, 15, 17, 0};
+        std::size_t flat[] = {1, 3, 5, 9, 11, 13, 15};
         // p at v1w's existing mid-edge endpoint on (edge 0, RIGHT, y=6).
-        Submap::ChordPointSpec p{17, 0, RIGHT, 0.6};
-        Submap::ChordPointSpec q{13, 3, RIGHT, 7.0};
-        fx.S.insert_chord(p, q, SymbolicY{6.0, 2}, 0, flat, 9, fx.C);
+        Submap::ChordPointSpec p{15, 0, RIGHT, 0.6};
+        Submap::ChordPointSpec q{11, 3, RIGHT, 7.0};
+        fx.S.insert_chord(p, q, SymbolicY{6.0, 2}, 0, flat, 7, fx.C);
     }));
 
     // (b) p and q on the same arc must fire (Lemma 3.3's chords connect
     // nonconsecutive — hence distinct — arcs).
     assert(assert_fires([]{
         CombFixture fx;
-        std::size_t flat[] = {2, 3, 5, 7, 11, 13, 15, 17, 0};
-        Submap::ChordPointSpec p{13, 4, RIGHT, 8.2};
-        Submap::ChordPointSpec q{13, 3, RIGHT, 7.0};
-        fx.S.insert_chord(p, q, SymbolicY{4.7, 4}, 0, flat, 9, fx.C);
+        std::size_t flat[] = {1, 3, 5, 9, 11, 13, 15};
+        Submap::ChordPointSpec p{11, 4, RIGHT, 8.2};
+        Submap::ChordPointSpec q{11, 3, RIGHT, 7.0};
+        fx.S.insert_chord(p, q, SymbolicY{4.7, 4}, 0, flat, 7, fx.C);
     }));
 
     std::printf("  [PASS] insert_chord_asserts\n");

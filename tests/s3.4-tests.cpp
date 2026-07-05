@@ -78,21 +78,21 @@ static Polygon make_C2() {
                     {22,25,11}, {24,1,12}});
 }
 
+// One region bounded by the single closed arc — all of ∂C, one
+// arc-structure stored cut at C's start turnaround
+// ([C91 §2.4 tex 142/138]).
 static Submap make_chordless_normal(const Polygon& poly) {
     Submap s;
     s.add_node();
+    s.start_vertex = 0;
+    s.end_vertex = poly.num_vertices() - 1;
     Arc a{};
-    a.first_edge = 0; a.last_edge = poly.num_edges() - 1;
-    a.first_side = LEFT; a.last_side = LEFT;
+    a.first_edge = 0; a.last_edge = 0;
+    a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
     a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
-    a.first_edge = poly.num_edges() - 1; a.last_edge = 0;
-    a.first_side = RIGHT; a.last_side = RIGHT;
-    s.add_arc(a);
-    s.start_arc = ai0; s.end_arc = ai0;
-    s.start_vertex = 0;
-    s.end_vertex = poly.num_vertices() - 1;
+    assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
     return s;
 }
@@ -119,24 +119,25 @@ struct CombFixture {
             a.edge_count = count;
             return S.add_arc(a);
         };
-        add(0, LEFT, 6, LEFT, 0, 7);      // 0  L1
-        add(7, LEFT, 7, LEFT, 7, 0);      // 1  Lz
-        add(7, LEFT, 11, LEFT, 0, 5);     // 2  A2
-        add(11, RIGHT, 11, RIGHT, 0, 1);  // 3  R1
-        add(11, RIGHT, 10, RIGHT, 6, 2);  // 4  P6
-        add(9, RIGHT, 9, RIGHT, 0, 0);    // 5  Z5
-        add(9, RIGHT, 8, RIGHT, 5, 2);    // 6  P5
-        add(8, RIGHT, 7, RIGHT, 0, 2);    // 7  R2
-        add(7, RIGHT, 7, RIGHT, 4, 1);    // 8  P4a
-        add(7, RIGHT, 7, RIGHT, 8, 0);    // 9  Nz
-        add(6, RIGHT, 6, RIGHT, 4, 1);    // 10 P4b
-        add(5, RIGHT, 5, RIGHT, 0, 0);    // 11 Z3
-        add(5, RIGHT, 4, RIGHT, 3, 2);    // 12 P3
-        add(4, RIGHT, 3, RIGHT, 0, 2);    // 13 R3
-        add(3, RIGHT, 2, RIGHT, 2, 2);    // 14 P2
-        add(1, RIGHT, 1, RIGHT, 0, 0);    // 15 Z1
-        add(1, RIGHT, 0, RIGHT, 1, 2);    // 16 P1
-        add(0, RIGHT, 0, RIGHT, 0, 1);    // 17 R4
+        S.start_vertex = 0;
+        S.end_vertex = 12;
+
+        add(7, LEFT, 7, LEFT, 7, 0);      // 0  Lz
+        add(7, LEFT, 11, RIGHT, 0, 5);    // 1  E*  (end wrap, ᾱ=[7,11])
+        add(11, RIGHT, 10, RIGHT, 6, 2);  // 2  P6
+        add(9, RIGHT, 9, RIGHT, 0, 0);    // 3  Z5
+        add(9, RIGHT, 8, RIGHT, 5, 2);    // 4  P5
+        add(8, RIGHT, 7, RIGHT, 0, 2);    // 5  R2
+        add(7, RIGHT, 7, RIGHT, 4, 1);    // 6  P4a
+        add(7, RIGHT, 7, RIGHT, 8, 0);    // 7  Nz
+        add(6, RIGHT, 6, RIGHT, 4, 1);    // 8  P4b
+        add(5, RIGHT, 5, RIGHT, 0, 0);    // 9  Z3
+        add(5, RIGHT, 4, RIGHT, 3, 2);    // 10 P3
+        add(4, RIGHT, 3, RIGHT, 0, 2);    // 11 R3
+        add(3, RIGHT, 2, RIGHT, 2, 2);    // 12 P2
+        add(1, RIGHT, 1, RIGHT, 0, 0);    // 13 Z1
+        add(1, RIGHT, 0, RIGHT, 1, 2);    // 14 P1
+        add(0, RIGHT, 6, LEFT, 0, 7);     // 15 S*  (start wrap, ᾱ=[0,6])
         auto chord = [&](std::size_t le, Side lsd, Chord::AdjArcs ladj,
                          std::size_t re, Side rsd, Chord::AdjArcs radj,
                          double y, std::size_t tag,
@@ -150,18 +151,17 @@ struct CombFixture {
             c.is_null_length = null_len;
             S.add_chord(c);
         };
-        chord(0, RIGHT, {{16, 17}, 2}, 1, RIGHT, {{15}, 1}, 6.0, 2, 0, 1);
-        chord(2, RIGHT, {{14}, 1}, 3, RIGHT, {{13, 14}, 2}, 6.0, 2, 0, 2);
-        chord(4, RIGHT, {{12, 13}, 2}, 5, RIGHT, {{11}, 1}, 5.0, 6, 0, 3);
-        chord(6, RIGHT, {{10}, 1}, 7, RIGHT, {{7, 8}, 2}, 5.0, 6, 0, 4);
-        chord(8, RIGHT, {{6, 7}, 2}, 9, RIGHT, {{5}, 1}, 4.5, 10, 0, 5);
-        chord(10, RIGHT, {{4}, 1}, 11, RIGHT, {{3, 4}, 2}, 4.5, 10, 0, 6);
-        chord(6, LEFT, {{0}, 1}, 7, LEFT, {{1}, 1}, 26.0, 7, 0, 7);
-        chord(7, RIGHT, {{8}, 1}, 7, RIGHT, {{9}, 1}, 26.0, 7, 4, 8, true);
-        S.start_arc = 0;
-        S.end_arc = 2;
-        S.start_vertex = 0;
-        S.end_vertex = 12;
+        chord(0, RIGHT, {{14, 15}, 2}, 1, RIGHT, {{13}, 1}, 6.0, 2, 0, 1);
+        chord(2, RIGHT, {{12}, 1}, 3, RIGHT, {{11, 12}, 2}, 6.0, 2, 0, 2);
+        chord(4, RIGHT, {{10, 11}, 2}, 5, RIGHT, {{9}, 1}, 5.0, 6, 0, 3);
+        chord(6, RIGHT, {{8}, 1}, 7, RIGHT, {{5, 6}, 2}, 5.0, 6, 0, 4);
+        chord(8, RIGHT, {{4, 5}, 2}, 9, RIGHT, {{3}, 1}, 4.5, 10, 0, 5);
+        chord(10, RIGHT, {{2}, 1}, 11, RIGHT, {{1, 2}, 2}, 4.5, 10, 0, 6);
+        chord(6, LEFT, {{15}, 1}, 7, LEFT, {{0}, 1}, 26.0, 7, 0, 7);
+        chord(7, RIGHT, {{6}, 1}, 7, RIGHT, {{7}, 1}, 26.0, 7, 4, 8, true);
+        // [C91 §2.4(iii) tex 138]: add_arc auto-registered the wrap
+        // arcs as the endpoint pointers ([C91 §2.4 tex 142]).
+        assert(S.start_arc == 15 && S.end_arc == 1);
     }
 };
 
@@ -197,20 +197,10 @@ struct GeomRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side dir, std::size_t /*arc_idx*/,
                  const Subarc& target) const override {
         SymbolicY sy{p.y, p.index};
-        struct Leg { std::size_t lo, hi; Side side; };
-        Leg legs[2];
-        std::size_t nl = 0;
-        if (target.first_side == target.last_side) {
-            legs[nl++] = {std::min(target.first_edge, target.last_edge),
-                          std::max(target.first_edge, target.last_edge),
-                          target.first_side};
-        } else if (target.first_side == LEFT) {
-            legs[nl++] = {target.first_edge, Ci->num_edges() - 1, LEFT};
-            legs[nl++] = {target.last_edge, Ci->num_edges() - 1, RIGHT};
-        } else {
-            legs[nl++] = {0, target.first_edge, RIGHT};
-            legs[nl++] = {0, target.last_edge, LEFT};
-        }
+        // [C91 §2.4 tex 142]: wrap-spanning targets decompose per leg.
+        ArcLeg legs[3];
+        std::size_t nl = subarc_legs(target, 0, Ci->num_vertices() - 1,
+                                     legs);
         RayHit best;
         best.hit = false;
         double best_d = 0.0;
@@ -262,13 +252,18 @@ struct SafeArcCutter : ArcCuttingOracle {
     SafeArcCutter(const Polygon* ci, std::size_t pl)
         : Ci(ci), piece_len(pl) {}
 
-    std::vector<ArcPiece> cut(std::size_t /*arc_idx*/,
-                              const Subarc& target) const override {
-        assert(target.first_side == target.last_side &&
-               "test cutter: chordless Sᵢ fixtures yield single-side units");
-        const Side s = target.first_side;
-        const std::size_t lo = std::min(target.first_edge, target.last_edge);
-        const std::size_t hi = std::max(target.first_edge, target.last_edge);
+    // One single-side leg; boundary pieces only at the ends flagged as
+    // the TARGET's own endpoints ([C91 §3.0(ii)(3) tex 170]: boundary
+    // pieces attach to the endpoints of α'; a leg end at one of Cᵢ's
+    // turnarounds is a vertex end and becomes a middle piece).
+    std::vector<ArcPiece> cut_leg(const Subarc& leg,
+                                  bool target_first,
+                                  bool target_last) const {
+        const Side s = leg.first_side;
+        const std::size_t lo = std::min(leg.first_edge, leg.last_edge);
+        const std::size_t hi = std::max(leg.first_edge, leg.last_edge);
+        const bool blo = (s == LEFT) ? target_first : target_last;
+        const bool bhi = (s == LEFT) ? target_last : target_first;
 
         auto boundary_piece = [&](std::size_t e) {
             ArcPiece p;
@@ -292,25 +287,48 @@ struct SafeArcCutter : ArcCuttingOracle {
         };
 
         std::vector<ArcPiece> out;
-        if (lo == hi) {
+        if (lo == hi && (blo || bhi)) {
             out.push_back(boundary_piece(lo));
             return out;
         }
+        std::size_t mlo = lo + (blo ? 1 : 0);
+        std::size_t mhi = hi - (bhi ? 1 : 0);
         std::vector<std::size_t> chunk_lo, chunk_hi;
-        for (std::size_t a = lo + 1; a < hi; a += piece_len) {
+        for (std::size_t a = mlo; a <= mhi; a += piece_len) {
             chunk_lo.push_back(a);
-            chunk_hi.push_back(std::min(a + piece_len - 1, hi - 1));
+            chunk_hi.push_back(std::min(a + piece_len - 1, mhi));
         }
         if (s == LEFT) {
-            out.push_back(boundary_piece(lo));
+            if (blo) out.push_back(boundary_piece(lo));
             for (std::size_t k = 0; k < chunk_lo.size(); ++k)
                 out.push_back(middle_piece(chunk_lo[k], chunk_hi[k]));
-            out.push_back(boundary_piece(hi));
+            if (bhi) out.push_back(boundary_piece(hi));
         } else {
-            out.push_back(boundary_piece(hi));
+            if (bhi) out.push_back(boundary_piece(hi));
             for (std::size_t k = chunk_lo.size(); k-- > 0; )
                 out.push_back(middle_piece(chunk_lo[k], chunk_hi[k]));
-            out.push_back(boundary_piece(lo));
+            if (blo) out.push_back(boundary_piece(lo));
+        }
+        return out;
+    }
+
+    std::vector<ArcPiece> cut(std::size_t /*arc_idx*/,
+                              const Subarc& target) const override {
+        // [C91 §3.0(ii)(2) tex 170]: pieces must not double-back — a
+        // wrap-spanning target is split at Cᵢ's endpoint turnaround(s)
+        // into its single-side legs ([C91 §2.4 tex 142]); the turnaround
+        // ends are vertex ends, so only the target's OWN endpoints may
+        // produce boundary pieces.
+        ArcLeg legs[3];
+        std::size_t nl = subarc_legs(target, 0, Ci->num_vertices() - 1,
+                                     legs);
+        std::vector<ArcPiece> out;
+        for (std::size_t g = 0; g < nl; ++g) {
+            Subarc leg_sub = (legs[g].side == LEFT)
+                ? Subarc{legs[g].lo, LEFT, legs[g].hi, LEFT}
+                : Subarc{legs[g].hi, RIGHT, legs[g].lo, RIGHT};
+            auto pieces = cut_leg(leg_sub, g == 0, g + 1 == nl);
+            out.insert(out.end(), pieces.begin(), pieces.end());
         }
         return out;
     }
@@ -578,9 +596,10 @@ static void test_structure_separator_recursion() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  3c. Wrap-straddling regions: > 4 table arcs — exercises the
-//      RegionArcs / collect_region_arcs fix and region_weight's seam
-//      handling ([C91 §2.4 tex 142] split representation)
+//  3c. Wrap-straddling regions: single double-backing arc-structures
+//      ([C91 §2.4 tex 142]) — per-region structure count == degree ≤ 4
+//      ([C91 §2.3 tex 114]); collect_region_arcs and region_weight
+//      reach the wrap arcs through chord adjacency alone
 // ════════════════════════════════════════════════════════════════
 
 // Ground truth: a region's live arcs by full-table scan.
@@ -597,63 +616,72 @@ static void test_collect_region_arcs_wrap_straddle() {
     ConformalComb cc;
     const Submap& S = cc.fx.S;
 
-    // The conformal comb keeps a region that straddles C's endpoint
-    // wraps and so holds > 4 TABLE arcs (≤ 4 paper arcs + wrap splits,
-    // [C91 §2.4 tex 142]) — the case the old RegionArcs::MAX = 4 aborted
-    // on.
-    std::size_t max_r = NONE, max_n = 0;
+    // [C91 §2.4 tex 142]: the conformal comb keeps regions whose arcs
+    // pass around C's endpoint turnarounds — each such arc is ONE
+    // double-backing structure, so every region has exactly `degree`
+    // arc-structures, at most 4 ([C91 §2.3 tex 114] / [C91 §3.2 tex
+    // 264]).
+    bool saw_wrap_region = false;
     for (std::size_t r = 0; r < S.num_nodes(); ++r) {
         if (S.node(r).dead) continue;
-        std::size_t n = region_table_arcs(S, r).size();
-        if (n > max_n) { max_n = n; max_r = r; }
-    }
-    assert(max_n > 4 &&
-           "[C91 §2.4 tex 142]: the conformal comb must have a "
-           "wrap-straddling region with > 4 table arcs (else this test "
-           "proves nothing about the RegionArcs fix)");
+        auto want = region_table_arcs(S, r);
+        if (want.empty()) continue;
 
-    // collect_region_arcs must gather EVERY table arc of the region —
-    // no overflow, no silent miss.
-    RegionArcs got = collect_region_arcs(S, max_r);
-    auto want = region_table_arcs(S, max_r);
-    assert(got.count == want.size() &&
-           "[C91 §3.1 tex 181 + §2.4 tex 142]: collect_region_arcs must "
-           "gather every table arc of a wrap-straddling region");
-    for (std::size_t ai : want) {
-        bool found = false;
-        for (std::size_t g : got) if (g == ai) { found = true; break; }
-        assert(found &&
-               "[C91 §3.1 tex 181]: collect_region_arcs reaches every "
-               "table arc (chord adjacency + the four C-endpoint arcs)");
-    }
+        assert(want.size() <= 4 &&
+               "[C91 §2.3 tex 114]: conformal region has ≤ 4 "
+               "arc-structures — wrap-spanning arcs are never split");
+        for (std::size_t ai : want)
+            if (S.arc(ai).wraps()) saw_wrap_region = true;
 
-    std::printf("  [PASS] collect_region_arcs_wrap_straddle "
-                "(region %zu, %zu table arcs)\n", max_r, max_n);
+        // collect_region_arcs must gather EVERY arc-structure of the
+        // region — wrap arcs are reached as their chords' before-arcs
+        // ([C91 §2.2 tex 96] alternation), with no endpoint special
+        // cases.
+        RegionArcs got = collect_region_arcs(S, r);
+        assert(got.count == want.size() &&
+               "[C91 §3.1 tex 181]: collect_region_arcs must gather "
+               "every arc-structure of the region");
+        for (std::size_t ai : want) {
+            bool found = false;
+            for (std::size_t g : got) if (g == ai) { found = true; break; }
+            assert(found &&
+                   "[C91 §3.1 tex 181]: collect_region_arcs reaches "
+                   "every arc-structure through chord adjacency");
+        }
+    }
+    assert(saw_wrap_region &&
+           "[C91 §2.4 tex 142]: the conformal comb must contain a "
+           "region with a double-backing arc (else this test proves "
+           "nothing about the single-structure representation)");
+
+    std::printf("  [PASS] collect_region_arcs_wrap_straddle\n");
 }
 
 static void test_region_weight_wrap_straddle() {
     ConformalComb cc;
     const Submap& S = cc.fx.S;
 
-    // region_weight gathers by chord-adjacency + {start,end,tail}_arc and
-    // deliberately omits lrb (reachable via adjacency).  Referee it
-    // against the true max edge_count over ALL the region's table arcs —
-    // if it ever missed a seam arc carrying the max, this would catch it.
-    bool saw_straddle = false;
+    // region_weight gathers through chord adjacency ([C91 §2.4(ii)
+    // tex 137]); wrap-spanning arcs are single structures whose
+    // edge_count covers the union of their legs ([C91 §2.4 tex 142] /
+    // [C91 §2.2 tex 106]).  Referee it against the true max edge_count
+    // over ALL the region's arc-structures.
+    bool saw_wrap = false;
     for (std::size_t r = 0; r < S.num_nodes(); ++r) {
         if (S.node(r).dead) continue;
         auto arcs = region_table_arcs(S, r);
-        if (arcs.size() > 4) saw_straddle = true;
         std::size_t truth = 0;
-        for (std::size_t ai : arcs)
+        for (std::size_t ai : arcs) {
             truth = std::max(truth, S.arc(ai).edge_count);
+            if (S.arc(ai).wraps()) saw_wrap = true;
+        }
         assert(S.region_weight(r) == truth &&
-               "[C91 §2.2]: region_weight must equal the max edge_count "
-               "over ALL the region's table arcs — including wrap-split "
-               "seam arcs it reaches only through adjacency");
+               "[C91 §2.2 tex 106]: region_weight must equal the max "
+               "edge_count over ALL the region's arc-structures — "
+               "including double-backing ones");
     }
-    assert(saw_straddle &&
-           "the conformal comb must contain a wrap-straddling region");
+    assert(saw_wrap &&
+           "the conformal comb must contain a double-backing arc");
 
     std::printf("  [PASS] region_weight_wrap_straddle\n");
 }
@@ -661,7 +689,7 @@ static void test_region_weight_wrap_straddle() {
 // ════════════════════════════════════════════════════════════════
 //  3d. A merged submap with NO through-infinity chord — exercises
 //      build_vertical_line's region_infinity_ branch and the query's
-//      tex-308 no-D*-hit fallback ([C91 §3.4 tex 306–308])
+//      tex-308 no-D*-hit vertical-line path ([C91 §3.4 tex 306–308])
 // ════════════════════════════════════════════════════════════════
 
 static void test_structure_no_wrapped_chords() {
@@ -670,7 +698,7 @@ static void test_structure_no_wrapped_chords() {
     // fusion runs through infinity ([C91 §2.1 tex 70]).  With μ > 1 and
     // an empty wrapped-chord set, build_vertical_line takes the
     // region_infinity_ branch, and queries that strike no D* region
-    // route through it (the tex-308 fallback), rather than the
+    // route through it (the tex-308 vertical-line path), rather than the
     // vertical-line binary search the comb exercises.
     Polygon C1({{0,0,0}, {2,3,1}, {4,5,2}});
     Polygon C2({{4,5,2}, {6,2,3}, {8,9,4}});
@@ -779,10 +807,12 @@ static void test_oracle_adapter() {
     Submap S1 = make_chordless_normal(C1);
     SubmapRayShooter shooter(S1, C1, C1.num_edges());
 
+    // The chordless S₁ has ONE closed arc (index 0) covering all of
+    // ∂C₁ ([C91 §2.4 tex 142/138]); subarc targets select within it.
     // v4 = (8,4): shooting LEFT hits edge 0's east wall at (0.4, 4).
     Point p = C1.vertex(4);
     Subarc right_whole{6, RIGHT, 0, RIGHT};
-    RayHit h = shooter.shoot(p, LEFT, 1, right_whole);
+    RayHit h = shooter.shoot(p, LEFT, 0, right_whole);
     assert(h.hit && !h.wrapped && h.edge == 0 && h.side == RIGHT &&
            h.x == 0.4);
 
@@ -796,13 +826,13 @@ static void test_oracle_adapter() {
     // Restricting to a right-side range that excludes edge 0 also
     // filters the hit out.
     Subarc right_partial{6, RIGHT, 2, RIGHT};
-    h = shooter.shoot(p, LEFT, 1, right_partial);
+    h = shooter.shoot(p, LEFT, 0, right_partial);
     assert(!h.hit);
 
     // P1's apex west companion: nothing to its west — the ray wraps
     // ([C91 §2.1 tex 70]) and strikes edge 6's east wall.
     Point apex_w = C1.vertex(1);
-    h = shooter.shoot(apex_w, LEFT, 1, right_whole);
+    h = shooter.shoot(apex_w, LEFT, 0, right_whole);
     assert(h.hit && h.wrapped && h.edge == 6 && h.side == RIGHT);
 
     std::printf("  [PASS] oracle_adapter\n");
