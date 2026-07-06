@@ -218,6 +218,17 @@ FusedRegionCycle fused_region_cycle(const Submap& S, const Polygon& C,
               [](const Keyed& a, const Keyed& b) {
                   return tour_cmp(a.pos, b.pos) < 0;
               });
+#ifndef NDEBUG
+    // [C91 §2.2 tex 96]: consecutive cycle arcs are separated by an
+    // exit chord whose far endpoint is a distinct ∂C position, so two
+    // arcs of one region can never start at the same TourPos.  A tie
+    // would silently permute the boundary cycle and corrupt the
+    // nonconsecutiveness test and insert_chord's chain walk.
+    for (std::size_t i = 1; i < sorted.size(); ++i)
+        assert(tour_cmp(sorted[i - 1].pos, sorted[i].pos) != 0 &&
+               "[C91 §2.2 tex 96]: region arcs must start at distinct "
+               "∂C positions");
+#endif
 
     // [C91 §2.4 tex 142]: a wrap-spanning arc is ONE arc-structure that
     // double-backs around C's endpoint — the table never splits it, so

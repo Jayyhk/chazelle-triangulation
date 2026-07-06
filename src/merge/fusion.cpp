@@ -1602,11 +1602,13 @@ void rebuild_submap(Submap& out_S,
     ingest_discovered(state1, /*walker_is_c1=*/true);
     ingest_discovered(state2, /*walker_is_c1=*/false);
 
-    // [C91 §3.1 tex 224]: drop old chords whose endpoint sat on the C₁/C₂
-    // junction wrap.  Per [C91 §2.1 tex 72 case 3], the junction is a
-    // C-endpoint in V(Cᵢ) with two duplicate companions; in V(C) the
-    // junction is interior and the wrap is gone, so the chord is no
-    // longer maximal there.
+    // Junction identity, used by the asserts below and the null-chord
+    // synthesis.  No dedicated "drop junction-wrap chords" step exists
+    // or is needed: an old chord whose endpoint sat on the junction
+    // wrap of V(Cᵢ) has endpoints that are enumeration stops of the
+    // fusion passes ([C91 §3.1 tex 179]), so the general tex-224
+    // visibility filter below invalidates it exactly when the other
+    // curve blocks it in V(C).
     const std::size_t junction_vidx_in_c = C1.num_vertices() - 1;
     const std::size_t junction_tag = C1.vertex(junction_vidx_in_c).index;
     assert(junction_tag == C2.vertex(0).index &&
@@ -2134,6 +2136,15 @@ void rebuild_submap(Submap& out_S,
         remap_adj(c.left_adj); remap_adj(c.right_adj);
         out_S.add_chord(c);
     }
+
+    // [C91 §2.2 tex 106]: finalize the edge_count caches — nonnull ∂C
+    // edges per leg (arc.h::arc_boundary_edge_count).  The sweep's
+    // provisional counts used underlying C-edge ranges, which
+    // single-count the doubled-over edges of wrap arcs; the exact
+    // per-leg count needs the arcs' endpoint ys, derivable only now
+    // that every chord and endpoint pointer is in place.  O(#arcs),
+    // within the [C91 §3.1 tex 226] rebuild budget.
+    out_S.refresh_arc_edge_counts(C);
 }
 
 } // namespace chazelle

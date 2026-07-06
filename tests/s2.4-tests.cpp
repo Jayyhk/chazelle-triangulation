@@ -54,7 +54,7 @@ static Submap make_chordless(const Polygon& poly, std::size_t end_vertex) {
     a.first_edge = 0; a.last_edge = 0;
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
-    a.edge_count = poly.count_nonnull_edges(0, end_vertex - 1);
+    a.edge_count = 2 * poly.count_nonnull_edges(0, end_vertex - 1);
     std::size_t ai = s.add_arc(a);
     assert(s.start_arc == ai && s.end_arc == ai &&
            "[C91 §2.4(iii) tex 138]: the closed arc is both endpoint arcs");
@@ -126,7 +126,7 @@ static void test_double_identify_same_edge() {
     std::size_t N = s.add_arc(a);
 
     a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, 1);
+    a.region_node = r0; a.edge_count = 2 * poly.count_nonnull_edges(0, 1);
     std::size_t W = s.add_arc(a);
 
     Chord c;
@@ -247,7 +247,7 @@ static void test_double_identify_extremum() {
     // arc2: from the inside pair down LEFT edge 1, around C's end
     // vertex, up RIGHT edge 1 to the first outside companion.
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(1, 1);
+    a.region_node = r0; a.edge_count = 2 * poly.count_nonnull_edges(1, 1);
     std::size_t arc2 = s.add_arc(a);
 
     // Z: the outside pair's zero arc (RIGHT side of vertex 1).
@@ -258,7 +258,7 @@ static void test_double_identify_extremum() {
     // arc1: from the second outside companion down RIGHT edge 0, around
     // C's start vertex, up LEFT edge 0 to the inside pair.
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, 0);
+    a.region_node = r0; a.edge_count = 2 * poly.count_nonnull_edges(0, 0);
     std::size_t arc1 = s.add_arc(a);
 
     // cN: the inside pair's null-length chord — symbolic y is the
@@ -375,9 +375,12 @@ static Submap build_run_submap(const Polygon& poly, bool swap_p2_p3) {
     std::size_t P1b = mk(2, LEFT, 2, LEFT, r1, 1);
     // W: double-wrap ([C91 §2.4 tex 142]) — starts at vertex 3 leaving
     // on edge 3, covers LEFT [3,4] + all of RIGHT + LEFT [0, part of 1];
-    // ᾱ = all of C.
+    // ᾱ = all of C.  [C91 §2.2 tex 106]: nonnull ∂C edges per leg =
+    // 2 + 5 + 2.
     std::size_t W = mk(3, LEFT, 1, LEFT, r0,
-                       poly.count_nonnull_edges(0, 4));
+                       poly.count_nonnull_edges(3, 4) +
+                       poly.count_nonnull_edges(0, 4) +
+                       poly.count_nonnull_edges(0, 1));
 
     Chord c;
     // c1: y=8 (vertex 3's y).  LEFT endpoint mid-edge-1 → {W, P1};
@@ -426,7 +429,7 @@ static void test_check_invariants_polygon_wrapped_arc() {
     // [C91 §2.4 tex 142]: "an arc might wrap around both sides of C,
     // something we call double-backing."  Single-arc submap whose only
     // arc wraps at c_end (LEFT→RIGHT); the edge_count cache check
-    // ([C91 §2.2 tex 106]) uses the union-range count.
+    // ([C91 §2.2 tex 106]) counts nonnull ∂C edges per leg.
     Polygon poly({{0,0,0}, {1,1,1}, {2,0,2}});
 
     Submap s;
@@ -437,7 +440,7 @@ static void test_check_invariants_polygon_wrapped_arc() {
     a.first_edge = 0; a.last_edge = 0;
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
-    a.edge_count = poly.count_nonnull_edges(0, 1);
+    a.edge_count = 2 * poly.count_nonnull_edges(0, 1);
     std::size_t ai0 = s.add_arc(a);
     assert(s.start_arc == ai0 && s.end_arc == ai0);
 

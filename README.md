@@ -19,7 +19,7 @@ step.
 - [ ] §3 — Merging Two Submaps
   - [x] §3.0 — Merge Setup and Oracle Primitives
   - [x] §3.1 — Fusion of Two Submaps
-  - [x] §3.2 — Restoring Conformality
+  - [ ] §3.2 — Restoring Conformality (wrapping-chord descent TODO)
   - [x] §3.3 — Maintaining Granularity
   - [ ] §3.4 — Implementing the Oracles (arc-cutting oracle TODO)
 - [ ] §4 — The Visibility Algorithm

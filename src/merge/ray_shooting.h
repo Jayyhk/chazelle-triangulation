@@ -104,6 +104,9 @@ private:
     std::vector<std::pair<std::size_t, std::size_t>> dual_edges_;
     SeparatorDecomposition decomp_;
     std::vector<std::size_t> dstar_faces_;
+    // [C91 §3.4 tex 308]: member faces of each D_i, built once at
+    // preprocessing so a query scans |D_i| ≤ μ^{2/3} faces, not μ.
+    std::vector<std::vector<std::size_t>> subset_faces_;
     std::vector<LineCrossing> line_;
     std::size_t region_infinity_ = NONE;
 

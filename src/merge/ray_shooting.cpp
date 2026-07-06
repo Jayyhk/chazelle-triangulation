@@ -322,7 +322,12 @@ RayShootingStructure::RayShootingStructure(const Submap& S,
     : S_(&S), C_(&C), gamma_(gamma) {
     // [C91 §3 tex 166]: "each S_i is given in normal form"; [C91 §3.4
     // tex 286]: S is a γ-granular conformal submap of V(C).
+#ifdef CHAZELLE_EXPENSIVE_ASSERTS
+    // Gated: O(m) full-structure validation inside preprocessing whose
+    // budget is O(μ log m) ([C91 §3.4 tex 297]) — same convention as
+    // assert_cut_postconditions (oracle.h).
     S.check_invariants(C);
+#endif
     assert(S.is_conformal() &&
            "[C91 §3.4 tex 286]: S must be conformal");
     assert(S.is_semigranular(gamma) &&
@@ -618,9 +623,17 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
 
     // [C91 §3.4 tex 297–304]: D* and the D_i partition, δ = 2/3.
     decomp_ = build_separator_decomposition(G);
-    for (std::size_t f = 0; f < mu_; ++f)
+    // [C91 §3.4 tex 308]: the query "naively check[s] all the regions
+    // dual to nodes in D_i, which takes O(γ μ^{2/3}) time" — enumerate
+    // each D_i's members once here (O(μ), within tex 297's O(μ log m)
+    // preprocessing) so the query touches only |D_i| ≤ μ^{2/3} faces.
+    subset_faces_.assign(decomp_.num_subsets, {});
+    for (std::size_t f = 0; f < mu_; ++f) {
         if (decomp_.subset[f] == NONE)
             dstar_faces_.push_back(f);
+        else
+            subset_faces_[decomp_.subset[f]].push_back(f);
+    }
 }
 
 void RayShootingStructure::build_vertical_line() {
@@ -914,18 +927,13 @@ RayHit RayShootingStructure::shoot_toward_boundary(Point p,
     // regions dual to nodes in D_i, which takes O(γ μ^{2/3}) time."
     Contact best = dstar_best;
     for (std::size_t sub : subsets) {
-#ifndef NDEBUG
+        const auto& members = subset_faces_[sub];
         // [C91 §3.4 tex 304]: each |D_i| ≤ μ^{2/3}.
-        std::size_t cnt = 0;
-        for (std::size_t f = 0; f < mu_; ++f)
-            if (decomp_.subset[f] == sub) ++cnt;
-        assert(cnt * cnt * cnt <= mu_ * mu_);
-#endif
-        for (std::size_t f = 0; f < mu_; ++f) {
-            if (decomp_.subset[f] != sub) continue;
+        assert(members.size() * members.size() * members.size() <=
+               mu_ * mu_);
+        for (std::size_t f : members)
             scan_region(S, C, arcs_of_region_[region_of_face_[f]], p, sy,
                         dir, best);
-        }
     }
 
     if (!best.hit) {

@@ -64,19 +64,18 @@ struct Rng {
 //  Comb fixture (tests/s3.2-tests.cpp geometry)
 // ════════════════════════════════════════════════════════════════
 
-static Polygon make_C() {
-    return Polygon({{0,0,0}, {2,20,1}, {4,6,2}, {6,24,3}, {8,4,4},
-                    {10,22,5}, {12,5,6}, {14,26,7}, {16,2,8},
-                    {18,23,9}, {20,4.5,10}, {22,25,11}, {24,1,12}});
+// The comb P and its two halves as subchain views of the one input
+// table ([C91 §2.4 tex 133]: never copied; [C91 §3 tex 160]: C₁ ∩ C₂
+// is the junction vertex v7).
+static const Polygon& input_P() {
+    static Polygon P({{0,0,0}, {2,20,1}, {4,6,2}, {6,24,3}, {8,4,4},
+                      {10,22,5}, {12,5,6}, {14,26,7}, {16,2,8},
+                      {18,23,9}, {20,4.5,10}, {22,25,11}, {24,1,12}});
+    return P;
 }
-static Polygon make_C1() {
-    return Polygon({{0,0,0}, {2,20,1}, {4,6,2}, {6,24,3}, {8,4,4},
-                    {10,22,5}, {12,5,6}, {14,26,7}});
-}
-static Polygon make_C2() {
-    return Polygon({{14,26,7}, {16,2,8}, {18,23,9}, {20,4.5,10},
-                    {22,25,11}, {24,1,12}});
-}
+static Polygon make_C()  { return input_P().subchain(0, 13); }
+static Polygon make_C1() { return input_P().subchain(0, 8); }
+static Polygon make_C2() { return input_P().subchain(7, 6); }
 
 // One region bounded by the single closed arc — all of ∂C, one
 // arc-structure stored cut at C's start turnaround
@@ -90,7 +89,8 @@ static Submap make_chordless_normal(const Polygon& poly) {
     a.first_edge = 0; a.last_edge = 0;
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
-    a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
+    a.edge_count =
+        2 * poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
     assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
@@ -123,7 +123,7 @@ struct CombFixture {
         S.end_vertex = 12;
 
         add(7, LEFT, 7, LEFT, 7, 0);      // 0  Lz
-        add(7, LEFT, 11, RIGHT, 0, 5);    // 1  E*  (end wrap, ᾱ=[7,11])
+        add(7, LEFT, 11, RIGHT, 0, 6);    // 1  E*  (end wrap, ᾱ=[7,11])
         add(11, RIGHT, 10, RIGHT, 6, 2);  // 2  P6
         add(9, RIGHT, 9, RIGHT, 0, 0);    // 3  Z5
         add(9, RIGHT, 8, RIGHT, 5, 2);    // 4  P5
@@ -137,7 +137,7 @@ struct CombFixture {
         add(3, RIGHT, 2, RIGHT, 2, 2);    // 12 P2
         add(1, RIGHT, 1, RIGHT, 0, 0);    // 13 Z1
         add(1, RIGHT, 0, RIGHT, 1, 2);    // 14 P1
-        add(0, RIGHT, 6, LEFT, 0, 7);     // 15 S*  (start wrap, ᾱ=[0,6])
+        add(0, RIGHT, 6, LEFT, 0, 8);     // 15 S*  (start wrap, ᾱ=[0,6])
         auto chord = [&](std::size_t le, Side lsd, Chord::AdjArcs ladj,
                          std::size_t re, Side rsd, Chord::AdjArcs radj,
                          double y, std::size_t tag,
@@ -474,7 +474,9 @@ struct ConformalComb {
 static void test_structure_trivial_mu1() {
     Polygon C = make_C();
     Submap S = make_chordless_normal(C);
-    RayShootingStructure rs(S, C, C.num_edges());
+    // [C91 §2.2 tex 106]: the closed arc's weight is BOTH sides of
+    // every C edge.
+    RayShootingStructure rs(S, C, 2 * C.num_edges());
     assert(rs.mu() == 1 &&
            "[C91 §3.4 tex 297]: the chordless submap has one face");
 
@@ -700,11 +702,13 @@ static void test_structure_no_wrapped_chords() {
     // region_infinity_ branch, and queries that strike no D* region
     // route through it (the tex-308 vertical-line path), rather than the
     // vertical-line binary search the comb exercises.
-    Polygon C1({{0,0,0}, {2,3,1}, {4,5,2}});
-    Polygon C2({{4,5,2}, {6,2,3}, {8,9,4}});
+    Polygon P({{0,0,0}, {2,3,1}, {4,5,2}, {6,2,3}, {8,9,4}});
+    Polygon C1 = P.subchain(0, 3);
+    Polygon C2 = P.subchain(2, 3);
     Submap S1 = make_chordless_normal(C1);
     Submap S2 = make_chordless_normal(C2);
-    const std::size_t g = std::max(C1.num_edges(), C2.num_edges());
+    // [C91 §2.2 tex 106]: chordless closed arcs weigh 2× their edges.
+    const std::size_t g = 2 * std::max(C1.num_edges(), C2.num_edges());
     SubmapRayShooter r1(S1, C1, g), r2(S2, C2, g);
     SafeArcCutter c1(&C1, 64), c2(&C2, 64);
 
@@ -759,11 +763,13 @@ static void test_local_min_junction() {
     // perturbed y that slips past the junction, tripping the [C91 §3.1
     // tex 181] "local shoot must hit" invariant.  This merge must
     // complete and the result must be geometrically correct.
-    Polygon C1({{0,1,0}, {2,3,1}, {4,2,2}});
-    Polygon C2({{4,2,2}, {6,4,3}, {8,7,4}});
+    Polygon P({{0,1,0}, {2,3,1}, {4,2,2}, {6,4,3}, {8,7,4}});
+    Polygon C1 = P.subchain(0, 3);
+    Polygon C2 = P.subchain(2, 3);
     Submap S1 = make_chordless_normal(C1);
     Submap S2 = make_chordless_normal(C2);
-    const std::size_t g = std::max(C1.num_edges(), C2.num_edges());
+    // [C91 §2.2 tex 106]: chordless closed arcs weigh 2× their edges.
+    const std::size_t g = 2 * std::max(C1.num_edges(), C2.num_edges());
     SubmapRayShooter r1(S1, C1, g), r2(S2, C2, g);
     SafeArcCutter c1(&C1, 64), c2(&C2, 64);
 
@@ -805,7 +811,7 @@ static void test_local_min_junction() {
 static void test_oracle_adapter() {
     Polygon C1 = make_C1();
     Submap S1 = make_chordless_normal(C1);
-    SubmapRayShooter shooter(S1, C1, C1.num_edges());
+    SubmapRayShooter shooter(S1, C1, 2 * C1.num_edges());
 
     // The chordless S₁ has ONE closed arc (index 0) covering all of
     // ∂C₁ ([C91 §2.4 tex 142/138]); subarc targets select within it.
@@ -852,7 +858,8 @@ static void test_fusion_wrapped_junction() {
     Polygon C1 = make_C1(), C2 = make_C2();
     Submap S1 = make_chordless_normal(C1);
     Submap S2 = make_chordless_normal(C2);
-    SubmapRayShooter ray1(S1, C1, 7), ray2(S2, C2, 5);
+    // [C91 §2.2 tex 106]: chordless closed arcs weigh 2× their edges.
+    SubmapRayShooter ray1(S1, C1, 14), ray2(S2, C2, 10);
 
     // Pass 2 walks C₂ (junction at its first vertex); its startup shot
     // travels east from the apex outside duplicate, wraps, and comes
@@ -894,15 +901,16 @@ static MergeResult run_comb_merge(std::size_t gamma) {
 
     static std::vector<std::unique_ptr<SubmapRayShooter>> keep_r;
     static std::vector<std::unique_ptr<SafeArcCutter>> keep_c;
-    keep_r.push_back(std::make_unique<SubmapRayShooter>(s1, c1, 7));
-    keep_r.push_back(std::make_unique<SubmapRayShooter>(s2, c2, 7));
+    // [C91 §2.2 tex 106]: chordless S₁'s closed arc weighs 2×7 = 14.
+    keep_r.push_back(std::make_unique<SubmapRayShooter>(s1, c1, 14));
+    keep_r.push_back(std::make_unique<SubmapRayShooter>(s2, c2, 14));
     keep_c.push_back(std::make_unique<SafeArcCutter>(&c1, 64));
     keep_c.push_back(std::make_unique<SafeArcCutter>(&c2, 64));
 
     MergeInput in;
     in.C1 = &c1; in.C2 = &c2;
     in.S1 = &s1; in.S2 = &s2;
-    in.gamma1 = 7; in.gamma2 = 7; in.gamma = gamma;
+    in.gamma1 = 14; in.gamma2 = 14; in.gamma = gamma;
     in.ray_shooter_1 = keep_r[keep_r.size() - 2].get();
     in.ray_shooter_2 = keep_r[keep_r.size() - 1].get();
     in.arc_cutter_1 = keep_c[keep_c.size() - 2].get();
@@ -913,40 +921,42 @@ static MergeResult run_comb_merge(std::size_t gamma) {
 }
 
 static void test_merge_comb_e2e() {
-    // γ = 12 ≥ the total weight: γ-granularity then means NO chords at
-    // all (any surviving chord would be removable — see TODO.md's §3.3
-    // deviation note), so the merge must collapse to the chordless
+    // γ = 24 ≥ the total weight (the closed arc weighs 2×12 under
+    // [C91 §2.2 tex 106]'s ∂C count): γ-granularity then means NO
+    // chords at all (any surviving edge has a leaf endpoint whose
+    // contraction weight is ≤ γ, violating [C91 §2.3 tex 121]
+    // criterion (ii)), so the merge must collapse to the chordless
     // normal form of V(C).
     {
-        MergeResult r = run_comb_merge(12);
+        MergeResult r = run_comb_merge(24);
         r.S.check_invariants(r.C);
         assert(r.S.is_conformal());
-        assert(r.S.is_granular(12, r.C));
+        assert(r.S.is_granular(24, r.C));
         assert(r.S.num_live_chords() == 0 &&
                "γ ≥ total weight ⟹ γ-granular ⟺ chordless");
         assert(r.S.num_live_nodes() == 1);
     }
 
-    // γ = 7: [C91 Lemma 3.5 tex 279] — merge() asserts conformality,
+    // γ = 14: [C91 Lemma 3.5 tex 279] — merge() asserts conformality,
     // γ-granularity, and normal form internally; re-verify externally
     // and check that real structure survives (the merge is not a
     // trivial collapse).
     {
-        MergeResult r = run_comb_merge(7);
+        MergeResult r = run_comb_merge(14);
         r.S.check_invariants(r.C);
         assert(r.S.is_conformal() &&
                "[C91 Lemma 3.5 tex 279]: merge output is conformal");
-        assert(r.S.is_granular(7, r.C) &&
+        assert(r.S.is_granular(14, r.C) &&
                "[C91 Lemma 3.5 tex 279]: merge output is γ-granular");
         assert(!r.S.tree_decomposition().empty() &&
                "[C91 §2.4(iv)]: normal form includes the tree "
                "decomposition");
         assert(r.S.num_live_chords() >= 1 &&
-               "γ = 7 < total weight forces surviving exit chords");
+               "γ = 14 < total weight forces surviving exit chords");
         // Every region weight within γ ([C91 §2.3]).
         for (std::size_t rg = 0; rg < r.S.num_nodes(); ++rg)
             if (!r.S.node(rg).dead)
-                assert(r.S.region_weight(rg) <= 7);
+                assert(r.S.region_weight(rg) <= 14);
     }
 
     std::printf("  [PASS] merge_comb_e2e\n");

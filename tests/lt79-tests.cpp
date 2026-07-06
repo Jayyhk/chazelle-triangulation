@@ -346,6 +346,42 @@ static void test_disconnected() {
                    "[LT79 tex 378–380]: D lies in one component");
         verify_decomposition(g, build_separator_decomposition(g));
     }
+    {
+        // [LT79 thm:main tex 372–376]: "Let A be the set among A* and
+        // B* with greater cost ... and let B be the remaining vertices
+        // of G."  Heavy tree component whose three level bands are
+        // BALANCED (L = 1,14,1,14,1,13 ⟹ bands 15/14/14 around the
+        // separator levels), plus three 5-vertex satellite paths.
+        // Without the max{A*, B*} extension, A = one band (15) and
+        // B = 42 > 2n/3 = 39⅓, violating bound (ii).
+        std::vector<std::pair<std::size_t, std::size_t>> edges;
+        std::vector<std::vector<std::size_t>> rot(59);
+        auto add = [&](std::size_t a, std::size_t b) {
+            rot[a].push_back(edges.size());
+            rot[b].push_back(edges.size());
+            edges.push_back({a, b});
+        };
+        std::size_t next = 1;
+        std::vector<std::size_t> l1v, l3v;
+        for (int i = 0; i < 14; ++i) { l1v.push_back(next); add(0, next++); }
+        std::size_t x = next++;
+        add(l1v[0], x);
+        for (int i = 0; i < 14; ++i) { l3v.push_back(next); add(x, next++); }
+        std::size_t y = next++;
+        add(l3v[0], y);
+        for (int i = 0; i < 13; ++i) add(y, next++);
+        assert(next == 44);
+        for (std::size_t c = 0; c < 3; ++c) {
+            for (std::size_t i = 0; i + 1 < 5; ++i)
+                add(next + i, next + i + 1);
+            next += 5;
+        }
+        assert(next == 59);
+        EmbeddedPlanarGraph g(59, std::move(edges), rot);
+        auto part = planar_separator(g);
+        verify_partition(g, part);
+        verify_decomposition(g, build_separator_decomposition(g));
+    }
     std::printf("  [PASS] disconnected\n");
 }
 

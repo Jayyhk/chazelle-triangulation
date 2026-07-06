@@ -265,6 +265,14 @@ public:
     SymbolicY arc_end_symbolic_y(std::size_t arc_idx,
                                   const class Polygon& polygon) const;
 
+    // [C91 §2.2 tex 106]: recompute every live nonzero arc's edge_count
+    // as its nonnull ∂C edge count per leg
+    // (arc.h::arc_boundary_edge_count), deriving the endpoint ys from
+    // the bounding chords.  For builders (the [C91 §3.1 tex 226]
+    // rebuild) whose provisional counts predate the full adjacency.
+    // O(#arcs); null-length arcs keep their explicit 0.
+    void refresh_arc_edge_counts(const class Polygon& polygon);
+
     // ── [C91 §3.2]: Chord insertion ───────────────────────────────────
 
     // Position of a new chord endpoint on ∂C, inside a region arc.

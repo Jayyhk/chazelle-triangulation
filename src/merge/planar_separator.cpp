@@ -1261,13 +1261,27 @@ void lt_connected(const EmbeddedPlanarGraph& g,
     if (3 * middle <= 2 * total_n) {
         // [LT79 lem:levels tex 296–298]: "let A be the most costly part
         // of the three, let B be the remaining two parts, and let C be
-        // the set of vertices on levels l1 [= l0] and l2."
-        int a_band = (middle >= below && middle >= above) ? 1
-                   : (below >= above ? 0 : 2);
+        // the set of vertices on levels l1 [= l0] and l2."  That is the
+        // component-internal partition (A*, B*).  [LT79 thm:main tex
+        // 372–376] extends it to the whole graph: "Let A be the set
+        // among A* and B* with greater cost ... and let B be the
+        // remaining vertices of G" — without the max rule, B (= the two
+        // lighter bands plus every other component) can exceed 2n/3
+        // when the bands are balanced and the graph is disconnected.
+        // Taking A = B* is edge-safe: the three bands are pairwise
+        // non-adjacent, being separated by the deleted levels l0/l2
+        // (BFS levels of adjacent vertices differ by at most 1).
+        int star_band = (middle >= below && middle >= above) ? 1
+                      : (below >= above ? 0 : 2);
+        const std::size_t a_star =
+            star_band == 0 ? below : star_band == 1 ? middle : above;
+        const std::size_t b_star = below + middle + above - a_star;
+        const bool a_is_pair = b_star > a_star;  // A = B* (two bands)
         for (std::size_t v : order) {
             int b = band_of(v);
             part[v] = (b == 4) ? SepPart::D
-                    : (b == a_band ? SepPart::A : SepPart::B);
+                    : ((b == star_band) != a_is_pair ? SepPart::A
+                                                     : SepPart::B);
         }
         return;
     }

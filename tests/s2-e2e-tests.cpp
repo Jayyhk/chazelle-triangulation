@@ -201,7 +201,7 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
         a.first_edge = 0; a.last_edge = 0;
         a.first_side = LEFT; a.last_side = RIGHT;
         a.region_node = 0;
-        a.edge_count = poly.count_nonnull_edges(0, ne - 1);
+        a.edge_count = 2 * poly.count_nonnull_edges(0, ne - 1);
         std::size_t ai = s.add_arc(a);
         assert(s.start_arc == ai && s.end_arc == ai);
         return s;
@@ -234,7 +234,7 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
         a.first_edge = v; a.last_edge = v;
         a.first_side = LEFT; a.last_side = RIGHT;
         a.region_node = num_chords;
-        a.edge_count = poly.count_nonnull_edges(v, ne - 1);
+        a.edge_count = 2 * poly.count_nonnull_edges(v, ne - 1);
         right_arc[num_chords] = left_arc[num_chords] = s.add_arc(a);
     }
     for (std::size_t i = num_chords; i-- > 1; ) {
@@ -256,7 +256,7 @@ static Submap build_vertex_chord_submap(const Polygon& poly,
         a.first_edge = v - 1; a.last_edge = v - 1;
         a.first_side = RIGHT; a.last_side = LEFT;
         a.region_node = 0;
-        a.edge_count = poly.count_nonnull_edges(0, v - 1);
+        a.edge_count = 2 * poly.count_nonnull_edges(0, v - 1);
         right_arc[0] = left_arc[0] = s.add_arc(a);
     }
 
@@ -309,7 +309,7 @@ static Submap build_nonvertex_chord_submap(const Polygon& poly,
         Arc a{};
         a.first_edge = 0; a.last_edge = 0;
         a.first_side = LEFT; a.last_side = RIGHT;
-        a.region_node = 0; a.edge_count = poly.count_nonnull_edges(0, 0);
+        a.region_node = 0; a.edge_count = 2 * poly.count_nonnull_edges(0, 0);
         s.add_arc(a);
         return s;
     }
@@ -336,14 +336,14 @@ static Submap build_nonvertex_chord_submap(const Polygon& poly,
     a.first_edge = chord_edge; a.last_edge = chord_edge;
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 1;
-    a.edge_count = poly.count_nonnull_edges(chord_edge, ne - 1);
+    a.edge_count = 2 * poly.count_nonnull_edges(chord_edge, ne - 1);
     std::size_t E = s.add_arc(a);
 
     a = {};
     a.first_edge = chord_edge; a.last_edge = chord_edge;
     a.first_side = RIGHT; a.last_side = LEFT;
     a.region_node = 0;
-    a.edge_count = poly.count_nonnull_edges(0, chord_edge);
+    a.edge_count = 2 * poly.count_nonnull_edges(0, chord_edge);
     std::size_t S = s.add_arc(a);
 
     // Chord: non-vertex endpoint on both sides (same edge); mid-edge
@@ -606,7 +606,11 @@ static void test_remove_chord_shared_arc(std::mt19937& rng, int iters) {
             A = s.add_arc(a);
             a = {}; a.first_edge = e2; a.last_edge = e1;
             a.first_side = LEFT; a.last_side = LEFT;
-            a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, ne - 1);
+            a.region_node = r0;
+            // [C91 §2.2 tex 106]: nonnull ∂C edges per leg.
+            a.edge_count = poly.count_nonnull_edges(e2, ne - 1) +
+                           poly.count_nonnull_edges(0, ne - 1) +
+                           poly.count_nonnull_edges(0, e1);
             W = s.add_arc(a);
         } else {
             // Mirror on the RIGHT side: A = RIGHT [e2, e1] (r1);
@@ -618,7 +622,11 @@ static void test_remove_chord_shared_arc(std::mt19937& rng, int iters) {
             A = s.add_arc(a);
             a = {}; a.first_edge = e1; a.last_edge = e2;
             a.first_side = RIGHT; a.last_side = RIGHT;
-            a.region_node = r0; a.edge_count = poly.count_nonnull_edges(0, ne - 1);
+            a.region_node = r0;
+            // [C91 §2.2 tex 106]: nonnull ∂C edges per leg.
+            a.edge_count = poly.count_nonnull_edges(0, e1) +
+                           poly.count_nonnull_edges(0, ne - 1) +
+                           poly.count_nonnull_edges(e2, ne - 1);
             W = s.add_arc(a);
         }
         assert(s.start_arc == W && s.end_arc == W &&
@@ -1265,7 +1273,10 @@ static void test_null_length_chord(std::mt19937& rng, int iters) {
         a.first_edge = ext_v; a.last_edge = ext_v - 1;
         a.first_side = LEFT; a.last_side = LEFT;
         a.region_node = r0;
-        a.edge_count = poly.count_nonnull_edges(0, ne - 1);
+        // [C91 §2.2 tex 106]: nonnull ∂C edges per leg.
+        a.edge_count = poly.count_nonnull_edges(ext_v, ne - 1) +
+                       poly.count_nonnull_edges(0, ne - 1) +
+                       poly.count_nonnull_edges(0, ext_v - 1);
         std::size_t W = s.add_arc(a);
         assert(s.start_arc == W && s.end_arc == W &&
                "[C91 §2.4 tex 142]: the double-wrap arc is both endpoint arcs");

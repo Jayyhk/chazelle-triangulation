@@ -83,7 +83,8 @@ static Submap make_chordless_normal(const Polygon& poly) {
     a.first_edge = 0; a.last_edge = 0;
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
-    a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
+    a.edge_count =
+        2 * poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
     assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
@@ -117,7 +118,7 @@ struct CombFixture {
         S.end_vertex = 12;
 
         add(7, LEFT, 7, LEFT, 7, 0);      // 0  Lz  (cAPEX inner, ∅)
-        add(7, LEFT, 11, RIGHT, 0, 5);    // 1  E*  (end wrap, ᾱ=[7,11])
+        add(7, LEFT, 11, RIGHT, 0, 6);    // 1  E*  (end wrap, ᾱ=[7,11])
         add(11, RIGHT, 10, RIGHT, 6, 2);  // 2  P6
         add(9, RIGHT, 9, RIGHT, 0, 0);    // 3  Z5  (v10 outside pair, ∅)
         add(9, RIGHT, 8, RIGHT, 5, 2);    // 4  P5
@@ -131,7 +132,7 @@ struct CombFixture {
         add(3, RIGHT, 2, RIGHT, 2, 2);    // 12 P2
         add(1, RIGHT, 1, RIGHT, 0, 0);    // 13 Z1  (v2 outside pair, ∅)
         add(1, RIGHT, 0, RIGHT, 1, 2);    // 14 P1
-        add(0, RIGHT, 6, LEFT, 0, 7);     // 15 S*  (start wrap, ᾱ=[0,6])
+        add(0, RIGHT, 6, LEFT, 0, 8);     // 15 S*  (start wrap, ᾱ=[0,6])
 
         auto chord = [&](std::size_t le, Side lsd, Chord::AdjArcs ladj,
                          std::size_t re, Side rsd, Chord::AdjArcs radj,
@@ -393,8 +394,9 @@ static Polygon chain_polygon() {
 }
 
 // [C91 §2.4 tex 142]: r2's arc double-backs around C's end vertex (E:
-// L(2)→R(2), ᾱ=[2,3]) and r0's around its start vertex (S: R(0)→L(0),
-// ᾱ=[0,0]) — single structures, never split.
+// L(2)→R(2), ᾱ=[2,3], ec 4 — both ∂C sides per [C91 §2.2 tex 106]) and
+// r0's around its start vertex (S: R(0)→L(0), ᾱ=[0,0], ec 2) — single
+// structures, never split.
 static Submap build_3region_submap() {
     Submap s;
     std::size_t r0 = s.add_node();
@@ -413,9 +415,9 @@ static Submap build_3region_submap() {
         return s.add_arc(a);
     };
     std::size_t a1 = add(1, LEFT, 1, LEFT, r1, 1);
-    std::size_t aE = add(2, LEFT, 2, RIGHT, r2, 2);   // end wrap
+    std::size_t aE = add(2, LEFT, 2, RIGHT, r2, 4);   // end wrap, both sides
     std::size_t a4 = add(1, RIGHT, 1, RIGHT, r1, 1);
-    std::size_t aS = add(0, RIGHT, 0, LEFT, r0, 1);   // start wrap
+    std::size_t aS = add(0, RIGHT, 0, LEFT, r0, 2);   // start wrap, both sides
 
     // Vertex-endpoint chords: ONE adj arc per endpoint (before-arc,
     // [C91 §2.2 tex 94 + §2.4(ii)] 1-slot convention).
@@ -441,35 +443,35 @@ static Submap build_3region_submap() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_enforce_3region_partial() {
-    // γ = 2: c0 is removable (deg(r0) = 1 < 3; contraction glues
+    // γ = 4: c0 is removable (deg(r0) = 1 < 3; contraction glues
     // S+a1 and a4+(the merged arc) into ONE start-wrap arc R(1)→L(1)
-    // with ᾱ=[0,1] (ec 2 ≤ γ, [C91 §2.4 tex 142]).  After it, c1's
-    // contraction would close ∂C (ec 4 > γ) — kept.  [C91 §2.3
-    // tex 121] criterion (ii) holds.
+    // with ᾱ=[0,1] (ec 4 ≤ γ — both ∂C sides, [C91 §2.2 tex 106 /
+    // §2.4 tex 142]).  After it, c1's contraction would close ∂C
+    // (ec 8 > γ) — kept.  [C91 §2.3 tex 121] criterion (ii) holds.
     Submap s = build_3region_submap();
     Polygon poly = chain_polygon();
     s.check_invariants(poly);
 
-    enforce_granularity(s, poly, 2);
+    enforce_granularity(s, poly, 4);
 
     assert(s.num_live_nodes() == 2 && s.num_live_chords() == 1);
-    assert(!s.chord(1).dead && "c1's contraction weight 4 > γ = 2: kept");
+    assert(!s.chord(1).dead && "c1's contraction weight 8 > γ = 4: kept");
 
-    // Live arcs: the merged start-wrap arc (ᾱ=[0,1], ec 2) and E
-    // (ᾱ=[2,3], ec 2) — both single double-backing structures
+    // Live arcs: the merged start-wrap arc (ᾱ=[0,1], ec 4) and E
+    // (ᾱ=[2,3], ec 4) — both single double-backing structures
     // ([C91 §2.4 tex 142]).
     assert(s.num_live_arcs() == 2);
-    std::size_t two_edge = 0;
+    std::size_t four_edge = 0;
     for (std::size_t ai = 0; ai < s.num_arcs(); ++ai)
-        if (!s.arc(ai).dead && s.arc(ai).edge_count == 2) ++two_edge;
-    assert(two_edge == 2 && "S+a1+a4 glued into one wrap arc; E untouched");
+        if (!s.arc(ai).dead && s.arc(ai).edge_count == 4) ++four_edge;
+    assert(four_edge == 2 && "S+a1+a4 glued into one wrap arc; E untouched");
 
     // [C91 §3.3 tex 276]: "We can now put S in normal form."
     s.normalize(poly);
     s.check_invariants(poly);
     assert(!s.tree_decomposition().empty());
     assert(s.is_conformal());
-    assert(s.is_granular(2, poly) &&
+    assert(s.is_granular(4, poly) &&
            "[C91 Lemma 3.5]: output must be γ-granular");
 
     // [C91 §2.2 tex 96/108]: junction gluing keeps every live arc
@@ -489,12 +491,12 @@ static void test_enforce_3region_partial() {
 }
 
 static void test_enforce_3region_full() {
-    // γ = 4: both chords removable → single chordless region with the
-    // two full-side arcs [0..3] / [3..0] (ec 4 each).
+    // γ = 8: both chords removable → the single closed arc covering
+    // all of ∂C (ec 8, [C91 §2.2 tex 106]: both sides of 4 edges).
     Submap s = build_3region_submap();
     Polygon poly = chain_polygon();
 
-    enforce_granularity(s, poly, 4);
+    enforce_granularity(s, poly, 8);
 
     assert(s.num_live_nodes() == 1 && s.num_live_chords() == 0);
     // [C91 §2.2 tex 94 / §2.4 tex 142]: removing the last chord closes
@@ -506,14 +508,14 @@ static void test_enforce_3region_full() {
             assert(s.arc(ai).first_side == LEFT &&
                    s.arc(ai).last_side == RIGHT &&
                    s.arc(ai).first_edge == 0 && s.arc(ai).last_edge == 0);
-            assert(s.arc(ai).edge_count == 4);
+            assert(s.arc(ai).edge_count == 8);
         }
 
     s.normalize(poly);
     s.check_invariants(poly);
     // [C91 §2.3 tex 123]: no exit chord + criterion (i) ⟹ γ-granular.
-    assert(s.is_granular(4, poly));
-    assert(s.region_weight(0) == 4 &&
+    assert(s.is_granular(8, poly));
+    assert(s.region_weight(0) == 8 &&
            s.region_weight(0) == brute_region_weight(s, 0));
 
     std::printf("  [PASS] enforce_3region_full\n");
@@ -643,10 +645,10 @@ static void run_pipeline_and_check(std::size_t gamma,
 }
 
 static void test_pipeline_gammas() {
-    run_pipeline_and_check(7, false);
-    std::printf("  [PASS] pipeline (gamma=7)\n");
-    run_pipeline_and_check(9, false);
-    std::printf("  [PASS] pipeline (gamma=9)\n");
+    run_pipeline_and_check(8, false);
+    std::printf("  [PASS] pipeline (gamma=8)\n");
+    run_pipeline_and_check(10, false);
+    std::printf("  [PASS] pipeline (gamma=10)\n");
     run_pipeline_and_check(100, true);
     std::printf("  [PASS] pipeline (gamma=100)\n");
 }

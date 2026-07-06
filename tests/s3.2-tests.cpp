@@ -77,7 +77,8 @@ static Submap make_chordless_normal(const Polygon& poly) {
     a.first_edge = 0; a.last_edge = 0;
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
-    a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
+    a.edge_count =
+        2 * poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
     assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
@@ -140,7 +141,7 @@ struct CombFixture {
         S.end_vertex = 12;
 
         add(7, LEFT, 7, LEFT, 7, 0);      // 0  Lz  (cAPEX inner, ∅)
-        add(7, LEFT, 11, RIGHT, 0, 5);    // 1  E*  (end wrap, ᾱ=[7,11])
+        add(7, LEFT, 11, RIGHT, 0, 6);    // 1  E*  (end wrap, ᾱ=[7,11])
         add(11, RIGHT, 10, RIGHT, 6, 2);  // 2  P6
         add(9, RIGHT, 9, RIGHT, 0, 0);    // 3  Z5  (v10 outside pair, ∅)
         add(9, RIGHT, 8, RIGHT, 5, 2);    // 4  P5
@@ -154,7 +155,7 @@ struct CombFixture {
         add(3, RIGHT, 2, RIGHT, 2, 2);    // 12 P2
         add(1, RIGHT, 1, RIGHT, 0, 0);    // 13 Z1  (v2 outside pair, ∅)
         add(1, RIGHT, 0, RIGHT, 1, 2);    // 14 P1
-        add(0, RIGHT, 6, LEFT, 0, 7);     // 15 S*  (start wrap, ᾱ=[0,6])
+        add(0, RIGHT, 6, LEFT, 0, 8);     // 15 S*  (start wrap, ᾱ=[0,6])
 
         auto chord = [&](std::size_t le, Side lsd, Chord::AdjArcs ladj,
                          std::size_t re, Side rsd, Chord::AdjArcs radj,
@@ -345,11 +346,6 @@ struct GeomArcCutter : ArcCuttingOracle {
         const Side s = target.first_side;
         const std::size_t lo = std::min(target.first_edge, target.last_edge);
         const std::size_t hi = std::max(target.first_edge, target.last_edge);
-        const bool lo_partial =
-            mid_edge_endpoint(off + ((s == LEFT) ? target.first_edge
-                                                 : target.last_edge), s) &&
-            false;  // recomputed below per-end
-        (void)lo_partial;
 
         // Which geometric end (low/high edge) is the traversal
         // first/last: LEFT ascends, RIGHT descends.
@@ -662,7 +658,7 @@ static void test_insert_chord() {
            fx.S.arc(15).edge_count == 1);
     assert(fx.S.arc(res.q_after_arc).first_side == RIGHT &&
            fx.S.arc(res.q_after_arc).last_side == LEFT &&
-           fx.S.arc(res.q_after_arc).edge_count == 7);
+           fx.S.arc(res.q_after_arc).edge_count == 8);
     assert(fx.S.start_arc == res.q_after_arc);
 
     // Adjacency re-pointing: c1 (v1e)'s slot 0 referenced R3 as its
@@ -682,6 +678,112 @@ static void test_insert_chord() {
     assert(c0.count == 6);
 
     std::printf("  [PASS] insert_chord\n");
+}
+
+// [C91 §2.1 tex 70/72]: on a curve where the horizontal circle at a
+// vertex v's y meets C only at v, v's two opposite-side companions see
+// each other THROUGH INFINITY — a genuine V(C) chord of zero geometric
+// length (equal endpoint x) between distinct ∂C points, exactly like
+// the fixture's cAPEX.  [C91 §3.2 tex 264/267]: when Lemma 3.3's
+// guaranteed chord is such a chord, insert_chord must accept it; the
+// slot order falls to the clockwise-∂C tie-break used by the fusion
+// rebuild's canonicalization.
+static void test_insert_chord_equal_x_wrap() {
+    // y-monotone curve: every horizontal circle crosses C exactly once.
+    Polygon C({{0, 0, 0}, {4, 10, 1}, {2, 20, 2}, {6, 30, 3}});
+
+    Submap S;
+    for (int i = 0; i < 3; ++i) S.add_node();   // 0=mid, 1=top, 2=bottom
+    S.start_vertex = 0;
+    S.end_vertex = 3;
+
+    auto add = [&](std::size_t fe, Side fs, std::size_t le, Side ls,
+                   std::size_t region, std::size_t count) {
+        Arc a{};
+        a.first_edge = fe; a.first_side = fs;
+        a.last_edge = le; a.last_side = ls;
+        a.region_node = region;
+        a.edge_count = count;
+        return S.add_arc(a);
+    };
+    // Chords: c0 = augmented ([C91 §2.2 tex 92]) wrap chord between the
+    // two sides of edge 2 at y 25 (both endpoints at x 4); c1 = v1's
+    // companion-pair wrap chord ([C91 §2.1 tex 72]: "possibly the same
+    // chord for the two companions"), both endpoints at x 4.
+    add(1, LEFT, 2, LEFT, 0, 2);      // 0 α1: v1L → mid-e2 (LEFT)
+    add(2, LEFT, 2, RIGHT, 1, 1);     // 1 α2: end wrap around v3
+    add(2, RIGHT, 1, RIGHT, 0, 2);    // 2 α3: mid-e2 (RIGHT) → v1R
+    add(0, RIGHT, 0, LEFT, 2, 1);     // 3 α4: start wrap around v0
+    assert(S.end_arc == 1 && S.start_arc == 3);
+
+    auto chord = [&](std::size_t le, Side lsd, Chord::AdjArcs ladj,
+                     std::size_t re, Side rsd, Chord::AdjArcs radj,
+                     double y, std::size_t tag,
+                     std::size_t r0, std::size_t r1) {
+        Chord c{};
+        c.left_edge = le; c.left_side = lsd; c.left_adj = ladj;
+        c.right_edge = re; c.right_side = rsd; c.right_adj = radj;
+        c.y = y; c.y_tag = tag;
+        c.region[0] = r0; c.region[1] = r1;
+        c.is_null_length = false;
+        S.add_chord(c);
+    };
+    chord(2, LEFT, {{0, 1}, 2}, 2, RIGHT, {{1, 2}, 2}, 25.0, 99, 1, 0);
+    chord(0, LEFT, {{3}, 1}, 1, RIGHT, {{2}, 1}, 10.0, 1, 2, 0);
+
+    // Insert v2's companion-pair chord: p = v2's LEFT-side companion on
+    // α1, q = its RIGHT-side companion on α3 — distinct ∂C points, both
+    // at (2, 20).
+    std::size_t cyc[] = {0, 2};
+    Submap::ChordPointSpec p{0, 1, LEFT, 2.0};
+    Submap::ChordPointSpec q{2, 1, RIGHT, 2.0};
+    auto res = S.insert_chord(p, q, SymbolicY{20.0, 2}, 0, cyc, 2, C);
+
+    assert(S.num_chords() == 3);
+    S.assert_tree_property();
+
+    const Chord& nc = S.chord(res.chord_idx);
+    // Equal x ⟹ slot order by clockwise ∂C position: (1,LEFT) < (1,RIGHT).
+    assert(nc.left_edge == 1 && nc.left_side == LEFT);
+    assert(nc.right_edge == 1 && nc.right_side == RIGHT);
+    // Vertex endpoints: one adj arc each ([C91 §2.2 tex 94]), the
+    // before-halves.
+    assert(nc.left_adj.count == 1 && nc.left_adj.arcs[0] == 0);
+    assert(nc.right_adj.count == 1 && nc.right_adj.arcs[0] == 2);
+    // The chord wraps ([C91 §2.1 tex 70]).
+    assert(chord_runs_through_infinity(C, nc));
+
+    // Vertex splits at v2 put each incident edge entirely on one half
+    // ([C91 §2.4 tex 133]).
+    assert(S.arc(0).first_edge == 1 && S.arc(0).last_edge == 1 &&
+           S.arc(0).edge_count == 1);
+    assert(S.arc(res.p_after_arc).first_edge == 2 &&
+           S.arc(res.p_after_arc).last_edge == 2 &&
+           S.arc(res.p_after_arc).edge_count == 1);
+    assert(S.arc(2).first_edge == 2 && S.arc(2).last_edge == 2 &&
+           S.arc(2).edge_count == 1);
+    assert(S.arc(res.q_after_arc).first_edge == 1 &&
+           S.arc(res.q_after_arc).last_edge == 1 &&
+           S.arc(res.q_after_arc).edge_count == 1);
+
+    // New region = p's after-half + q's before-half (the e2 sides);
+    // region 0 keeps the e1 sides.
+    assert(S.arc(res.p_after_arc).region_node == res.new_region);
+    assert(S.arc(2).region_node == res.new_region);
+    assert(S.arc(0).region_node == 0);
+    assert(S.arc(res.q_after_arc).region_node == 0);
+
+    // c0's footprint moved with the chain; its ending-arc slot was
+    // repointed to the after-half, its starting-arc slot kept.
+    assert(S.chord(0).region[0] == 1 &&
+           S.chord(0).region[1] == res.new_region);
+    assert(S.chord(0).left_adj.arcs[0] == res.p_after_arc);
+    assert(S.chord(0).right_adj.arcs[1] == 2);
+    // c1's ending-arc slot at v1R now ends at q's after-half.
+    assert(S.chord(1).right_adj.arcs[0] == res.q_after_arc);
+    assert(S.chord(1).region[0] == 2 && S.chord(1).region[1] == 0);
+
+    std::printf("  [PASS] insert_chord_equal_x_wrap\n");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -938,6 +1040,7 @@ int main() {
     test_fused_region_cycle();
     test_local_shoot_fused();
     test_insert_chord();
+    test_insert_chord_equal_x_wrap();
     test_find_visible_point();
     test_descent();
     test_restore_conformality_e2e();

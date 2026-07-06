@@ -84,13 +84,16 @@ static MergeInput make_input(const Polygon& C1, const Polygon& C2,
 //  Helpers
 // ════════════════════════════════════════════════════════════════
 
-// Two curves sharing vertex (5,5,2): C₁ = v0→v1→v2, C₂ = v2→v3→v4.
-static Polygon make_C1() {
-    return Polygon({{0,0,0}, {3,3,1}, {5,5,2}});
+// Two curves sharing vertex (5,5,2): C₁ = v0→v1→v2, C₂ = v2→v3→v4 —
+// subchain views of the one input table of P ([C91 §2.4 tex 133]:
+// "The input table is read-only: it is never to be modified or even
+// copied"; [C91 §3 tex 160]: C₁ ∩ C₂ is a vertex of P).
+static const Polygon& input_P() {
+    static Polygon P({{0,0,0}, {3,3,1}, {5,5,2}, {7,2,3}, {10,8,4}});
+    return P;
 }
-static Polygon make_C2() {
-    return Polygon({{5,5,2}, {7,2,3}, {10,8,4}});
-}
+static Polygon make_C1() { return input_P().subchain(0, 3); }
+static Polygon make_C2() { return input_P().subchain(2, 3); }
 
 // Single-region conformal submap (no chords → granular by default):
 // one region bounded by the single closed arc — all of ∂C, one
@@ -107,7 +110,8 @@ static Submap make_single_region_submap(const Polygon& poly) {
     a.first_side = LEFT;
     a.last_side = RIGHT;
     a.region_node = 0;
-    a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
+    a.edge_count =
+        2 * poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
     assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();
@@ -124,7 +128,7 @@ static void test_valid_preconditions() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
-    auto in = make_input(C1, C2, S1, S2, 2, 2, 2);
+    auto in = make_input(C1, C2, S1, S2, 4, 4, 4);
     assert_merge_preconditions(in);
 
     std::printf("  [PASS] valid_preconditions\n");
@@ -140,8 +144,8 @@ static void test_merged_curve() {
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
-    OracleRig rig(S1, C1, 2, S2, C2, 2);
-    auto in = make_input(C1, C2, S1, S2, 2, 2, 2);
+    OracleRig rig(S1, C1, 4, S2, C2, 4);
+    auto in = make_input(C1, C2, S1, S2, 4, 4, 4);
     in.ray_shooter_1 = &rig.ray1;
     in.ray_shooter_2 = &rig.ray2;
     auto result = merge(in);
@@ -178,11 +182,12 @@ static void test_gamma_ordering() {
     // γ₁ = γ₂ (equality allowed).
     assert_merge_preconditions(make_input(C1, C2, S1, S2, 5, 5, 5));
 
-    // γ₁ < γ₂ < γ.  γ₁ must still be ≥ region weight (= 2).
-    assert_merge_preconditions(make_input(C1, C2, S1, S2, 2, 3, 10));
+    // γ₁ < γ₂ < γ.  γ₁ must still be ≥ region weight (= 4,
+    // [C91 §2.2 tex 106]: both sides of the closed arc's 2 edges).
+    assert_merge_preconditions(make_input(C1, C2, S1, S2, 4, 5, 10));
 
     // γ = γ₂ (equality allowed).
-    assert_merge_preconditions(make_input(C1, C2, S1, S2, 2, 4, 4));
+    assert_merge_preconditions(make_input(C1, C2, S1, S2, 4, 5, 5));
 
     std::printf("  [PASS] gamma_ordering\n");
 }
@@ -192,14 +197,16 @@ static void test_gamma_ordering() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_shared_vertex() {
-    // Minimal curves: 2 vertices each, sharing one.
-    Polygon C1({{0,0,0}, {1,1,1}});
-    Polygon C2({{1,1,1}, {2,2,2}});
+    // Minimal curves: 2 vertices each, sharing one ([C91 §2.4 tex 133]:
+    // subchain views of one input table).
+    Polygon P({{0,0,0}, {1,1,1}, {2,2,2}});
+    Polygon C1 = P.subchain(0, 2);
+    Polygon C2 = P.subchain(1, 2);
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
-    OracleRig rig(S1, C1, 1, S2, C2, 1);
-    auto in = make_input(C1, C2, S1, S2, 1, 1, 1);
+    OracleRig rig(S1, C1, 2, S2, C2, 2);
+    auto in = make_input(C1, C2, S1, S2, 2, 2, 2);
     in.ray_shooter_1 = &rig.ray1;
     in.ray_shooter_2 = &rig.ray2;
     auto result = merge(in);
@@ -222,14 +229,15 @@ static void test_shared_vertex() {
 
 static void test_merged_edges() {
     // C₁ has 4 vertices (3 edges), C₂ has 3 vertices (2 edges).
-    // Shared vertex at (5,5,3).
-    Polygon C1({{0,0,0}, {2,3,1}, {4,1,2}, {5,5,3}});
-    Polygon C2({{5,5,3}, {7,2,4}, {9,6,5}});
+    // Shared vertex at (5,5,3) ([C91 §2.4 tex 133]: subchain views).
+    Polygon P({{0,0,0}, {2,3,1}, {4,1,2}, {5,5,3}, {7,2,4}, {9,6,5}});
+    Polygon C1 = P.subchain(0, 4);
+    Polygon C2 = P.subchain(3, 3);
     auto S1 = make_single_region_submap(C1);
     auto S2 = make_single_region_submap(C2);
 
-    OracleRig rig(S1, C1, 3, S2, C2, 3);
-    auto in = make_input(C1, C2, S1, S2, 3, 3, 3);
+    OracleRig rig(S1, C1, 6, S2, C2, 6);
+    auto in = make_input(C1, C2, S1, S2, 6, 6, 6);
     in.ray_shooter_1 = &rig.ray1;
     in.ray_shooter_2 = &rig.ray2;
     auto result = merge(in);
@@ -259,7 +267,7 @@ static void test_conformality_required() {
     assert(S1.is_conformal());
     assert(S2.is_conformal());
 
-    assert_merge_preconditions(make_input(C1, C2, S1, S2, 2, 2, 2));
+    assert_merge_preconditions(make_input(C1, C2, S1, S2, 4, 4, 4));
 
     std::printf("  [PASS] conformality_required\n");
 }
@@ -280,7 +288,7 @@ static Submap make_segment_submap(const Polygon& C) {
     Arc a{};
     a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
-    a.edge_count = C.count_nonnull_edges(0, 0);
+    a.edge_count = 2 * C.count_nonnull_edges(0, 0);
     std::size_t ai0 = s.add_arc(a);
     assert(s.start_arc == ai0 && s.end_arc == ai0);
     s.build_tree_decomposition();

@@ -36,6 +36,7 @@
 
 #include "../polygon/point.h"
 #include "../polygon/perturbation.h"
+#include "../polygon/polygon.h"
 #include "../common.h"
 
 #include <algorithm>
@@ -184,5 +185,72 @@ struct Arc {
     // [C91 §3.3]: Tombstone for O(1) removal; stripped by compact().
     bool dead = false;
 };
+
+// [C91 §2.2 tex 106]: "the weight of a region [is] ... the maximum
+// number of nonnull length edges in any of its arcs."  An arc is a
+// piece of ∂C — the DOUBLE boundary — so a double-backing arc counts
+// the ∂C edges of EVERY leg: the two sides of a doubled-over C edge
+// are distinct ∂C edges.  (Lemma 2.3's proof, tex 129, divides the
+// ≤ 4-fold per-C-vertex multiplicity back out — a step that
+// presupposes this double-boundary count; tex 108 likewise treats
+// weight as a per-side notion.)
+//
+// Partial end pieces of nonzero length count as one edge each ([C91
+// §2.1 tex 70]: the subdivision's pieces are its edges); end pieces of
+// ZERO length are excluded ("NONNULL length edges") — these arise when
+// an arc endpoint sits exactly on a turnaround corner, so the
+// (first, last) encoding carries a leg with no geometric extent
+// ([C91 §2.4 tex 142]).  The corner tests need the arc's endpoint ys,
+// which the encoding does not record ([C91 §2.4 tex 133]: "chords take
+// care of that") — callers pass them in.  Zero-length arcs ([C91 §2.2
+// tex 96]) carry edge_count = 0 by explicit construction and must not
+// be routed through this helper.
+inline std::size_t arc_boundary_edge_count(
+        const Arc& a, const Polygon& C,
+        std::size_t c_start, std::size_t c_end,
+        SymbolicY start_y, SymbolicY end_y) {
+    ArcLeg lg[3];
+    const std::size_t n = a.legs(c_start, c_end, lg);
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < n; ++i)
+        total += C.count_nonnull_edges(lg[i].lo, lg[i].hi);
+    if (n == 1) return total;
+
+    // Zero-extent end legs.  The first (resp. last) leg meets its
+    // neighbor at one of C's turnarounds; if that leg spans only the
+    // turnaround's single incident edge AND the arc's endpoint sits
+    // exactly at the turnaround vertex's (symbolic) y, the leg is the
+    // corner point itself and contributes no nonnull-length edge.
+    // Which turnaround, per wrap class ([C91 §2.4 tex 142]):
+    //   end wrap   (L→R): both junctions at C's END vertex.
+    //   start wrap (R→L): both at C's START vertex.
+    //   double wrap: traversal meets END then START (LEFT-first) or
+    //   START then END (RIGHT-first).
+    bool first_at_end, last_at_end;
+    if (a.first_side == LEFT && a.last_side == RIGHT) {
+        first_at_end = true;  last_at_end = true;    // end wrap / closed
+    } else if (a.first_side == RIGHT && a.last_side == LEFT) {
+        first_at_end = false; last_at_end = false;   // start wrap
+    } else if (a.first_side == LEFT) {
+        first_at_end = true;  last_at_end = false;   // double, LEFT-first
+    } else {
+        first_at_end = false; last_at_end = true;    // double, RIGHT-first
+    }
+    const std::size_t last_c_edge = c_end - 1;
+    auto corner_edge = [&](bool at_end) {
+        return at_end ? last_c_edge : c_start;
+    };
+    auto corner_y = [&](bool at_end) {
+        return symbolic_y_of(C.vertex(at_end ? c_end : c_start));
+    };
+    if (lg[0].lo == lg[0].hi && lg[0].lo == corner_edge(first_at_end) &&
+        symbolic_y_equal(start_y, corner_y(first_at_end)))
+        total -= C.count_nonnull_edges(lg[0].lo, lg[0].hi);
+    if (lg[n - 1].lo == lg[n - 1].hi &&
+        lg[n - 1].lo == corner_edge(last_at_end) &&
+        symbolic_y_equal(end_y, corner_y(last_at_end)))
+        total -= C.count_nonnull_edges(lg[n - 1].lo, lg[n - 1].hi);
+    return total;
+}
 
 } // namespace chazelle

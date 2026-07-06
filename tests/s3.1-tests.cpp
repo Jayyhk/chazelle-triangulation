@@ -1013,31 +1013,22 @@ static void test_fuse_main_loop_smoke() {
 // ════════════════════════════════════════════════════════════════
 //  16. fuse_submaps — case (ii) path exercises the loop body.
 // ════════════════════════════════════════════════════════════════
-//
-// Adapts test_startup_mid_edge_tie_break's S₂ (which has a chord and
-// 2 regions) and runs the full main loop.  Goal: exercise the case (ii)
-// per-endpoint test code path — R has an incident exit chord, so the
-// (ii) test iterates real candidates (even if none ultimately fire for
-// this specific geometry, the predicate's loop body is reached).
-static void test_fuse_main_loop_case_ii_smoke() {
-    auto C1 = make_C1();
-    auto S1 = make_S1(C1);
 
-    // C₂ goes UP from junction (y=3) to v_mid (y=5) and back DOWN past
-    // y=3 to v_end (y=1).  Edge 1 (v_mid→v_end) crosses y=3 at x≈2.5.
-    Polygon C2({{4,3,4}, {3,5,5}, {2,1,6}});
-
+// Shared fixture for the case (ii) tests (16, 18, 18b).  C₂ goes UP
+// from the junction (y=3) to v_mid (y=5) and back DOWN past y=3 to
+// v_end (y=1); edge 1 (v_mid→v_end) crosses y=3 at x≈2.5.  S₂ carries
+// one chord ab at y=3 (the junction's y): a mid-edge crossing on edge
+// 1 (LEFT) and a vertex endpoint at the junction on edge 0 (RIGHT), so
+// |ab| ≈ 1.5.  [C91 §2.4 tex 142]: r_above's arc Q double-backs around
+// C₂'s START vertex (from the junction companion over the peak to the
+// crossing); r_below's arc P around C₂'s END vertex (from the crossing
+// under the curve back to the junction companion).
+static Submap make_peak_S2() {
     Submap S2;
     std::size_t r_above = S2.add_node();
     std::size_t r_below = S2.add_node();
     S2.start_vertex = 0; S2.end_vertex = 2;
 
-    // S₂ chord at y=3 (junction's y): mid-edge crossing on edge 1 (LEFT)
-    // and vertex endpoint at the junction on edge 0 (RIGHT).
-    // [C91 §2.4 tex 142]: r_above's arc Q double-backs around C₂'s
-    // START vertex (from the junction companion over the peak to the
-    // crossing); r_below's arc P around C₂'s END vertex (from the
-    // crossing under the curve back to the junction companion).
     Arc a{};
     a.first_edge = 1; a.last_edge = 0;
     a.first_side = LEFT; a.last_side = RIGHT;    // end wrap
@@ -1063,6 +1054,21 @@ static void test_fuse_main_loop_case_ii_smoke() {
     S2.add_chord(c);
 
     assert(S2.start_arc == Q && S2.end_arc == P);
+    return S2;
+}
+static Polygon make_peak_C2() {
+    return Polygon({{4,3,4}, {3,5,5}, {2,1,6}});
+}
+
+// Runs the full main loop against make_peak_S2.  Goal: exercise the
+// case (ii) per-endpoint test code path — R has an incident exit
+// chord, so the (ii) test iterates real candidates (none ultimately
+// fire for this distance setting; test 18b pins the positive case).
+static void test_fuse_main_loop_case_ii_smoke() {
+    auto C1 = make_C1();
+    auto S1 = make_S1(C1);
+    Polygon C2 = make_peak_C2();
+    Submap S2 = make_peak_S2();
 
     // Forward oracles — distance-from-p so the main loop iterates without
     // backward-hit asserts.  S₂ closer than S₁ to keep Case 1 startup.
@@ -1091,7 +1097,8 @@ static Submap make_chordless(const Polygon& poly) {
     a.first_edge = 0; a.last_edge = 0;
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = 0;
-    a.edge_count = poly.count_nonnull_edges(0, poly.num_edges() - 1);
+    a.edge_count =
+        2 * poly.count_nonnull_edges(0, poly.num_edges() - 1);
     std::size_t ai0 = s.add_arc(a);
     assert(s.start_arc == ai0 && s.end_arc == ai0);
     return s;
@@ -1310,44 +1317,8 @@ static void test_case_ii_hit_beyond_ab_disqualified() {
     // candidate must be disqualified and no case (ii) chord recorded.
     auto C1 = make_C1();
     auto S1 = make_S1(C1);
-    Polygon C2({{4,3,4}, {3,5,5}, {2,1,6}});
-
-    Submap S2;
-    std::size_t r_above = S2.add_node();
-    std::size_t r_below = S2.add_node();
-    S2.start_vertex = 0; S2.end_vertex = 2;
-
-    // S₂ chord at y=3 (junction's y): mid-edge crossing on edge 1 (LEFT)
-    // and vertex endpoint at the junction on edge 0 (RIGHT).
-    // [C91 §2.4 tex 142]: r_above's arc Q double-backs around C₂'s
-    // START vertex (from the junction companion over the peak to the
-    // crossing); r_below's arc P around C₂'s END vertex (from the
-    // crossing under the curve back to the junction companion).
-    Arc a{};
-    a.first_edge = 1; a.last_edge = 0;
-    a.first_side = LEFT; a.last_side = RIGHT;    // end wrap
-    a.region_node = r_below;
-    a.edge_count = 2;
-    std::size_t P = S2.add_arc(a);
-
-    a = {};
-    a.first_edge = 0; a.last_edge = 1;
-    a.first_side = RIGHT; a.last_side = LEFT;    // start wrap
-    a.region_node = r_above;
-    a.edge_count = 2;
-    std::size_t Q = S2.add_arc(a);
-
-    Chord c{};
-    c.region[0] = r_above;
-    c.region[1] = r_below;
-    c.left_edge = 1; c.left_side = LEFT;
-    c.right_edge = 0; c.right_side = RIGHT;
-    c.y = 3.0; c.y_tag = 4;
-    c.left_adj = {{Q, P}, 2};                    // before, after
-    c.right_adj = {{P}, 1};                      // vertex endpoint
-    S2.add_chord(c);
-
-    assert(S2.start_arc == Q && S2.end_arc == P);
+    Polygon C2 = make_peak_C2();
+    Submap S2 = make_peak_S2();
 
     // The S₂ chord spans x ∈ [~2.5, 4] (length ~1.5).  ForwardOracle
     // with forward_dist = 100 puts every S₁ hit far beyond the other
@@ -1386,6 +1357,166 @@ static void test_case_ii_hit_beyond_ab_disqualified() {
     }
 
     std::printf("  [PASS] case_ii_hit_beyond_ab_disqualified\n");
+}
+
+// ════════════════════════════════════════════════════════════════
+//  18b. case (ii) — POSITIVE firing ([C91 §3.1 tex 202/206/222])
+// ════════════════════════════════════════════════════════════════
+
+// True geometric ray shooter over Cᵢ restricted to the target subarc
+// (copy of tests/s3.2-tests.cpp's GeomRayShooter).  [C91 §2.1 tex 70]:
+// a ray that misses everything wraps through the point at infinity.
+struct GeomOracle : RayShootingOracle {
+    const Polygon* Ci;
+    explicit GeomOracle(const Polygon* c) : Ci(c) {}
+
+    static bool crossing_x(const Polygon& C, std::size_t e, SymbolicY sy,
+                           double* x) {
+        const auto ed = C.edge(e);
+        const Point& vs = C.vertex(ed.start_idx);
+        const Point& ve = C.vertex(ed.end_idx);
+        SymbolicY y0 = symbolic_y_of(vs);
+        SymbolicY y1 = symbolic_y_of(ve);
+        if (symbolic_y_equal(sy, y0)) { *x = vs.x; return true; }
+        if (symbolic_y_equal(sy, y1)) { *x = ve.x; return true; }
+        bool between =
+            (symbolic_y_less(y0, sy) && symbolic_y_less(sy, y1)) ||
+            (symbolic_y_less(y1, sy) && symbolic_y_less(sy, y0));
+        if (!between) return false;
+        double t = (sy.y - vs.y) / (ve.y - vs.y);
+        *x = vs.x + t * (ve.x - vs.x);
+        return true;
+    }
+
+    RayHit shoot(Point p, Side dir, std::size_t /*arc_idx*/,
+                 const Subarc& target) const override {
+        SymbolicY sy{p.y, p.index};
+        ArcLeg legs[3];
+        std::size_t nl = subarc_legs(target, 0, Ci->num_vertices() - 1,
+                                     legs);
+        RayHit best;
+        best.hit = false;
+        double best_d = 0.0;
+        for (std::size_t g = 0; g < nl; ++g) {
+            for (std::size_t e = legs[g].lo; e <= legs[g].hi; ++e) {
+                double x;
+                if (!crossing_x(*Ci, e, sy, &x)) continue;
+                const auto ed = Ci->edge(e);
+                bool asc = symbolic_y_less(
+                    symbolic_y_of(Ci->vertex(ed.start_idx)),
+                    symbolic_y_of(Ci->vertex(ed.end_idx)));
+                Side minus_x = asc ? LEFT : RIGHT;
+                Side struck = (dir == RIGHT)
+                    ? minus_x : (minus_x == LEFT ? RIGHT : LEFT);
+                if (struck != legs[g].side) continue;
+                double d = (dir == RIGHT) ? (x - p.x) : (p.x - x);
+                bool wrapped = (d <= 0.0);
+                bool better;
+                if (!best.hit) better = true;
+                else if (wrapped != best.wrapped) better = !wrapped;
+                else better = d < best_d;
+                if (better) {
+                    best.hit = true;
+                    best.x = x;
+                    best.y = p.y;
+                    best.edge = e;
+                    best.side = struck;
+                    best.wrapped = wrapped;
+                    best_d = d;
+                }
+            }
+        }
+        return best;
+    }
+};
+
+static void test_case_ii_fires() {
+    // POSITIVE complement of test 18, with REAL geometric oracles.
+    // C₁'s chord vertex v2 sits at y = 6, ABOVE C₂'s y-range [1, 5]:
+    // shots from a₁/a₂ (the S₁ chord endpoints, y = {6, 2}) miss
+    // every C₂ edge, so a_j ∉ R and condition (i) FAILS there
+    // ([C91 §3.1 tex 220]: "If there is no hit on any arc, a_j is not
+    // in R"); the junction companion a_{m+1} sees ∂C₁ (C₁'s edge 2
+    // crosses y=3 at x ≈ 2.545, nearer than C₂'s crossing at 2.5),
+    // failing (i) too.  The S₂ chord ab spans (2.5, 3)–(4, 3) and
+    // C₁'s edge 2 pierces it: endpoint a = (2.5, 3) sees
+    // p' = (2.545, 3) on A_j — on ab, strictly after p, properly
+    // oriented, back-shot-confirmed — so case (ii) must FIRE
+    // ([C91 §3.1 tex 202/206/222]) and record the chord q → p'
+    // pairing an S₂ exit-chord endpoint with a MID-ARC walker point.
+    Polygon C1({{0,0,0}, {1,2,1}, {2,6,2}, {3,0.5,3}, {4,3,4}});
+    auto S1 = make_S1(C1);
+    Polygon C2 = make_peak_C2();
+
+    // S₂ carrying the geometrically consistent DIRECT junction chord
+    // of V(C₂): the junction companion (e0, LEFT) at (4, 3) sees
+    // (2.5, 3) on e1's east face (e1, LEFT).  (make_peak_S2's chord
+    // mixes slots of the two different real junction chords — fine for
+    // the synthetic-oracle tests, unusable with real geometry.)
+    // arc_pocket = (0,L)→(1,L) over the peak; arc_out = (1,L)→(0,L)
+    // double-backs around BOTH C₂ endpoints ([C91 §2.4 tex 142]).
+    Submap S2;
+    std::size_t r_pocket = S2.add_node();
+    std::size_t r_out = S2.add_node();
+    S2.start_vertex = 0; S2.end_vertex = 2;
+    Arc a{};
+    a.first_edge = 0; a.first_side = LEFT;
+    a.last_edge = 1; a.last_side = LEFT;
+    a.region_node = r_pocket; a.edge_count = 2;
+    std::size_t A_pocket = S2.add_arc(a);
+    a = {};
+    a.first_edge = 1; a.first_side = LEFT;
+    a.last_edge = 0; a.last_side = LEFT;     // double wrap
+    a.region_node = r_out; a.edge_count = 2;
+    std::size_t A_out = S2.add_arc(a);
+    assert(S2.start_arc == A_out && S2.end_arc == A_out);
+    Chord cc{};
+    cc.region[0] = r_pocket; cc.region[1] = r_out;
+    cc.left_edge = 1; cc.left_side = LEFT;     // (2.5, 3) mid-edge
+    cc.right_edge = 0; cc.right_side = LEFT;   // (4, 3) junction vertex
+    cc.y = 3.0; cc.y_tag = 4;
+    cc.left_adj = {{A_pocket, A_out}, 2};
+    cc.right_adj = {{A_out}, 1};
+    S2.add_chord(cc);
+
+    GeomOracle oracle1(&C1);
+    GeomOracle oracle2(&C2);
+
+    FusionState state;
+    fuse_submaps(state, S1, C1, S2, C2, oracle1, oracle2);
+
+    // The case (ii) product: y = ab's {3, 4}; left slot = p' = C₁'s
+    // (edge 2, LEFT) at x ≈ 2.545; right slot = q = b = C₂'s
+    // (edge 0, LEFT) at x 4 (ascending x, [C91 §2.4(ii)]).  The other
+    // endpoint a's symmetric candidate is killed by the back-shot test
+    // (its sightline to (4, 3) on ∂C₁ is blocked by p' itself).
+    // Startup/companion
+    // records keep their walker endpoint on the junction edge 3 — a
+    // mid-arc walker endpoint is case (ii)'s signature.
+    bool case_ii_product = false;
+    for (const auto& dc : state.chords) {
+        if (!(dc.y.y == 3.0 && dc.y.tag == 4)) continue;   // ab's y
+        if (dc.left_on_walker == dc.right_on_walker) continue;
+        std::size_t walker_edge = dc.left_on_walker ? dc.left_edge
+                                                    : dc.right_edge;
+        if (walker_edge == 3) continue;         // companion record
+        assert(dc.left_on_walker && dc.left_edge == 2 &&
+               dc.left_side == LEFT &&
+               "[C91 §3.1 tex 206]: case (ii) chord's p' lies mid-arc "
+               "on C₁ edge 2 LEFT at (≈2.545, 3)");
+        assert(!dc.right_on_walker && dc.right_edge == 0 &&
+               dc.right_side == LEFT &&
+               "[C91 §3.1 tex 206]: case (ii) chord's q = the S₂ exit "
+               "chord endpoint b at (4, 3) on C₂ edge 0 LEFT");
+        case_ii_product = true;
+    }
+    assert(case_ii_product &&
+           "[C91 §3.1 tex 202/206]: an on-ab, after-p, back-shot-"
+           "confirmed candidate must fire case (ii) and record the "
+           "exit-chord-endpoint → p' chord");
+
+    std::printf("  [PASS] case_ii_fires (chords=%zu)\n",
+                state.chords.size());
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1604,6 +1735,7 @@ int main() {
     test_rebuild_discovered_chord_frames();
     test_rebuild_junction_null_in_input_fires();
     test_case_ii_hit_beyond_ab_disqualified();
+    test_case_ii_fires();
     test_fusion_sequence_junction_at_start();
     test_startup_case1_junction_at_start();
     test_fuse_main_loop_smoke_junction_at_start();

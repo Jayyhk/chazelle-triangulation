@@ -63,6 +63,14 @@ std::size_t TreeDecomposition::decompose(
         std::size_t parent_idx,
         std::vector<std::size_t>& region_local) {
 
+    // [C91 §2.2 tex 110]: "the dual graph of a submap is itself a tree"
+    // — the centroid split below assumes |edges| = |nodes| − 1 and
+    // connectivity; a corrupted input would otherwise fail only deep in
+    // the recursion with a misleading leaf assert.
+    assert(chords.size() + 1 == regions.size() &&
+           "[C91 §2.2 tex 110]: submap tree must have one fewer chord "
+           "than regions");
+
     if (chords.empty()) {
         assert(regions.size() == 1 && "[C91 §2.3]: leaf is a single region");
         TDNode leaf;
@@ -110,6 +118,8 @@ std::size_t TreeDecomposition::decompose(
             }
         }
     }
+    assert(order.size() == n &&
+           "[C91 §2.2 tex 110]: submap tree must be connected");
     for (std::size_t i = order.size(); i-- > 0; ) {
         std::size_t u = order[i];
         if (parent_local[u] != NONE)

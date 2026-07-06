@@ -77,7 +77,7 @@ static Submap build_3region_submap() {
     // C's end vertex, back down to chord 1's RIGHT endpoint —
     // ONE end-wrap structure ([C91 §2.4 tex 142]); ᾱ = edges [2,3].
     Arc aE; aE.first_edge = 2; aE.last_edge = 2; aE.first_side = LEFT; aE.last_side = RIGHT;
-    aE.region_node = r2; aE.edge_count = 2;
+    aE.region_node = r2; aE.edge_count = 4;   // both ∂C sides of [2,3]
     std::size_t aiE = s.add_arc(aE);
 
     Arc a4; a4.first_edge = 1; a4.last_edge = 1; a4.first_side = RIGHT; a4.last_side = RIGHT;
@@ -88,7 +88,7 @@ static Submap build_3region_submap() {
     // C's start vertex, back up to chord 0's LEFT endpoint — ONE
     // start-wrap structure; ᾱ = edge [0,0].
     Arc aS; aS.first_edge = 0; aS.last_edge = 0; aS.first_side = RIGHT; aS.last_side = LEFT;
-    aS.region_node = r0; aS.edge_count = 1;
+    aS.region_node = r0; aS.edge_count = 2;   // both ∂C sides of [0,0]
     std::size_t aiS = s.add_arc(aS);
 
     // Both chords sit at polygon vertices (y_tag 1 and 2 match vertices
@@ -182,13 +182,14 @@ static void test_check_invariants() {
 static void test_region_weight() {
     Submap s = build_3region_submap();
 
-    // r0's single start-wrap arc has ec=1 → weight = 1
-    assert(s.region_weight(0) == 1);
+    // r0's single start-wrap arc has ec=2 → weight = 2
+    assert(s.region_weight(0) == 2);
     // r1 has arcs a1(ec=1) and a4(ec=1) → weight = 1
     assert(s.region_weight(1) == 1);
-    // r2's single end-wrap arc spans edges [2,3] (ec=2) → weight = 2
-    // ([C91 §2.2 tex 106]: single count over ᾱ, [C91 §2.4 tex 142]).
-    assert(s.region_weight(2) == 2);
+    // r2's single end-wrap arc covers BOTH ∂C sides of edges [2,3]
+    // (ec=4) — [C91 §2.2 tex 106]: nonnull ∂C edges per leg
+    // ([C91 §2.4 tex 142]).
+    assert(s.region_weight(2) == 4);
 
     std::printf("  [PASS] region_weight\n");
 }
@@ -257,12 +258,12 @@ static void test_chordless_region_weight() {
     a.first_edge = 0; a.last_edge = 0;
     a.first_side = LEFT; a.last_side = RIGHT;   // closed-arc encoding
     a.region_node = r0;
-    a.edge_count = poly.count_nonnull_edges(0, 3);
+    a.edge_count = 2 * poly.count_nonnull_edges(0, 3);
     std::size_t ai = s.add_arc(a);
     assert(s.start_arc == ai && s.end_arc == ai &&
            "[C91 §2.4(iii) tex 138]: the closed arc is both endpoint arcs");
 
-    assert(s.region_weight(r0) == 4);
+    assert(s.region_weight(r0) == 8);
     s.check_invariants(poly);
 
     std::printf("  [PASS] chordless_region_weight\n");
@@ -297,13 +298,13 @@ static void test_remove_chord_4_adj_arcs() {
     a.region_node = r1; a.edge_count = 2;
     std::size_t B = s.add_arc(a);
     a = {}; a.first_edge = 3; a.last_edge = 3; a.first_side = LEFT; a.last_side = RIGHT;
-    a.region_node = r2; a.edge_count = 1;          // end wrap: ᾱ = [3,3]
+    a.region_node = r2; a.edge_count = 2;          // end wrap: ᾱ = [3,3], both sides
     std::size_t E = s.add_arc(a);
     a = {}; a.first_edge = 2; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r1; a.edge_count = 2;
     std::size_t D = s.add_arc(a);
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = RIGHT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 2;          // start wrap: ᾱ = [0,1]
+    a.region_node = r0; a.edge_count = 4;          // start wrap: ᾱ = [0,1], both sides
     std::size_t S = s.add_arc(a);
 
     // chord_mid at y=1.5 on edge 1 (both sides, mid-edge → 2 slots each,
@@ -333,15 +334,15 @@ static void test_remove_chord_4_adj_arcs() {
 
     // Both endpoints glue ([C91 §2.2 tex 94]): LEFT merges S+B, RIGHT
     // merges (D + the S∪B survivor) → ONE start-wrap arc R(2)→L(2) with
-    // ᾱ = [0,2] (ec = 3), plus E.  [C91 §2.4 tex 142]: still single
-    // structures.
+    // ᾱ = [0,2] (ec = 6: both ∂C sides, [C91 §2.2 tex 106]), plus E.
+    // [C91 §2.4 tex 142]: still single structures.
     assert(s.num_live_arcs() == 2 && "two glues chain S,B,D into one arc");
     bool found_merged = false;
     for (std::size_t i = 0; i < s.num_arcs(); ++i) {
         if (s.arc(i).dead) continue;
         if (s.arc(i).first_side == RIGHT && s.arc(i).last_side == LEFT) {
             assert(s.arc(i).first_edge == 2 && s.arc(i).last_edge == 2 &&
-                   s.arc(i).edge_count == 3 &&
+                   s.arc(i).edge_count == 6 &&
                    "merged start-wrap arc must span ᾱ = [0,2]");
             found_merged = true;
         }
@@ -379,10 +380,10 @@ static void test_remove_chord_merge_at_vertex() {
     // single structures per [C91 §2.4 tex 142].
     Arc a;
     a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = RIGHT;
-    a.region_node = r1; a.edge_count = 1;
+    a.region_node = r1; a.edge_count = 2;   // both ∂C sides of [1,1]
     std::size_t E = s.add_arc(a);
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 1;
+    a.region_node = r0; a.edge_count = 2;   // both ∂C sides of [0,0]
     std::size_t S = s.add_arc(a);
 
     Chord c;
@@ -414,7 +415,7 @@ static void test_remove_chord_merge_at_vertex() {
                s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
                "closed arc is cut at C's start turnaround "
                "([C91 §2.4(iii) tex 138])");
-        assert(s.arc(i).edge_count == 2 &&
+        assert(s.arc(i).edge_count == 4 &&
                "closed arc spans all of C through the vertex");
     }
 
@@ -448,7 +449,7 @@ static void test_remove_chord_2_adj_arcs() {
     // C's end vertex, down the whole RIGHT side to the RIGHT
     // start-companion — one end-wrap structure, ᾱ = all of C.
     a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = LEFT; a.last_side = RIGHT;
-    a.region_node = r_main; a.edge_count = 4;
+    a.region_node = r_main; a.edge_count = 8;   // both ∂C sides of all of C
     std::size_t M = s.add_arc(a);
 
     // Z: the zero-length passage between the two start companions,
@@ -482,7 +483,7 @@ static void test_remove_chord_2_adj_arcs() {
         if (s.arc(i).dead) continue;
         assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
                s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
-               s.arc(i).edge_count == 4 &&
+               s.arc(i).edge_count == 8 &&
                "[C91 §2.4 tex 142]: closed arc covering all of C");
     }
     s.assert_tree_property();
@@ -523,14 +524,14 @@ static void test_remove_chord_3_adj_arcs() {
     s.end_vertex = 4;
 
     Arc a;
-    // E: L(0)→R(2); ᾱ = [0,3] (4 nonnull edges).
+    // E: L(0)→R(2); legs LEFT[0..3] + RIGHT[2..3] (6 nonnull ∂C edges).
     a = {}; a.first_edge = 0; a.last_edge = 2; a.first_side = LEFT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 4;
+    a.region_node = r0; a.edge_count = 6;
     std::size_t E = s.add_arc(a);
 
-    // S: R(2)→L(0); ᾱ = [0,2] (3 nonnull edges).
+    // S: R(2)→L(0); legs RIGHT[0..2] + LEFT[0..0] (4 nonnull ∂C edges).
     a = {}; a.first_edge = 2; a.last_edge = 0; a.first_side = RIGHT; a.last_side = LEFT;
-    a.region_node = r1; a.edge_count = 3;
+    a.region_node = r1; a.edge_count = 4;
     std::size_t S = s.add_arc(a);
 
     // Chord at y=0, tag=0.
@@ -561,7 +562,7 @@ static void test_remove_chord_3_adj_arcs() {
         if (s.arc(i).dead) continue;
         assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
                s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
-               s.arc(i).edge_count == 4 &&
+               s.arc(i).edge_count == 8 &&
                "closed arc covering all of C");
     }
     s.assert_tree_property();
@@ -593,9 +594,10 @@ static void test_remove_chord_shared_arc_left() {
     a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = LEFT; a.last_side = LEFT;
     a.region_node = r1; a.edge_count = 3;
     std::size_t A = s.add_arc(a);
-    // W: double-wrap arc of r0 — LEFT [3,3] + all of RIGHT + LEFT [0,1].
+    // W: double-wrap arc of r0 — LEFT [3,3] + all of RIGHT + LEFT [0,1]
+    // = 1 + 4 + 2 nonnull ∂C edges ([C91 §2.2 tex 106]).
     a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 4;
+    a.region_node = r0; a.edge_count = 7;
     std::size_t W = s.add_arc(a);
 
     Chord c;
@@ -614,8 +616,8 @@ static void test_remove_chord_shared_arc_left() {
     auto poly = test_polygon();
 
     // [C91 §2.3 tex 121]: contracting the LAST chord closes ∂C — the
-    // merged weight is the nonnull count of all of C.
-    assert(s.simulated_contraction_weight(0, poly) == 4);
+    // merged weight is the nonnull ∂C count of BOTH sides of C.
+    assert(s.simulated_contraction_weight(0, poly) == 8);
 
     s.remove_chord(0, poly);
     s.assert_tree_property();
@@ -625,7 +627,7 @@ static void test_remove_chord_shared_arc_left() {
         if (s.arc(i).dead) continue;
         assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
                s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
-               s.arc(i).edge_count == 4 &&
+               s.arc(i).edge_count == 8 &&
                "closed arc must span the full glued range");
     }
 
@@ -650,9 +652,10 @@ static void test_remove_chord_shared_arc_right() {
     a = {}; a.first_edge = 3; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
     a.region_node = r1; a.edge_count = 3;
     std::size_t A = s.add_arc(a);
-    // W: double-wrap arc of r0 (no LEFT-starting arcs exist).
+    // W: double-wrap arc of r0 (no LEFT-starting arcs exist) — RIGHT
+    // [0,1] + all of LEFT + RIGHT [3,3] = 2 + 4 + 1 ∂C edges.
     a = {}; a.first_edge = 1; a.last_edge = 3; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 4;
+    a.region_node = r0; a.edge_count = 7;
     std::size_t W = s.add_arc(a);
 
     Chord c;
@@ -668,7 +671,7 @@ static void test_remove_chord_shared_arc_right() {
            "[C91 §2.4 tex 142]: the double-wrap arc is both endpoint arcs");
 
     auto poly = test_polygon();
-    assert(s.simulated_contraction_weight(0, poly) == 4);
+    assert(s.simulated_contraction_weight(0, poly) == 8);
 
     s.remove_chord(0, poly);
     s.assert_tree_property();
@@ -677,7 +680,7 @@ static void test_remove_chord_shared_arc_right() {
         if (s.arc(i).dead) continue;
         assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
                s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
-               s.arc(i).edge_count == 4 &&
+               s.arc(i).edge_count == 8 &&
                "closed arc must span the full glued range");
     }
 
@@ -710,13 +713,17 @@ static void test_remove_chord_fully_wrapped_closes() {
     a = {}; a.first_edge = 1; a.last_edge = 2;
     a.first_side = LEFT; a.last_side = RIGHT;
     a.region_node = r1;
-    a.edge_count = poly.count_nonnull_edges(1, 3);
+    // Legs LEFT[1..3] + RIGHT[2..3] ([C91 §2.2 tex 106]).
+    a.edge_count = poly.count_nonnull_edges(1, 3) +
+                   poly.count_nonnull_edges(2, 3);
     std::size_t A = s.add_arc(a);
     // B: RIGHT edge 2 → wraps C's start vertex → LEFT edge 1 (r0).
     a = {}; a.first_edge = 2; a.last_edge = 1;
     a.first_side = RIGHT; a.last_side = LEFT;
     a.region_node = r0;
-    a.edge_count = poly.count_nonnull_edges(0, 2);
+    // Legs RIGHT[0..2] + LEFT[0..1] ([C91 §2.2 tex 106]).
+    a.edge_count = poly.count_nonnull_edges(0, 2) +
+                   poly.count_nonnull_edges(0, 1);
     std::size_t B = s.add_arc(a);
 
     Chord c;
@@ -740,7 +747,7 @@ static void test_remove_chord_fully_wrapped_closes() {
         if (s.arc(i).dead) continue;
         assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
                s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
-               s.arc(i).edge_count == 4 &&
+               s.arc(i).edge_count == 8 &&
                "[C91 §2.4 tex 142]: the closed arc covers all of C");
     }
     s.compact();
@@ -773,9 +780,10 @@ static void test_null_length_chord() {
     a.region_node = r1; a.edge_count = 0;
     std::size_t N = s.add_arc(a);
 
-    // W: outer double-wrap arc — LEFT [1,1] + all of RIGHT + LEFT [0,0].
+    // W: outer double-wrap arc — LEFT [1,1] + all of RIGHT + LEFT [0,0]
+    // = 1 + 2 + 1 nonnull ∂C edges ([C91 §2.2 tex 106]).
     a = {}; a.first_edge = 1; a.last_edge = 0; a.first_side = LEFT; a.last_side = LEFT;
-    a.region_node = r0; a.edge_count = 2;
+    a.region_node = r0; a.edge_count = 4;
     std::size_t W = s.add_arc(a);
 
     // Null-length chord at vertex 1: one adj arc per slot ([C91 §2.1
@@ -817,7 +825,7 @@ static void test_null_length_chord() {
         if (s.arc(i).dead) continue;
         assert(s.arc(i).first_side == LEFT && s.arc(i).last_side == RIGHT &&
                s.arc(i).first_edge == 0 && s.arc(i).last_edge == 0 &&
-               s.arc(i).edge_count == 2);
+               s.arc(i).edge_count == 4);
     }
     s.compact();
     s.check_invariants(poly);
@@ -851,7 +859,7 @@ static void test_null_length_chord_right_side() {
     // [1,1] ([C91 §2.4 tex 142]; the vertex-adjacent pointers record
     // the incident edge reflecting each end's true extent direction).
     a = {}; a.first_edge = 0; a.last_edge = 1; a.first_side = RIGHT; a.last_side = RIGHT;
-    a.region_node = r0; a.edge_count = 2;
+    a.region_node = r0; a.edge_count = 4;   // RIGHT[0,0] + LEFT[0,1] + RIGHT[1,1]
     std::size_t W = s.add_arc(a);
 
     Chord c;

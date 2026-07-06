@@ -7,20 +7,14 @@
 
 namespace chazelle {
 
-// [C91 §3]: Build C = C₁ ∪ C₂.  C₁ and C₂ share exactly one vertex
-// (C₁'s last = C₂'s first); the merged curve drops the duplicate.
+// [C91 §3 tex 160]: Build C = C₁ ∪ C₂.  C₁ and C₂ share exactly one
+// vertex (C₁'s last = C₂'s first) and are contiguous subchains of the
+// one input table of P, so C is the O(1) union view — [C91 §2.4 tex
+// 133]: the input table "is never to be modified or even copied", and
+// Lemma 4.1's sublinear per-merge budget ([C91 §4.1 tex 347–350])
+// forbids a Θ(n₁ + n₂) copy here.
 static Polygon build_merged_curve(const Polygon& C1, const Polygon& C2) {
-    std::vector<Point> vertices;
-    vertices.reserve(C1.num_vertices() + C2.num_vertices() - 1);
-
-    for (std::size_t i = 0; i < C1.num_vertices(); ++i)
-        vertices.push_back(C1.vertex(i));
-
-    // Skip C₂'s first vertex (= C₁'s last vertex).
-    for (std::size_t i = 1; i < C2.num_vertices(); ++i)
-        vertices.push_back(C2.vertex(i));
-
-    return Polygon(std::move(vertices));
+    return Polygon(C1, C2);
 }
 
 // [C91 §3.1]: Stage 1 — fuse S₁ and S₂ via discovered chords from the
