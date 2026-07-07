@@ -609,45 +609,18 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
 // dead entries and rebuilds index mappings in O(m).
 
 void Submap::compact() {
-    // Cascaded removals can leave live arcs pointing to dead regions:
-    // when r2 is absorbed into r1 (chord A removed), then r1 into r0
-    // (chord B), arcs that lived in r2 were reassigned to r1 by A, but B
-    // only walks chord-adjacency and misses those orphans.
-    //
-    // Fix: build a forwarding table (each dead chord records region[1]
-    // → region[0]), resolve chains, fixup arcs.  O(m), no asymptotic hit.
-    {
-        std::vector<std::size_t> forward(nodes_.size(), NONE);
-        for (const auto& ch : chords_) {
-            if (!ch.dead) continue;
-            // remove_chord always kills region[1], keeps region[0].
-            std::size_t dead_r = ch.region[1];
-            std::size_t live_r = ch.region[0];
-            if (dead_r < nodes_.size() && nodes_[dead_r].dead &&
-                forward[dead_r] == NONE) {
-                forward[dead_r] = live_r;
-            }
-        }
-        auto resolve = [&](std::size_t r) -> std::size_t {
-            std::size_t root = r;
-            while (root < nodes_.size() && nodes_[root].dead &&
-                   forward[root] != NONE)
-                root = forward[root];
-            // Path-compress.
-            while (r != root && r < nodes_.size() && nodes_[r].dead) {
-                std::size_t next = forward[r];
-                forward[r] = root;
-                r = next;
-            }
-            return root;
-        };
-        for (auto& a : arc_sequence_) {
-            if (a.dead) continue;
-            if (a.region_node < nodes_.size() &&
-                nodes_[a.region_node].dead) {
-                a.region_node = resolve(a.region_node);
-            }
-        }
+    // [C91 §2.2 tex 96]: under full junction gluing, remove_chord's
+    // slot walk over the dying region's incident chords reassigns
+    // EVERY live arc of that region (each live arc is the recorded
+    // before-arc of the live chord at its clockwise end, and cascaded
+    // removals move inherited chords into the dying region's incident
+    // list), so no live arc can point to a dead region here.
+    for (const auto& a : arc_sequence_) {
+        if (a.dead) continue;
+        assert(a.region_node < nodes_.size() &&
+               !nodes_[a.region_node].dead &&
+               "[C91 §2.2 tex 96]: live arc must point to a live region "
+               "(remove_chord's slot walk is exhaustive)");
     }
 
     // Build old→new index maps for each table.
@@ -1234,7 +1207,10 @@ void Submap::check_invariants(const Polygon& polygon) const {
             const auto& a = arc_sequence_[arc_idx];
             auto [elo, ehi] =
                 a.underlying_edge_range(start_vertex, end_vertex);
-            return c.y_tag >= elo && c.y_tag <= ehi + 1;
+            // [C91 §2.4 tex 133]: the range is in C-local positions;
+            // translate the global SoS tag before comparing.
+            const std::size_t v = c.y_tag - first_tag;
+            return v >= elo && v <= ehi + 1;
         };
         if (c.left_adj.count == 1) {
             assert(arc_spans_vertex(c.left_adj.arcs[0]) &&

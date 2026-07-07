@@ -425,6 +425,53 @@ static void test_remove_chord_merge_at_vertex() {
     std::printf("  [PASS] remove_chord_merge_at_vertex\n");
 }
 
+// ════════════════════════════════════════════════════════════════
+//  8b'. check_invariants over an offset subchain of P
+// ════════════════════════════════════════════════════════════════
+
+static void test_check_invariants_offset_subchain() {
+    // Same fixture as 8b, but C = P.subchain(1, 3): C's first vertex
+    // has global SoS tag 1, so tag ≠ C-local position.  [C91 §2.4
+    // tex 133]: arcs point into the shared input table via C-LOCAL
+    // positions, while chord y_tags are global SoS indices ([C91 §2.1
+    // tex 70]); check_invariants must translate between the two.
+    // Pins the tag-vs-position fix in check_invariants'
+    // arc_spans_vertex (global y_tag compared against a local edge
+    // range fired spuriously for any C with first_tag > 0).
+    Submap s;
+    std::size_t r0 = s.add_node();
+    std::size_t r1 = s.add_node();
+    s.start_vertex = 0; s.end_vertex = 2;
+
+    Arc a;
+    a = {}; a.first_edge = 1; a.last_edge = 1; a.first_side = LEFT; a.last_side = RIGHT;
+    a.region_node = r1; a.edge_count = 2;
+    std::size_t E = s.add_arc(a);
+    a = {}; a.first_edge = 0; a.last_edge = 0; a.first_side = RIGHT; a.last_side = LEFT;
+    a.region_node = r0; a.edge_count = 2;
+    std::size_t S = s.add_arc(a);
+
+    Chord c;
+    c.region[0] = r0; c.region[1] = r1;
+    c.left_adj = {{S}, 1}; c.right_adj = {{E}, 1};
+    c.left_edge = 0; c.right_edge = 0;
+    c.left_side = LEFT; c.right_side = RIGHT;
+    // C-local vertex 1 is P's vertex 2 at (2,2) with global SoS tag 2.
+    c.y = 2.0; c.y_tag = 2;
+    s.add_chord(c);
+
+    auto poly = test_polygon().subchain(1, 3);
+    s.check_invariants(poly);
+
+    s.remove_chord(0, poly);
+    assert(s.num_live_arcs() == 1 &&
+           "[C91 §2.2 tex 96]: vertex endpoints must glue their arcs");
+    s.compact();
+    s.check_invariants(poly);
+
+    std::printf("  [PASS] check_invariants_offset_subchain\n");
+}
+
 
 // ════════════════════════════════════════════════════════════════
 //  8c. remove_chord with 2 adj_arcs (chord at C's start vertex)
@@ -1065,6 +1112,7 @@ int main() {
     test_chordless_region_weight();
     test_remove_chord_4_adj_arcs();
     test_remove_chord_merge_at_vertex();
+    test_check_invariants_offset_subchain();
     test_remove_chord_2_adj_arcs();
     test_remove_chord_3_adj_arcs();
     test_remove_chord_shared_arc_left();
