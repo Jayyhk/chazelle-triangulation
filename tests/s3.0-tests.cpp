@@ -308,7 +308,7 @@ static void test_cut_postconditions_valid() {
     p.curve = &C;
     p.is_boundary_piece = false;
 
-    assert_cut_postconditions(target, &p, 1, /*max_pieces=*/4, /*h_gamma=*/1);
+    assert_cut_postconditions(C, target, &p, 1, /*max_pieces=*/4, /*h_gamma=*/1);
 
     std::printf("  [PASS] cut_postconditions_valid\n");
 }
@@ -322,8 +322,9 @@ static void test_cut_count_zero_fires() {
     // is impossible (a subarc cannot be subdivided into nothing).
     assert(assert_fires([]{
         Subarc t{0, LEFT, 0, LEFT};
+        Polygon C = make_segment_curve();
         ArcPiece p{};
-        assert_cut_postconditions(t, &p, /*count=*/0, 4, 1);
+        assert_cut_postconditions(C, t, &p, /*count=*/0, 4, 1);
     }));
     std::printf("  [PASS] cut_count_zero_fires\n");
 }
@@ -339,7 +340,7 @@ static void test_cut_count_exceeds_bound_fires() {
             p.subarc = {0, LEFT, 0, LEFT};
             p.submap = &S; p.curve = &C; p.is_boundary_piece = false;
         }
-        assert_cut_postconditions(t, pieces, 5, /*max_pieces=*/4, 1);
+        assert_cut_postconditions(C, t, pieces, 5, /*max_pieces=*/4, 1);
     }));
     std::printf("  [PASS] cut_count_exceeds_bound_fires\n");
 }
@@ -354,7 +355,7 @@ static void test_cut_first_endpoint_mismatch_fires() {
         ArcPiece p;
         p.subarc = {1, LEFT, 1, LEFT};         // ← does not start at target.first (edge 0)
         p.submap = &S; p.curve = &C; p.is_boundary_piece = false;
-        assert_cut_postconditions(target, &p, 1, 4, 1);
+        assert_cut_postconditions(C, target, &p, 1, 4, 1);
     }));
     std::printf("  [PASS] cut_first_endpoint_mismatch_fires\n");
 }
@@ -368,7 +369,7 @@ static void test_cut_last_endpoint_mismatch_fires() {
         ArcPiece p;
         p.subarc = {0, LEFT, 0, LEFT};         // ← does not end at target.last (edge 1)
         p.submap = &S; p.curve = &C; p.is_boundary_piece = false;
-        assert_cut_postconditions(target, &p, 1, 4, 1);
+        assert_cut_postconditions(C, target, &p, 1, 4, 1);
     }));
     std::printf("  [PASS] cut_last_endpoint_mismatch_fires\n");
 }
@@ -382,7 +383,7 @@ static void test_cut_double_back_fires() {
         ArcPiece p;
         p.subarc = {0, LEFT, 0, RIGHT};         // ← first_side != last_side
         p.submap = &S; p.curve = &C; p.is_boundary_piece = false;
-        assert_cut_postconditions(target, &p, 1, 4, 1);
+        assert_cut_postconditions(C, target, &p, 1, 4, 1);
     }));
     std::printf("  [PASS] cut_double_back_fires\n");
 }
@@ -400,7 +401,7 @@ static void test_cut_non_clockwise_left_fires() {
         ArcPiece p;
         p.subarc = {1, LEFT, 0, LEFT};          // ← LEFT but first_edge > last_edge
         p.submap = &S; p.curve = &C; p.is_boundary_piece = false;
-        assert_cut_postconditions(target, &p, 1, 4, 1);
+        assert_cut_postconditions(C, target, &p, 1, 4, 1);
     }));
     std::printf("  [PASS] cut_non_clockwise_left_fires\n");
 }
@@ -419,7 +420,7 @@ static void test_cut_interior_boundary_piece_fires() {
         }
         pieces[1].is_boundary_piece = true;     // ← interior boundary piece (j=1, count=3)
         pieces[1].submap = nullptr; pieces[1].curve = nullptr;
-        assert_cut_postconditions(target, pieces, 3, 4, 1);
+        assert_cut_postconditions(C, target, pieces, 3, 4, 1);
     }));
     std::printf("  [PASS] cut_interior_boundary_piece_fires\n");
 }
@@ -429,12 +430,13 @@ static void test_cut_non_boundary_null_submap_fires() {
     // granular conformal submap of V(ᾱⱼ).
     assert(assert_fires([]{
         Subarc target{0, LEFT, 0, LEFT};
+        Polygon C = make_segment_curve();
         ArcPiece p;
         p.subarc = {0, LEFT, 0, LEFT};
         p.submap = nullptr;                     // ← non-boundary requires submap
         p.curve = nullptr;
         p.is_boundary_piece = false;
-        assert_cut_postconditions(target, &p, 1, 4, 1);
+        assert_cut_postconditions(C, target, &p, 1, 4, 1);
     }));
     std::printf("  [PASS] cut_non_boundary_null_submap_fires\n");
 }
@@ -443,6 +445,7 @@ static void test_cut_boundary_multi_edge_fires() {
     // [C91 §3.0(ii)(3) tex 170]: boundary pieces are single-edge pieces.
     assert(assert_fires([]{
         Subarc target{0, LEFT, 1, LEFT};
+        Polygon C = make_segment_curve();
         ArcPiece pieces[2];
         pieces[0].subarc = {0, LEFT, 1, LEFT};  // ← boundary spans 2 edges
         pieces[0].is_boundary_piece = true;
@@ -450,7 +453,7 @@ static void test_cut_boundary_multi_edge_fires() {
         pieces[1].subarc = {1, LEFT, 1, LEFT};
         pieces[1].is_boundary_piece = true;
         pieces[1].submap = nullptr; pieces[1].curve = nullptr;
-        assert_cut_postconditions(target, pieces, 2, 4, 1);
+        assert_cut_postconditions(C, target, pieces, 2, 4, 1);
     }));
     std::printf("  [PASS] cut_boundary_multi_edge_fires\n");
 }

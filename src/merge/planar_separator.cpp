@@ -1428,8 +1428,12 @@ SeparatorDecomposition build_separator_decomposition(
     out.subset.assign(mu, NONE);
 
     // Stop threshold: piece ≤ μ^δ with δ = 2/3 ⟺ piece³ ≤ μ².
+    // 128-bit exact: sz³ overflows 64 bits for sz ≥ 2 642 246, a
+    // realistic node count.
     auto is_leaf = [&](std::size_t sz) {
-        return sz * sz * sz <= mu * mu;
+        __extension__ typedef unsigned __int128 u128;
+        const u128 s = sz, m = mu;
+        return s * s * s <= m * m;
     };
 
     struct Item {

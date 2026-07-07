@@ -795,9 +795,18 @@ void RayShootingStructure::regions_at_boundary(
             if (x == r) return;
         out.push_back(r);
     };
+    // Every interval containing pos lies in a contiguous block ending at
+    // lo − 1 (list[lo].lo > pos by the search, so contains(lo) is
+    // impossible; intervals are interior-disjoint per side, so the walk
+    // stops at the first non-containing predecessor).  Walk the whole
+    // block: at an interval junction BOTH flanking intervals contain pos
+    // (closed ends), and zero-length intervals may stack there.  [C91
+    // §2.4 tex 144]: ≤ 6 arcs pass through one ∂C point, so this is O(1).
     bool any = false;
-    if (lo > 0 && contains(lo - 1)) { push(list[lo - 1].region); any = true; }
-    if (lo < list.size() && contains(lo)) { push(list[lo].region); any = true; }
+    for (std::size_t i = lo; i-- > 0 && contains(i);) {
+        push(list[i].region);
+        any = true;
+    }
     if (!any) {
         // The contact falls in a symbolic gap between consecutive
         // intervals (a contracted point — zero-length arcs stacked at
@@ -899,24 +908,20 @@ RayHit RayShootingStructure::shoot_toward_boundary(Point p,
                 if (symbolic_y_less(sy, line_[mid].y)) hi = mid;
                 else lo = mid + 1;
             }
-            // lo = index of the first crossing above sy.
-            if (lo < line_.size() &&
-                symbolic_y_equal(sy, line_[lo].y)) {
-                add_subset(line_[lo].region_below);
-                add_subset(line_[lo].region_above);
+            // lo = index of the first crossing STRICTLY above sy (the
+            // search advances past equal keys, so an sy equal to a
+            // crossing's y always lands at lo − 1).
+            if (lo > 0 && symbolic_y_equal(sy, line_[lo - 1].y)) {
+                add_subset(line_[lo - 1].region_below);
+                add_subset(line_[lo - 1].region_above);
+            } else if (lo == 0) {
+                add_subset(line_[0].region_below);
+            } else if (lo == line_.size()) {
+                add_subset(line_.back().region_above);
             } else {
-                if (lo > 0 && symbolic_y_equal(sy, line_[lo - 1].y)) {
-                    add_subset(line_[lo - 1].region_below);
-                    add_subset(line_[lo - 1].region_above);
-                } else if (lo == 0) {
-                    add_subset(line_[0].region_below);
-                } else if (lo == line_.size()) {
-                    add_subset(line_.back().region_above);
-                } else {
-                    assert(line_[lo - 1].region_above ==
-                           line_[lo].region_below);
-                    add_subset(line_[lo].region_below);
-                }
+                assert(line_[lo - 1].region_above ==
+                       line_[lo].region_below);
+                add_subset(line_[lo].region_below);
             }
         }
     }
@@ -928,9 +933,13 @@ RayHit RayShootingStructure::shoot_toward_boundary(Point p,
     Contact best = dstar_best;
     for (std::size_t sub : subsets) {
         const auto& members = subset_faces_[sub];
-        // [C91 §3.4 tex 304]: each |D_i| ≤ μ^{2/3}.
-        assert(members.size() * members.size() * members.size() <=
-               mu_ * mu_);
+#ifndef NDEBUG
+        // [C91 §3.4 tex 304]: each |D_i| ≤ μ^{2/3} (128-bit exact:
+        // the cube overflows 64 bits at realistic node counts).
+        __extension__ typedef unsigned __int128 u128;
+        assert((u128)members.size() * members.size() * members.size() <=
+               (u128)mu_ * mu_);
+#endif
         for (std::size_t f : members)
             scan_region(S, C, arcs_of_region_[region_of_face_[f]], p, sy,
                         dir, best);
@@ -956,17 +965,20 @@ RayHit RayShootingStructure::shoot_toward_boundary(Point p,
 
 namespace {
 
-// Does the target subarc cover ∂C position (edge, side)?  Subarcs are
-// specified at edge resolution ([C91 §3.0(i) tex 169]: edge names plus
-// side flags); wrapped targets decompose into their legs per
-// [C91 §2.4 tex 142] (oracle.h::subarc_covers_position).
+// Is the ∂C position (edge, side, y) on the target subarc α'?
+// [C91 §3.0(i) tex 169]: α' is endpoint-exact — "specified by its two
+// endpoints (along with two pointers to the input table to indicate
+// the names of the edges of P that contain these two endpoints as well
+// as two flags indicating which side of ∂P is to be understood)" — so
+// a candidate on a shared boundary edge is clipped at α''s exact
+// endpoint ys; wrapped targets decompose into their legs per
+// [C91 §2.4 tex 142] (oracle.h::subarc_contains_point).
 bool subarc_covers(const Submap& S, const Polygon& C, const Subarc& t,
-                   std::size_t edge, Side side) {
-    (void)C;
+                   std::size_t edge, Side side, SymbolicY y) {
     assert(S.start_vertex != NONE && S.end_vertex != NONE &&
            "[C91 §2.4(iii)]: C endpoints must be set");
-    return subarc_covers_position(t, edge, side,
-                                  S.start_vertex, S.end_vertex);
+    return subarc_contains_point(t, C, edge, side, y,
+                                 S.start_vertex, S.end_vertex);
 }
 
 } // namespace
@@ -979,9 +991,16 @@ RayHit SubmapRayShooter::shoot(Point p, Side direction,
     assert(arc_idx < S_->num_arcs() && !S_->arc(arc_idx).dead);
     assert_subarc_clockwise(target);
 
+    // Single first-contact of C, post-filtered to α' — the obstacle-C
+    // semantics documented in the class comment (ray_shooting.h) and
+    // TODO.md item 4; the [C91 §4.1 tex 341] per-piece structures
+    // realize the tex-169 "no obstacle except α'" contract.  The hit
+    // rides the ray's perturbed level ([C91 §2 tex 47]).
     RayHit h = impl_.shoot_toward_boundary(p, direction);
     if (!h.hit) return RayHit{};
-    if (!subarc_covers(*S_, *C_, target, h.edge, h.side)) return RayHit{};
+    if (!subarc_covers(*S_, *C_, target, h.edge, h.side,
+                       SymbolicY{p.y, p.index}))
+        return RayHit{};
     return h;
 }
 

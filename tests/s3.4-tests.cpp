@@ -7,7 +7,7 @@
 // [C91 §3.0(i)] oracle adapter, and the first true end-to-end merges —
 // the comb of tests/s3.2-tests.cpp with its junction at C's global
 // y-maximum, which exercises the through-infinity machinery of
-// [C91 §2.1 tex 70] end to end (TODO items formerly blocked on §3.4).
+// [C91 §2.1 tex 70] end to end.
 
 #include "merge/conformality.h"
 #include "merge/fusion.h"
@@ -215,7 +215,12 @@ struct GeomRayShooter : RayShootingOracle {
                 Side minus_x = asc ? LEFT : RIGHT;
                 Side struck = (dir == RIGHT)
                     ? minus_x : (minus_x == LEFT ? RIGHT : LEFT);
-                if (struck != legs[g].side) continue;
+                // [C91 §3.0(i) tex 169]: α' is endpoint-exact — skip
+                // candidates off α' (wrong side OR beyond an endpoint
+                // on a shared boundary edge) and keep scanning.
+                if (!subarc_contains_point(target, *Ci, e, struck, sy,
+                                           0, Ci->num_vertices() - 1))
+                    continue;
                 double d = (dir == RIGHT) ? (x - p.x) : (p.x - x);
                 bool wrapped = (d <= 0.0);
                 bool better;
@@ -815,9 +820,15 @@ static void test_oracle_adapter() {
 
     // The chordless S₁ has ONE closed arc (index 0) covering all of
     // ∂C₁ ([C91 §2.4 tex 142/138]); subarc targets select within it.
+    // [C91 §3.0(i) tex 169]: each target is "specified by its two
+    // endpoints" — the whole-side targets run vertex-to-vertex between
+    // C₁'s endpoints v7 (14,26) and v0 (0,0); right_partial's RIGHT
+    // traversal descends edges 6..2, ending at v2 = (4,6).
     // v4 = (8,4): shooting LEFT hits edge 0's east wall at (0.4, 4).
     Point p = C1.vertex(4);
-    Subarc right_whole{6, RIGHT, 0, RIGHT};
+    Subarc right_whole{6, RIGHT, 0, RIGHT,
+                       symbolic_y_of(C1.vertex(7)),
+                       symbolic_y_of(C1.vertex(0))};
     RayHit h = shooter.shoot(p, LEFT, 0, right_whole);
     assert(h.hit && !h.wrapped && h.edge == 0 && h.side == RIGHT &&
            h.x == 0.4);
@@ -825,13 +836,17 @@ static void test_oracle_adapter() {
     // Same shot toward the LEFT side only: the first contact is on the
     // RIGHT side, so the report is empty ([C91 §3.0(i) tex 169]: the
     // report concerns α' only).
-    Subarc left_whole{0, LEFT, 6, LEFT};
+    Subarc left_whole{0, LEFT, 6, LEFT,
+                      symbolic_y_of(C1.vertex(0)),
+                      symbolic_y_of(C1.vertex(7))};
     h = shooter.shoot(p, LEFT, 0, left_whole);
     assert(!h.hit);
 
     // Restricting to a right-side range that excludes edge 0 also
     // filters the hit out.
-    Subarc right_partial{6, RIGHT, 2, RIGHT};
+    Subarc right_partial{6, RIGHT, 2, RIGHT,
+                         symbolic_y_of(C1.vertex(7)),
+                         symbolic_y_of(C1.vertex(2))};
     h = shooter.shoot(p, LEFT, 0, right_partial);
     assert(!h.hit);
 

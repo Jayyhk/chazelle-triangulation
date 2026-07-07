@@ -89,6 +89,10 @@ RayHit local_shoot(Point p, Side direction,
         sub.first_side = a.first_side;
         sub.last_edge = a.last_edge;
         sub.last_side = a.last_side;
+        // [C91 §3.0(i) tex 169]: α' is "specified by its two endpoints"
+        // — carry the arc's exact endpoint ys.
+        sub.first_y = S.arc_start_symbolic_y(ai, C);
+        sub.last_y = S.arc_end_symbolic_y(ai, C);
         assert_subarc_clockwise(sub);
 
         RayHit hit = oracle.shoot(p, direction, ai, sub);
@@ -792,7 +796,11 @@ void fuse_submaps(FusionState& state,
         auto fv_point = [&](const FusionVertex& v) -> Point {
             if (v.is_companion)
                 return C1.vertex(junction_v);
-            return Point{edge_x_at_y(C1, v.edge, v.y), v.y.y, NONE};
+            // [C91 §2 tex 47]: the point rides its chord's symbolic
+            // level — Point.index carries the SoS tag for the oracles
+            // (SOS_NONE would sort BELOW every real tag at a raw-y tie,
+            // inverting the perturbed order).
+            return Point{edge_x_at_y(C1, v.edge, v.y), v.y.y, v.y.tag};
         };
 
         // [C91 §3.1 tex 220]: case (i) test in O(f(γ₂)).
@@ -882,16 +890,25 @@ void fuse_submaps(FusionState& state,
         };
 
         // Position of an S₂ chord endpoint: edge-interp at chord y.
+        // [C91 §2 tex 47]: rides the chord's symbolic level (tag on
+        // Point.index for the oracles' SoS comparisons).
         auto s2_endpoint_point = [&](std::size_t edge, SymbolicY y) -> Point {
-            return Point{edge_x_at_y(C2, edge, y), y.y, NONE};
+            return Point{edge_x_at_y(C2, edge, y), y.y, y.tag};
         };
 
-        // CW position on ∂C₁ as (trav_pos, within_edge); lex compare
-        // gives the cw walk.  LEFT side: within = edge param t; RIGHT
-        // side: 1−t (cw traversal is end→start).  trav_pos mirrors
-        // build_fusion_sequence's tour for the pass's orientation.
+        // CW position on ∂C₁ as (trav_pos, within_edge, symbolic y);
+        // trav_pos mirrors build_fusion_sequence's tour for the pass's
+        // orientation.  LEFT side: within = edge param t; RIGHT side:
+        // 1−t (cw traversal is end→start).
+        struct CwPos {
+            std::size_t tp;
+            double t;
+            SymbolicY y;
+            std::size_t edge;
+            Side side;
+        };
         auto cw_position = [&](SymbolicY y, std::size_t edge, Side side)
-                           -> std::pair<std::size_t, double> {
+                           -> CwPos {
             std::size_t n_edges = C1.num_edges();
             std::size_t tp;
             if (at_end)
@@ -901,7 +918,28 @@ void fuse_submaps(FusionState& state,
                 tp = (side == LEFT) ? edge
                                     : 2 * n_edges - 1 - edge;
             double t = edge_t_at_y(C1, edge, y);
-            return {tp, (side == LEFT) ? t : (1.0 - t)};
+            return {tp, (side == LEFT) ? t : (1.0 - t), y, edge, side};
+        };
+        // Strict cw order: (trav_pos, within-edge t), with raw-t ties
+        // between SoS-distinct ys broken symbolically along the edge's
+        // traversal direction — same rule as rebuild's vertex_before.
+        // [C91 §2 tex 47]: "strictly follows p" (tex 200) and "the last
+        // one encountered" (tex 206) are symbolic notions; collapsing
+        // raw-y ties would drop candidates between same-raw-y chords.
+        auto cw_less = [&](const CwPos& u, const CwPos& v) -> bool {
+            if (u.tp != v.tp) return u.tp < v.tp;
+            if (u.t != v.t) return u.t < v.t;
+            if (symbolic_y_equal(u.y, v.y)) return false;
+            assert(u.edge == v.edge && u.side == v.side &&
+                   "trav_pos is injective on (edge, side)");
+            const auto& e = C1.edge(u.edge);
+            bool edge_ascending = symbolic_y_less(
+                symbolic_y_of(C1.vertex(e.start_idx)),
+                symbolic_y_of(C1.vertex(e.end_idx)));
+            bool trav_asc = (u.side == LEFT) ? edge_ascending
+                                             : !edge_ascending;
+            return trav_asc ? symbolic_y_less(u.y, v.y)
+                            : symbolic_y_greater(u.y, v.y);
         };
 
         // [C91 §3.1 tex 222]: case (ii) test in O(f(γ₁)).
@@ -916,10 +954,16 @@ void fuse_submaps(FusionState& state,
         // double-backs ([C91 §2.4 tex 142]) — wraps never split it — but
         // a null-length chord strictly inside A_j (its endpoints are not
         // enumeration stops, [C91 §3.1 tex 224]) still separates two
-        // structures.  Compute the up-to-two spanning nonzero structures
-        // (arc-after a_{j-1}, arc-before a_j); they coincide unless a
-        // null chord intervenes.
-        auto Aj_arcs = [&](std::size_t j) -> std::array<std::size_t, 2> {
+        // structures — L interior null chords leave L + 1 structures.
+        // Enumerate them ALL, each with its clipped subarc: the end
+        // structures clipped at a_{j-1} / a_j, interior ones whole.
+        // [C91 §3.1 tex 222] shoots "toward A_j" — skipping an interior
+        // structure would silently drop candidates whose first contact
+        // lies on it.  Σ(1+L) over all A_j is within tex 224's O(m)
+        // shot budget (null chords count toward the submap's region
+        // total, Lemma 2.3).
+        struct AjSpan { std::size_t arc; Subarc sub; };
+        auto Aj_spans = [&](std::size_t j) -> std::vector<AjSpan> {
             // Clockwise successor of an arc in S₁'s arc-sequence table:
             // arcs tile ∂C in table order ([C91 §2.4(iii) tex 138]), the
             // circle closing from the last entry (the start-turn arc,
@@ -987,18 +1031,80 @@ void fuse_submaps(FusionState& state,
                                                 adj.arcs[0])
                     ? adj.arcs[1] : adj.arcs[0];
             };
-            return std::array<std::size_t, 2>{
-                arc_after(state.sequence[j - 1]),
-                arc_before(state.sequence[j])};
+            const std::size_t first = arc_after(state.sequence[j - 1]);
+            const std::size_t last  = arc_before(state.sequence[j]);
+            assert(first != NONE && last != NONE &&
+                   "[C91 §3.1 tex 199]: A_j is delimited by real stops "
+                   "(a₀ opens and a_{m+1} closes the tour, so neither "
+                   "companion NONE case is reachable here)");
+
+            // [C91 §3.0(i) tex 169]: each span's Subarc is "specified
+            // by its two endpoints" — exact ys from the delimiting
+            // stops (fusion-sequence positions) or the structure's own
+            // endpoints (its bounding null-chord positions).
+            std::vector<AjSpan> spans;
+            if (first == last) {
+                // Single-structure A_j: full span from a_{j-1} to a_j.
+                spans.push_back({first,
+                                 Subarc{state.sequence[j - 1].edge,
+                                        state.sequence[j - 1].side,
+                                        state.sequence[j].edge,
+                                        state.sequence[j].side,
+                                        state.sequence[j - 1].y,
+                                        state.sequence[j].y}});
+                return spans;
+            }
+            [[maybe_unused]] std::size_t guard = 0;
+            for (std::size_t ai = first;; ai = cw_successor(ai)) {
+                assert(++guard <= S1.num_arcs() &&
+                       "[C91 §2.4(iii) tex 138]: the table walk from "
+                       "arc-after(a_{j-1}) must reach arc-before(a_j)");
+                const Arc& a = S1.arc(ai);
+                assert(!a.dead &&
+                       "[C91 §2.4]: normal-form S₁ has no dead arcs");
+                if (ai == first) {
+                    // First structure: a_{j-1} → its end (the first
+                    // interior null-chord position).
+                    spans.push_back({ai,
+                                     Subarc{state.sequence[j - 1].edge,
+                                            state.sequence[j - 1].side,
+                                            a.last_edge, a.last_side,
+                                            state.sequence[j - 1].y,
+                                            S1.arc_end_symbolic_y(ai, C1)}});
+                } else if (ai == last) {
+                    // Last structure: its start (just past the final
+                    // interior null-chord position) → a_j.
+                    spans.push_back({ai,
+                                     Subarc{a.first_edge, a.first_side,
+                                            state.sequence[j].edge,
+                                            state.sequence[j].side,
+                                            S1.arc_start_symbolic_y(ai, C1),
+                                            state.sequence[j].y}});
+                } else if (a.edge_count != 0) {
+                    // Interior structure between two null chords: whole.
+                    spans.push_back({ai,
+                                     Subarc{a.first_edge, a.first_side,
+                                            a.last_edge, a.last_side,
+                                            S1.arc_start_symbolic_y(ai, C1),
+                                            S1.arc_end_symbolic_y(ai, C1)}});
+                }
+                // Zero-length interior structures are skipped: their
+                // only points are inside-pair duplicates whose
+                // visibility is settled at distance 0 ([C91 §2.1
+                // tex 72]).
+                if (ai == last) break;
+            }
+            return spans;
         };
 
         auto case_ii_test = [&](std::size_t j) -> CaseIIResult {
             CaseIIResult best{false, {}, NONE, false};
-            auto best_cw = std::make_pair<std::size_t, double>(0, -1.0);
+            CwPos best_cw{};
+            bool best_cw_valid = false;
 
-            auto aj_arcs_pair = Aj_arcs(j);
-            if (aj_arcs_pair[0] == NONE && aj_arcs_pair[1] == NONE)
-                return best;
+            auto aj_spans = Aj_spans(j);
+            assert(!aj_spans.empty() &&
+                   "[C91 §3.1 tex 199]: A_j spans at least one structure");
 
             auto p_cw = cw_position(state.p_y, state.p_edge, state.p_side);
 
@@ -1038,39 +1144,13 @@ void fuse_submaps(FusionState& state,
                     // A_j is ONE arc-structure and ONE oracle call with
                     // a double-backing subarc ([C91 §2.4 tex 142] /
                     // [C91 §3.0(i) tex 169]: subarcs carry side flags).
-                    // Only a null-length chord strictly inside A_j
-                    // splits it into two structures, each shot with its
-                    // own restricted subarc — ≤ 2 calls stay O(f(γ₁)).
-                    for (std::size_t arc_slot = 0; arc_slot < 2; ++arc_slot) {
-                        std::size_t aj_arc = aj_arcs_pair[arc_slot];
-                        if (aj_arc == NONE) continue;
-                        if (arc_slot == 1 &&
-                            aj_arcs_pair[0] == aj_arcs_pair[1])
-                            continue;  // single-arc: no second call
-
+                    // Null-length chords strictly inside A_j split it
+                    // into further structures, each shot with its own
+                    // clipped subarc (see Aj_spans).
+                    for (const AjSpan& span : aj_spans) {
+                        const std::size_t aj_arc = span.arc;
                         const Arc& aj_arc_struct = S1.arc(aj_arc);
-                        Subarc aj_sub;
-                        if (aj_arcs_pair[0] == aj_arcs_pair[1]) {
-                            // Single-arc A_j: full span from a_{j-1} to a_j.
-                            aj_sub = Subarc{state.sequence[j-1].edge,
-                                            state.sequence[j-1].side,
-                                            state.sequence[j].edge,
-                                            state.sequence[j].side};
-                        } else if (arc_slot == 0) {
-                            // First structure: a_{j-1} → its end (the
-                            // interior null-chord position).
-                            aj_sub = Subarc{state.sequence[j-1].edge,
-                                            state.sequence[j-1].side,
-                                            aj_arc_struct.last_edge,
-                                            aj_arc_struct.last_side};
-                        } else {
-                            // Second structure: its start (just past the
-                            // interior null-chord position) → a_j.
-                            aj_sub = Subarc{aj_arc_struct.first_edge,
-                                            aj_arc_struct.first_side,
-                                            state.sequence[j].edge,
-                                            state.sequence[j].side};
-                        }
+                        const Subarc& aj_sub = span.sub;
 
                         assert_subarc_clockwise(aj_sub);
                         RayHit hit = oracle1.shoot(q_point, shoot_dir,
@@ -1119,23 +1199,29 @@ void fuse_submaps(FusionState& state,
                         // "proper orientation": hit.Side matches A_j's
                         // Side at hit.edge ([C91 §3.1 tex 222]).  A
                         // wrapping A_j covers per-leg side/edge zones
-                        // ([C91 §2.4 tex 142]) — test the shot subarc's
-                        // leg coverage directly.
+                        // ([C91 §2.4 tex 142]).  The [C91 §3.0(i)
+                        // tex 169] oracle reports "the single point of
+                        // α'" — an endpoint-exact contract, so the
+                        // report lies on the shot subarc by definition.
+                        // The hit rides ab's symbolic level chord_ab_y
+                        // (RayHit carries only raw y).
                         assert(S1.start_vertex != NONE &&
                                S1.end_vertex != NONE &&
                                "[C91 §2.4(iii)]: S₁'s C endpoints must "
                                "be set");
-                        if (!subarc_covers_position(aj_sub, hit.edge,
-                                                    hit.side,
-                                                    S1.start_vertex,
-                                                    S1.end_vertex))
-                            continue;
+                        assert(subarc_contains_point(aj_sub, C1,
+                                                     hit.edge, hit.side,
+                                                     chord_ab_y,
+                                                     S1.start_vertex,
+                                                     S1.end_vertex) &&
+                               "[C91 §3.0(i) tex 169]: the report lies "
+                               "on α′");
 
                         // "occurs before p along A_j": strict cw compare.
                         // hit.y inherits the ray's perturbed source y =
                         // chord_ab's SymbolicY (RayHit carries only raw y).
                         auto hit_cw = cw_position(chord_ab_y, hit.edge, hit.side);
-                        if (hit_cw <= p_cw) continue;
+                        if (!cw_less(p_cw, hit_cw)) continue;
 
                         // back-shot from s in its natural direction; q
                         // must lie at or before t in the ray order for
@@ -1147,7 +1233,9 @@ void fuse_submaps(FusionState& state,
                         // lexicographically by (behind-source, distance).
                         Side s_back_dir = shooting_direction(hit.edge,
                                                              hit.side, C1);
-                        Point s_point{hit.x, hit.y, NONE};
+                        // [C91 §2 tex 47]: s sits on ab's sightline, so
+                        // the back-shot rides ab's symbolic level.
+                        Point s_point{hit.x, hit.y, chord_ab_y.tag};
                         RayHit t_hit = local_shoot(
                             s_point, s_back_dir,
                             aj_arc_struct.region_node,
@@ -1166,9 +1254,10 @@ void fuse_submaps(FusionState& state,
                         }
 
                         // [C91 §3.1 tex 206]: pick LAST p' cw from p.
-                        if (hit_cw > best_cw) {
+                        if (!best_cw_valid || cw_less(best_cw, hit_cw)) {
                             best = {true, hit, ci, is_left};
                             best_cw = hit_cw;
+                            best_cw_valid = true;
                         }
                     }
                 }
@@ -1715,7 +1804,43 @@ void rebuild_submap(Submap& out_S,
     // Sort + adjacent-unique on the full chord key: O(M log M), within
     // the [tex 226-227] sorting budget.
     //
-    // Canonical slot order first: slots are "ascending x"; a chord of
+    // Canonical endpoint labels first.  [C91 §3.0(i) tex 169]: a report
+    // names "the edge of P that contains" the point hit, and a chord
+    // endpoint at a NON-extremum vertex of C is contained in BOTH
+    // incident edges — the same ∂C point can enter the inventory under
+    // two names: pass 1's junction records label C₁∩C₂ with C₁'s last
+    // edge while pass 2's label it with C₂'s first ([C91 §3.1 tex 179]),
+    // and an oracle hit at a vertex-endpoint stop can disagree with the
+    // stop's own Sᵢ slot label.  Rewrite to the LOWER incident edge so
+    // the dedup key is label-free.  At a y-extremum the same-side
+    // points on the two incident edges are DISTINCT duplication
+    // companions ([C91 §2.1 tex 72]) and are left alone.
+    {
+        auto canonicalize_vertex_label = [&](std::size_t& edge_c,
+                                             SymbolicY y) {
+            if (edge_c == 0) return;
+            const auto& e = C.edge(edge_c);
+            // [C91 §2 tex 47]: SoS-exact — y matching the edge's
+            // traversal-lower endpoint means the point IS that vertex
+            // (the vertex shared with edge_c − 1).
+            if (!symbolic_y_equal(y, symbolic_y_of(C.vertex(e.start_idx))))
+                return;
+            const std::size_t vidx = e.start_idx;
+            assert(vidx == edge_c &&
+                   "[C91 §2.4 tex 133]: edge k spans vertices k → k+1");
+            assert(vidx + 1 < C.num_vertices());
+            if (is_local_y_extremum(C.vertex(vidx - 1), C.vertex(vidx),
+                                    C.vertex(vidx + 1)))
+                return;
+            edge_c = edge_c - 1;
+        };
+        for (Pending& p : pending) {
+            canonicalize_vertex_label(p.left_edge_c, p.y);
+            canonicalize_vertex_label(p.right_edge_c, p.y);
+        }
+    }
+
+    // Canonical slot order next: slots are "ascending x"; a chord of
     // zero geometric length (coincident endpoint x's — e.g. the
     // junction duplicate pair of a straight-through junction, seen once
     // from each pass with the roles of a₀ and c₀ exchanged) leaves the

@@ -247,156 +247,7 @@ FusedRegionCycle fused_region_cycle(const Submap& S, const Polygon& C,
     return cycle;
 }
 
-// ════════════════════════════════════════════════════════════════
-//  local_shoot_fused — [C91 §3.2 tex 244/246]
-// ════════════════════════════════════════════════════════════════
-
-RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
-                         const FusedRegionCycle& cycle,
-                         const FusedShootContext& ctx,
-                         bool require_hit) {
-    assert(ctx.S && ctx.C && ctx.C1 && ctx.C2 && ctx.ray1 && ctx.ray2 &&
-           ctx.provenance);
-    const Submap& S = *ctx.S;
-    const Polygon& C = *ctx.C;
-    const std::size_t n1e = ctx.C1->num_edges();
-
-    // [C91 §2 tex 47]: the ray's perturbed height is p_y; carry the tag
-    // in Point.index for the oracle's symbolic comparisons.
-    p.index = p_y.tag;
-
-    RayHit best;
-    best.hit = false;
-
-    for (std::size_t li = 0; li < cycle.count; ++li) {
-        {
-            const std::size_t ai = cycle.arcs[li].arc;
-            const Arc& a = S.arc(ai);
-            const ArcProvenance& pr = (*ctx.provenance)[ai];
-            const std::size_t off = pr.on_c1 ? 0 : n1e;
-            const RayShootingOracle& oracle =
-                pr.on_c1 ? *ctx.ray1 : *ctx.ray2;
-
-            // [C91 §3.2 tex 244]: shoot into the Sᵢ arc containing this
-            // fused arc, restricted to the fused arc's span — one call
-            // per arc-structure; a wrap-spanning target keeps its
-            // double-backing side flags ([C91 §2.4 tex 142] /
-            // [C91 §3.0(i) tex 169]).
-            Subarc target;
-            target.first_edge = a.first_edge - off;
-            target.first_side = a.first_side;
-            target.last_edge = a.last_edge - off;
-            target.last_side = a.last_side;
-            assert_subarc_clockwise(target);
-
-            RayHit hit = oracle.shoot(p, direction, pr.arc_in_si, target);
-            if (!hit.hit) continue;
-
-            // [C91 §3.0(i) tex 169 + §2.1 tex 70]: a direct hit lies
-            // forward of p; a wrapped (through-infinity) hit lies behind.
-            double d = (direction == LEFT) ? (p.x - hit.x)
-                                           : (hit.x - p.x);
-            if (hit.wrapped)
-                assert(d <= 0.0 &&
-                       "[C91 §2.1 tex 70]: a wrapped hit lies at or behind "
-                       "the source in the travel direction (d == 0 is the "
-                       "source's own duplicate met after a full wrap)");
-            else
-                assert(d > 0.0 &&
-                       "[C91 §3.0(i) tex 169]: a direct hit lies strictly "
-                       "forward (same-position hits are only reachable "
-                       "through the wrap)");
-
-            hit.edge += off;    // back to C's frame
-
-            // [C91 §3.2 tex 246] "local checking": the Subarc target is
-            // edge-granular, so a hit on a boundary edge may fall
-            // outside the fused arc's true extent (or on the companion
-            // side).  Validate against the arc's exact span; the true
-            // owner arc's own oracle call reports it instead.
-            if (!fused_arc_contains(S, C, ai, hit.edge, hit.side, p_y))
-                continue;
-
-            hit.hit_arc_idx = ai;   // fused-table attribution
-
-            if (!best.hit) {
-                best = hit;
-                continue;
-            }
-            // [C91 §2.1 tex 70]: nearest = lexicographic (wrapped, d) —
-            // every direct hit precedes every wrapped one; within a
-            // class, smaller signed distance is nearer (for wrapped hits
-            // d < 0, and the most negative is met first after the wrap).
-            double bd = (direction == LEFT) ? (p.x - best.x)
-                                            : (best.x - p.x);
-            if (hit.wrapped != best.wrapped) {
-                if (!hit.wrapped) best = hit;
-            } else if (d < bd) {
-                best = hit;
-            } else if (d == bd) {
-                // [C91 §2.1 tex 72]: double-boundary disambiguation —
-                // same first-face rule as [C91 §3.1] local_shoot
-                // (fusion.cpp): the ray strikes one face first.
-                assert(hit.edge < C.num_edges());
-                const auto& e = C.edge(hit.edge);
-                bool asc = symbolic_y_less(
-                    symbolic_y_of(C.vertex(e.start_idx)),
-                    symbolic_y_of(C.vertex(e.end_idx)));
-                Side minus_x_face = asc ? LEFT : RIGHT;
-                Side plus_x_face = asc ? RIGHT : LEFT;
-                Side struck_first;
-                if (bd == 0.0)
-                    struck_first = (direction == RIGHT) ? plus_x_face
-                                                        : minus_x_face;
-                else
-                    struck_first = (direction == RIGHT) ? minus_x_face
-                                                        : plus_x_face;
-                if (hit.side == struck_first && best.side != struck_first)
-                    best = hit;
-            }
-        }
-    }
-
-    // [C91 §3.1 tex 181 / §2.2 Lemma 2.1]: regions are closed under
-    // visibility — shooting from a boundary point of the region hits.
-    if (require_hit)
-        assert(best.hit &&
-               "[C91 §3.2 tex 244]: local shoot within a fused region must hit");
-    return best;
-}
-
-// ════════════════════════════════════════════════════════════════
-//  find_visible_point — [C91 §3.2 Lemma 3.2]
-// ════════════════════════════════════════════════════════════════
-
 namespace {
-
-// Does chord (y, {e1,s1}—{e2,s2}) duplicate an existing chord of the
-// region?  [C91 §2.1 tex 70]: a ∂C point's horizontal visibility is
-// unique, so a site at an existing chord endpoint can only re-derive
-// that same chord — which must not be added again ([C91 §2.2 tex 102]:
-// the dual graph is a tree, no duplicate chords).
-bool duplicates_region_chord(const Submap& S, std::size_t region,
-                             SymbolicY y,
-                             std::size_t e1, Side s1,
-                             std::size_t e2, Side s2) {
-    for (std::size_t ci : S.node(region).incident_chords) {
-        const Chord& c = S.chord(ci);
-        if (c.dead) continue;
-        if (!symbolic_y_equal(c.symbolic_y(), y)) continue;
-        bool fwd = c.left_edge == e1 && c.left_side == s1 &&
-                   c.right_edge == e2 && c.right_side == s2;
-        bool rev = c.left_edge == e2 && c.left_side == s2 &&
-                   c.right_edge == e1 && c.right_side == s1;
-        if (fwd || rev) return true;
-    }
-    return false;
-}
-
-struct SiteShot {
-    bool success = false;   // hit lands on A₂ and is a NEW chord
-    RayHit hit{};
-};
 
 // [C91 §2.1 tex 72]: is the ∂C point (edge, side) at vertex `vidx` one of
 // a y-extremum's INSIDE-pair duplicates?  "one of these pairs, the one on
@@ -444,6 +295,190 @@ bool is_inside_companion(const Polygon& C, std::size_t edge, Side side,
     if (edge == vidx - 1 && side == inside_prev) return true;
     return false;
 }
+
+} // namespace
+
+// ════════════════════════════════════════════════════════════════
+//  local_shoot_fused — [C91 §3.2 tex 244/246]
+// ════════════════════════════════════════════════════════════════
+
+RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
+                         const FusedRegionCycle& cycle,
+                         const FusedShootContext& ctx,
+                         bool require_hit) {
+    assert(ctx.S && ctx.C && ctx.C1 && ctx.C2 && ctx.ray1 && ctx.ray2 &&
+           ctx.provenance);
+    const Submap& S = *ctx.S;
+    const Polygon& C = *ctx.C;
+    const std::size_t n1e = ctx.C1->num_edges();
+
+    // [C91 §2 tex 47]: the ray's perturbed height is p_y; carry the tag
+    // in Point.index for the oracle's symbolic comparisons.
+    p.index = p_y.tag;
+
+    RayHit best;
+    best.hit = false;
+
+    for (std::size_t li = 0; li < cycle.count; ++li) {
+        {
+            const std::size_t ai = cycle.arcs[li].arc;
+            const Arc& a = S.arc(ai);
+            const ArcProvenance& pr = (*ctx.provenance)[ai];
+            const std::size_t off = pr.on_c1 ? 0 : n1e;
+            const RayShootingOracle& oracle =
+                pr.on_c1 ? *ctx.ray1 : *ctx.ray2;
+
+            // [C91 §3.2 tex 244]: shoot into the Sᵢ arc containing this
+            // fused arc, restricted to the fused arc's span — one call
+            // per arc-structure; a wrap-spanning target keeps its
+            // double-backing side flags ([C91 §2.4 tex 142] /
+            // [C91 §3.0(i) tex 169]).
+            Subarc target;
+            target.first_edge = a.first_edge - off;
+            target.first_side = a.first_side;
+            target.last_edge = a.last_edge - off;
+            target.last_side = a.last_side;
+            // [C91 §3.0(i) tex 169]: α' is "specified by its two
+            // endpoints" — exact ys are frame-independent; only the
+            // edges carry the −off shift into Cᵢ's frame.
+            target.first_y = S.arc_start_symbolic_y(ai, C);
+            target.last_y = S.arc_end_symbolic_y(ai, C);
+            assert_subarc_clockwise(target);
+
+            RayHit hit = oracle.shoot(p, direction, pr.arc_in_si, target);
+            if (!hit.hit) continue;
+
+            // [C91 §3.0(i) tex 169 + §2.1 tex 70]: a direct hit lies
+            // forward of p; a wrapped (through-infinity) hit lies behind.
+            double d = (direction == LEFT) ? (p.x - hit.x)
+                                           : (hit.x - p.x);
+            if (hit.wrapped)
+                assert(d <= 0.0 &&
+                       "[C91 §2.1 tex 70]: a wrapped hit lies at or behind "
+                       "the source in the travel direction (d == 0 is the "
+                       "source's own duplicate met after a full wrap)");
+            else
+                assert(d > 0.0 &&
+                       "[C91 §3.0(i) tex 169]: a direct hit lies strictly "
+                       "forward (same-position hits are only reachable "
+                       "through the wrap)");
+
+            hit.edge += off;    // back to C's frame
+
+            // [C91 §3.0(i) tex 169]: the Subarc target is endpoint-
+            // exact, so the oracle's report lies on the fused arc by
+            // contract; [C91 Lemma 2.1 tex 77] pins the hit to a wall
+            // of the region, so the arc's exact span must contain it.
+            assert(fused_arc_contains(S, C, ai, hit.edge, hit.side, p_y) &&
+                   "[C91 §3.0(i) tex 169 + Lemma 2.1]: the report lies "
+                   "on α′ (the fused arc's exact span)");
+
+            hit.hit_arc_idx = ai;   // fused-table attribution
+
+            if (!best.hit) {
+                best = hit;
+                continue;
+            }
+            // [C91 §2.1 tex 70]: nearest = lexicographic (wrapped, d) —
+            // every direct hit precedes every wrapped one; within a
+            // class, smaller signed distance is nearer (for wrapped hits
+            // d < 0, and the most negative is met first after the wrap).
+            double bd = (direction == LEFT) ? (p.x - best.x)
+                                            : (best.x - p.x);
+            if (hit.wrapped != best.wrapped) {
+                if (!hit.wrapped) best = hit;
+            } else if (d < bd) {
+                best = hit;
+            } else if (d == bd) {
+                // [C91 §2.1 tex 72]: double-boundary disambiguation —
+                // same first-face rule as [C91 §3.1] local_shoot
+                // (fusion.cpp): the ray strikes the wall whose free side
+                // opposes its travel.  This holds at distance 0 too
+                // (after a full wrap the source's own wall still faces
+                // away from the ray and is never struck), so there is no
+                // distance-0 inversion.
+                [[maybe_unused]] auto opposes_ray = [&](const RayHit& h) {
+                    assert(h.edge < C.num_edges());
+                    const auto& e = C.edge(h.edge);
+                    bool asc = symbolic_y_less(
+                        symbolic_y_of(C.vertex(e.start_idx)),
+                        symbolic_y_of(C.vertex(e.end_idx)));
+                    Side minus_x_face = asc ? LEFT : RIGHT;
+                    Side plus_x_face = asc ? RIGHT : LEFT;
+                    return h.side == ((direction == RIGHT) ? minus_x_face
+                                                           : plus_x_face);
+                };
+                assert(opposes_ray(hit) && opposes_ray(best) &&
+                       "[C91 §3.0(i) tex 169]: a reported hit is a wall "
+                       "opposing the ray's travel");
+                if (hit.edge != best.edge) {
+                    // Two opposing walls at one point of C: the shared
+                    // vertex of the two edges, at the ray's exact
+                    // symbolic level ([C91 §2 tex 47]: SoS admits no
+                    // other coincidence).  At a y-extremum exactly one
+                    // face is the inside-of-turn duplicate ([C91 §2.1
+                    // tex 72]), which sees only its distance-0 sibling —
+                    // the outer wall shields the wedge, so the non-inside
+                    // face is struck.  At a non-extremum both faces name
+                    // the same companion point; keep the first found.
+                    const std::size_t vidx = std::max(hit.edge, best.edge);
+                    assert(vidx == std::min(hit.edge, best.edge) + 1 &&
+                           "[C91 §2 tex 47]: same-position walls lie on "
+                           "edges sharing one vertex of C");
+                    assert(symbolic_y_equal(
+                               symbolic_y_of(C.vertex(vidx)), p_y) &&
+                           "[C91 §2 tex 47]: the tie point is the shared "
+                           "vertex at the ray's level");
+                    const bool hit_inside =
+                        is_inside_companion(C, hit.edge, hit.side, vidx);
+                    const bool best_inside =
+                        is_inside_companion(C, best.edge, best.side, vidx);
+                    if (best_inside && !hit_inside) best = hit;
+                }
+            }
+        }
+    }
+
+    // [C91 §3.1 tex 181 / §2.2 Lemma 2.1]: regions are closed under
+    // visibility — shooting from a boundary point of the region hits.
+    if (require_hit)
+        assert(best.hit &&
+               "[C91 §3.2 tex 244]: local shoot within a fused region must hit");
+    return best;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  find_visible_point — [C91 §3.2 Lemma 3.2]
+// ════════════════════════════════════════════════════════════════
+
+namespace {
+
+// Does chord (y, {e1,s1}—{e2,s2}) duplicate an existing chord of the
+// region?  [C91 §2.1 tex 70]: a ∂C point's horizontal visibility is
+// unique, so a site at an existing chord endpoint can only re-derive
+// that same chord — which must not be added again ([C91 §2.2 tex 102]:
+// the dual graph is a tree, no duplicate chords).
+bool duplicates_region_chord(const Submap& S, std::size_t region,
+                             SymbolicY y,
+                             std::size_t e1, Side s1,
+                             std::size_t e2, Side s2) {
+    for (std::size_t ci : S.node(region).incident_chords) {
+        const Chord& c = S.chord(ci);
+        if (c.dead) continue;
+        if (!symbolic_y_equal(c.symbolic_y(), y)) continue;
+        bool fwd = c.left_edge == e1 && c.left_side == s1 &&
+                   c.right_edge == e2 && c.right_side == s2;
+        bool rev = c.left_edge == e2 && c.left_side == s2 &&
+                   c.right_edge == e1 && c.right_side == s1;
+        if (fwd || rev) return true;
+    }
+    return false;
+}
+
+struct SiteShot {
+    bool success = false;   // hit lands on A₂ and is a NEW chord
+    RayHit hit{};
+};
 
 // [C91 §2.1 tex 70]: a ∂C point's horizontal visibility is unique.  If
 // the point already IS a chord endpoint of the region, its visibility is
@@ -801,14 +836,26 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
     std::size_t probe_arc;
     bool probe_in_piece1;
     if (a_adj.count == 2) {
-        // [C91 §2.4 tex 133]: the slot whose derived start-y matches the
-        // chord's y is the arc starting at the chord.
-        bool first_starts = symbolic_y_equal(
-            Sa.arc_start_symbolic_y(a_adj.arcs[0], Ca), y_ab);
+        // [s2-adjacency-convention]: identify the arc STARTING at a by
+        // its full start position (edge + side + derived start-y, [C91
+        // §2.4 tex 133]) — the y alone is ambiguous whenever the ENDER
+        // slot's arc starts at the chord's other endpoint b (a leaf
+        // pocket b→a has start-y == y_ab) or at another chord sourced
+        // at the same vertex.  Same rule as fusion.cpp's
+        // arc_starts_at_chord_slot.
+        const std::size_t a_edge =
+            a_is_left_endpoint ? ab.left_edge : ab.right_edge;
+        const Side a_side = a_is_left_endpoint ? ab.left_side : ab.right_side;
+        auto starts_at_a = [&](std::size_t ai) {
+            const Arc& arc = Sa.arc(ai);
+            return arc.first_edge == a_edge && arc.first_side == a_side &&
+                   symbolic_y_equal(Sa.arc_start_symbolic_y(ai, Ca), y_ab);
+        };
+        bool first_starts = starts_at_a(a_adj.arcs[0]);
         probe_arc = first_starts ? a_adj.arcs[0] : a_adj.arcs[1];
-        assert(first_starts ||
-               symbolic_y_equal(Sa.arc_start_symbolic_y(a_adj.arcs[1], Ca),
-                                y_ab));
+        assert((first_starts || starts_at_a(a_adj.arcs[1])) &&
+               "[C91 §2.4(ii)]: one adj slot must hold the arc starting "
+               "at the chord endpoint");
         probe_in_piece1 = true;
     } else {
         // [C91 §2.2 tex 94]: vertex endpoint's single slot = before-arc
@@ -966,11 +1013,16 @@ VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
         target.first_side = a1_struct.first_side;
         target.last_edge = a1_struct.last_edge - off;
         target.last_side = a1_struct.last_side;
+        // [C91 §3.0(i)(ii) tex 169/170]: α' is "specified by its two
+        // endpoints" — exact ys are frame-independent; only the edges
+        // carry the −off shift into Cᵢ's frame.
+        target.first_y = S.arc_start_symbolic_y(A1, C);
+        target.last_y = S.arc_end_symbolic_y(A1, C);
         assert_subarc_clockwise(target);
 
         std::vector<ArcPiece> pieces = cutter.cut(pr.arc_in_si, target);
         // [C91 §3.0(ii) tex 170]: mandatory post-condition validation.
-        assert_cut_postconditions(target, pieces.data(), pieces.size(),
+        assert_cut_postconditions(Ci, target, pieces.data(), pieces.size(),
                                   g_bound, h_bound);
 
         // [C91 §3.2 tex 248]: "Except for at most two single-edge

@@ -154,7 +154,8 @@ bool chord_runs_through_infinity(const Polygon& C, const Chord& c);
 //   case (ii) (c₀ ∈ ∂C₁): skip to c₀, p = c₀, current = S₂ region of a₀.
 //
 // Returns the index into state.sequence at which the main loop starts
-// (0 for case (i), the index of c₀ for case (ii)).
+// (1 for case (i) — k's definition, [C91 §3.1 tex 199]; the first stop
+// at or past c₀ for case (ii)).
 std::size_t fusion_startup(FusionState& state,
                             const Submap& S1, const Polygon& C1,
                             const Submap& S2, const Polygon& C2,

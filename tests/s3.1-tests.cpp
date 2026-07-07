@@ -954,6 +954,12 @@ struct ForwardOracle : RayShootingOracle {
                 SymbolicY y1 = symbolic_y_of(C->vertex(ed.end_idx));
                 SymbolicY lo = symbolic_y_less(y0, y1) ? y0 : y1;
                 SymbolicY hi = symbolic_y_less(y0, y1) ? y1 : y0;
+                // [C91 §3.0(i) tex 169]: α' is endpoint-exact — skip
+                // candidates beyond an endpoint on a shared boundary
+                // edge and keep scanning.
+                if (!subarc_contains_point(target, *C, e, legs[li].side,
+                                           py, 0, C->num_vertices() - 1))
+                    continue;
                 if (symbolic_y_leq(lo, py) && symbolic_y_leq(py, hi)) {
                     h.hit = true;
                     h.y = p.y;
@@ -1408,7 +1414,12 @@ struct GeomOracle : RayShootingOracle {
                 Side minus_x = asc ? LEFT : RIGHT;
                 Side struck = (dir == RIGHT)
                     ? minus_x : (minus_x == LEFT ? RIGHT : LEFT);
-                if (struck != legs[g].side) continue;
+                // [C91 §3.0(i) tex 169]: α' is endpoint-exact — skip
+                // candidates off α' (wrong side OR beyond an endpoint
+                // on a shared boundary edge) and keep scanning.
+                if (!subarc_contains_point(target, *Ci, e, struck, sy,
+                                           0, Ci->num_vertices() - 1))
+                    continue;
                 double d = (dir == RIGHT) ? (x - p.x) : (p.x - x);
                 bool wrapped = (d <= 0.0);
                 bool better;
@@ -1708,6 +1719,59 @@ static void test_rebuild_dedup() {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  20b. rebuild_submap — cross-pass junction labels dedup
+// ════════════════════════════════════════════════════════════════
+
+static void test_rebuild_dedup_junction_cross_edge_labels() {
+    // [C91 §3.0(i) tex 169]: a report names "the edge of P that
+    // contains" the point hit; at a NON-extremum junction the same ∂C
+    // point is contained in both incident edges, so pass 1's a_{m+1}
+    // record labels it with C₁'s last edge while pass 2's startup
+    // labels it with C₂'s first ([C91 §3.1 tex 179]).  Rebuild must
+    // canonicalize the labels before dedup ([C91 §3.1 tex 224] +
+    // Lemma 2.2: each visible pair appears once) — without it the
+    // duplicate survives and the parenthesis sweep aborts.
+    //
+    // Geometry: junction v1=(2,2) is monotone (non-extremum); C₂ loops
+    // back west so the junction's west-wall companion sees C₂'s edge
+    // v3→v4 (crosses y=2 at x=−0.75).  Full two-pass fusion with real
+    // geometric oracles.
+    Polygon P({{0,0,0}, {2,2,1}, {4,4,2}, {0,5,3}, {-1,1,4}});
+    Polygon C1 = P.subchain(0, 2);
+    Polygon C2 = P.subchain(1, 4);
+    Submap S1 = make_chordless(C1);
+    Submap S2 = make_chordless(C2);
+
+    GeomOracle o1(&C1);
+    GeomOracle o2(&C2);
+
+    FusionState st1;
+    st1.junction_at_end = true;
+    fuse_submaps(st1, S1, C1, S2, C2, o1, o2);
+
+    FusionState st2;
+    st2.junction_at_end = false;
+    fuse_submaps(st2, S2, C2, S1, C1, o2, o1);
+
+    Polygon C(C1, C2);
+    Submap out;
+    rebuild_submap(out, C, S1, C1, S2, C2, st1, st2);
+
+    // One chord per junction companion side (each same-side pass 1 /
+    // pass 2 record names the same ∂C point): the east walls see each
+    // other across the reflex pocket, the west walls across the far
+    // C₂ edge — 2 chords, 3 regions.
+    assert(out.num_chords() == 2 &&
+           "[C91 §3.1 tex 224]: cross-pass junction records must dedup "
+           "(same ∂C point, different incident-edge labels)");
+    assert(out.num_nodes() == 3);
+    out.assert_tree_property();
+    out.check_invariants(C);
+
+    std::printf("  [PASS] rebuild_dedup_junction_cross_edge_labels\n");
+}
+
+// ════════════════════════════════════════════════════════════════
 
 int main() {
     std::setbuf(stdout, nullptr);
@@ -1740,6 +1804,7 @@ int main() {
     test_startup_case1_junction_at_start();
     test_fuse_main_loop_smoke_junction_at_start();
     test_rebuild_dedup();
+    test_rebuild_dedup_junction_cross_edge_labels();
     std::printf("All §3.1 tests passed.\n");
     return 0;
 }

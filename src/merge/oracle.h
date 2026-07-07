@@ -26,6 +26,18 @@ struct Subarc {
     Side first_side;
     std::size_t last_edge;
     Side last_side;
+    // [C91 §3.0(i) tex 169]: α' is "specified by its two endpoints
+    // (along with two pointers to the input table to indicate the names
+    // of the edges of P that contain these two endpoints as well as two
+    // flags indicating which side of ∂P is to be understood)" — the
+    // endpoints are exact ∂C positions; the edge pointers + side flags
+    // above only locate them.  Every subarc passed to
+    // RayShootingOracle::shoot MUST carry real endpoint ys
+    // (tag != SOS_NONE).  ArcPiece.subarc endpoints may keep default
+    // ys — pieces are never shot today (their ys arrive with §4.1's
+    // production cutter).
+    SymbolicY first_y{};
+    SymbolicY last_y{};
 };
 
 // [C91 §2.4 tex 138]: A Subarc respects clockwise ∂C ordering — LEFT
@@ -50,15 +62,46 @@ inline std::size_t subarc_legs(const Subarc& s, std::size_t c_start,
     return a.legs(c_start, c_end, out);
 }
 
-// Does the subarc cover ∂C position (edge, side), at edge granularity?
-inline bool subarc_covers_position(const Subarc& s, std::size_t edge,
-                                   Side side, std::size_t c_start,
-                                   std::size_t c_end) {
-    ArcLeg lg[3];
-    std::size_t n = subarc_legs(s, c_start, c_end, lg);
-    for (std::size_t i = 0; i < n; ++i)
-        if (lg[i].side == side && lg[i].lo <= edge && edge <= lg[i].hi)
-            return true;
+// [C91 §3.0(i) tex 169]: position-exact membership — is the ∂C point
+// (edge, side, y) on α′?  Leg coverage as subarc_covers_position, plus
+// within-edge clipping at α′'s two endpoint faces: subarc_legs returns
+// legs in traversal order, so leg 0 begins at (first_edge, first_side)
+// and the final leg ends at (last_edge, last_side); within an edge the
+// ∂C traversal follows the edge on LEFT and reverses it on RIGHT
+// ([C91 §2.4(iii) tex 138]), so the within-face order of two symbolic
+// ys is the y order iff the face traversal ascends.
+inline bool subarc_contains_point(const Subarc& s, const Polygon& C,
+                                  std::size_t edge, Side side, SymbolicY y,
+                                  std::size_t c_start, std::size_t c_end) {
+    ArcLeg legs[3];
+    std::size_t n = subarc_legs(s, c_start, c_end, legs);
+    auto face_trav_ascends = [&](std::size_t e_, Side s_) {
+        const auto& ed = C.edge(e_);
+        bool asc = symbolic_y_less(symbolic_y_of(C.vertex(ed.start_idx)),
+                                   symbolic_y_of(C.vertex(ed.end_idx)));
+        return (s_ == LEFT) ? asc : !asc;
+    };
+    for (std::size_t g = 0; g < n; ++g) {
+        if (legs[g].side != side || edge < legs[g].lo || edge > legs[g].hi)
+            continue;
+        if (g == 0 && edge == s.first_edge && side == s.first_side) {
+            assert(s.first_y.tag != SOS_NONE &&
+                   "[C91 §3.0(i) tex 169]: shot subarcs carry exact endpoints");
+            bool ok = face_trav_ascends(edge, side)
+                          ? symbolic_y_geq(y, s.first_y)
+                          : symbolic_y_leq(y, s.first_y);
+            if (!ok) continue;
+        }
+        if (g + 1 == n && edge == s.last_edge && side == s.last_side) {
+            assert(s.last_y.tag != SOS_NONE &&
+                   "[C91 §3.0(i) tex 169]: shot subarcs carry exact endpoints");
+            bool ok = face_trav_ascends(edge, side)
+                          ? symbolic_y_leq(y, s.last_y)
+                          : symbolic_y_geq(y, s.last_y);
+            if (!ok) continue;
+        }
+        return true;
+    }
     return false;
 }
 
@@ -140,9 +183,10 @@ struct ArcCuttingOracle {
 // Callers in [C91 §3.2 / §3.3] must invoke this on every `cut` result to
 // verify the §3.0(ii) tex 170 post-conditions before consuming the pieces.
 inline void assert_cut_postconditions(
-        const Subarc& target,
+        [[maybe_unused]] const Polygon& Ci,
+        [[maybe_unused]] const Subarc& target,
         const ArcPiece* pieces, std::size_t count,
-        std::size_t max_pieces,
+        [[maybe_unused]] std::size_t max_pieces,
         [[maybe_unused]] std::size_t h_gamma) {
     assert(count >= 1 && "[C91 §3.0(ii) tex 170]: cut() must produce ≥1 piece");
     assert(count <= max_pieces &&
@@ -191,12 +235,24 @@ inline void assert_cut_postconditions(
             // edge range.  (2) above guarantees first_side == last_side, so the
             // piece is single-side and its edge count is |last - first| + 1.
             {
-                std::size_t lo = std::min(p.subarc.first_edge, p.subarc.last_edge);
-                std::size_t hi = std::max(p.subarc.first_edge, p.subarc.last_edge);
+                [[maybe_unused]] std::size_t lo =
+                    std::min(p.subarc.first_edge, p.subarc.last_edge);
+                [[maybe_unused]] std::size_t hi =
+                    std::max(p.subarc.first_edge, p.subarc.last_edge);
                 assert(p.curve->num_edges() == hi - lo + 1 &&
                        "[C91 §3.0(ii)(3) tex 170]: non-boundary piece is "
                        "vertex-to-vertex; p.curve must cover exactly the "
                        "piece's polygon edge range");
+                // (3): "vertex-to-vertex subchains OF Cᵢ" — identity, not
+                // just length: ᾱⱼ must be THE subchain of Cᵢ spanning the
+                // piece's edge range ([C91 §2.4 tex 133]: SoS indices are
+                // consecutive along Cᵢ, so matching both ends pins it).
+                assert(p.curve->vertex(0).index == Ci.vertex(lo).index &&
+                       p.curve->vertex(p.curve->num_vertices() - 1).index ==
+                           Ci.vertex(hi + 1).index &&
+                       "[C91 §3.0(ii)(3) tex 170]: ᾱⱼ must be the "
+                       "vertex-to-vertex subchain of Cᵢ at the piece's "
+                       "edge range");
             }
             // [C91 §2.4(iv) tex 139]: conformal ⟹ tree decomposition available.
             assert(!p.submap->tree_decomposition().empty() &&

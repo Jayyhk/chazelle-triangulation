@@ -247,7 +247,12 @@ struct GeomRayShooter : RayShootingOracle {
                 Side minus_x = asc ? LEFT : RIGHT;
                 Side struck = (dir == RIGHT)
                     ? minus_x : (minus_x == LEFT ? RIGHT : LEFT);
-                if (struck != legs[g].side) continue;
+                // [C91 §3.0(i) tex 169]: α' is endpoint-exact — skip
+                // candidates off α' (wrong side OR beyond an endpoint
+                // on a shared boundary edge) and keep scanning.
+                if (!subarc_contains_point(target, *Ci, e, struck, sy,
+                                           0, Ci->num_vertices() - 1))
+                    continue;
                 double d = (dir == RIGHT) ? (x - p.x) : (p.x - x);
                 // d > 0: direct.  d ≤ 0: reachable only through the
                 // wrap (d == 0 is the source's own duplicate position,

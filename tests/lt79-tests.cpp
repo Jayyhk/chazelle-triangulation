@@ -216,8 +216,9 @@ static void verify_decomposition(const EmbeddedPlanarGraph& g,
         }
     }
     assert(dstar == d.dstar_size);
+    __extension__ typedef unsigned __int128 u128;
     for (std::size_t s : sizes)
-        assert(s * s * s <= mu * mu &&
+        assert((u128)s * s * s <= (u128)mu * mu &&
                "[C91 §3.4 tex 304]: each |D_i| ≤ μ^{2/3}");
     // |D*| = O(μ^{2/3}); the concrete constant 19 is derived in
     // planar_separator.cpp (geometric size-class sum).

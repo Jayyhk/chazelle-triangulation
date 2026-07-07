@@ -168,8 +168,9 @@ VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
 // four arcs."  (tex 264)  Lemma 3.3 guarantees each iteration finds a
 // chord; each addition splits a k-arc region into two regions of k₁+1
 // and k₂+1 arcs with k₁+k₂ = k and k₁,k₂ ≥ 2 (nonconsecutive split), so
-// Σ max(0, arcs−4) drops by ≥ 2 per chord and the total number of
-// additions is O(n₁/γ₁ + n₂/γ₂ + 1) — Lemma 3.4's bound
+// Σ max(0, arcs−4) drops by ≥ 1 per chord (exactly 1 in the worst
+// k → 3 + (k−1) split) and the total number of additions is
+// O(n₁/γ₁ + n₂/γ₂ + 1) — Lemma 3.4's bound
 // O((n₁/γ₁ + n₂/γ₂ + 1)·f(γ₂)g(γ₂)(h(γ₂) + log γ₂)).
 //
 // Postcondition: every region of S has at most four arcs and S is
