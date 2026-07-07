@@ -23,7 +23,7 @@ step.
   - [x] §3.3 — Maintaining Granularity
   - [ ] §3.4 — Implementing the Oracles (arc-cutting oracle TODO)
 - [ ] §4 — The Visibility Algorithm
-  - [ ] §4.0 — Chains, Grades, and Algorithm Overview
+  - [x] §4.0 — Chains, Grades, and Algorithm Overview
   - [ ] §4.1 — The Up-Phase
   - [ ] §4.2 — The Down-Phase
 
