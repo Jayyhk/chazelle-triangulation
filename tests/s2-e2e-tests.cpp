@@ -726,11 +726,20 @@ static void test_double_identify(std::mt19937& rng, int iters) {
             if (v < poly.num_edges()) {
                 auto result = s.double_identify(v, qy, poly);
 
-                // Every returned arc must actually contain this edge.
+                // Every returned arc must actually contain this edge
+                // ([C91 §2.4 tex 142]: per-leg coverage) — same
+                // soundness check as the mid-edge queries below.
                 for (std::size_t k = 0; k < result.count; ++k) {
                     std::size_t ai = result.arcs[k];
                     assert(ai < s.num_arcs());
                     assert(!s.arc(ai).dead);
+                    const auto& a = s.arc(ai);
+                    assert((a.covers(v, LEFT, s.start_vertex,
+                                     s.end_vertex) ||
+                            a.covers(v, RIGHT, s.start_vertex,
+                                     s.end_vertex)) &&
+                           "double_identify returned arc that doesn't "
+                           "contain the queried edge");
                 }
 
                 // Result count must be ≤ 6.

@@ -30,6 +30,10 @@ function(add_chazelle_test NAME)
         -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
         -UNDEBUG
     )
+    # Tests exercise the paper-contract asserts that are too expensive
+    # for the algorithm's own budgets ([C91 §3.0(ii) tex 170] piece
+    # validation, [C91 Lemma 3.6] preprocessing preconditions).
+    target_compile_definitions(${NAME} PRIVATE CHAZELLE_EXPENSIVE_ASSERTS)
     add_test(NAME ${NAME} COMMAND ${NAME})
 endfunction()
 

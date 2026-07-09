@@ -21,7 +21,7 @@ step.
   - [x] §3.1 — Fusion of Two Submaps
   - [ ] §3.2 — Restoring Conformality (wrapping-chord descent TODO)
   - [x] §3.3 — Maintaining Granularity
-  - [ ] §3.4 — Implementing the Oracles (arc-cutting oracle TODO)
+  - [ ] §3.4 — Implementing the Oracles (arc-cutting oracle + per-piece ray-shooter assembly TODO)
 - [ ] §4 — The Visibility Algorithm
   - [x] §4.0 — Chains, Grades, and Algorithm Overview
   - [ ] §4.1 — The Up-Phase

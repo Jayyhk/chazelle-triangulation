@@ -1171,25 +1171,40 @@ void Submap::check_invariants(const Polygon& polygon) const {
     for (std::size_t ci = 0; ci < chords_.size(); ++ci) {
         const auto& c = chords_[ci];
         if (c.dead) continue;
-        // Null-length chords use auxiliary SoS tags (beyond polygon-vertex
-        // indices) to disambiguate multiple null-length chords at the
-        // same y-extremum; add_chord enforces their structural invariants
-        // separately.
-        if (c.is_null_length) continue;
 
-        // [C91 §2.1 tex 70]: a non-null-length chord is horizontal at its
-        // source vertex's y, with y_tag = that vertex's SoS index.
+        // [C91 §2.1 tex 70]: every chord is horizontal at its source
+        // vertex's y, with y_tag = that vertex's SoS index — null-length
+        // chords included ([C91 §2.1 tex 72]: the inside pair duplicates
+        // the extremum vertex itself, so its symbolic y is the vertex's
+        // own (y, SoS index); no other perturbation source exists).
         // [C91 §2.4 tex 133]: C is a contiguous subchain of P, so its
         // vertex indices are consecutive from vertex(0).index (asserted
         // by the Polygon constructor) — translate tag → table position.
         const std::size_t first_tag = polygon.vertex(0).index;
         assert(c.y_tag >= first_tag &&
                c.y_tag - first_tag < polygon.num_vertices() &&
-               "[C91 §2.1 tex 70]: exit chord y_tag must be a vertex of C");
+               "[C91 §2.1 tex 70]: chord y_tag must be a vertex of C");
         SymbolicY chord_y{c.y, c.y_tag};
         assert(symbolic_y_equal(chord_y,
                    symbolic_y_of(polygon.vertex(c.y_tag - first_tag))) &&
-               "[C91 §2.1 tex 70]: exit chord must be horizontal at its source vertex");
+               "[C91 §2.1 tex 70]: chord must be horizontal at its source vertex");
+
+        if (c.is_null_length) {
+            // [C91 §2.1 tex 72]: a null-length chord arises only from the
+            // inside duplicate pair of a NON-ENDPOINT local y-extremum
+            // (endpoint duplicates, case 3, carry no null chord), and its
+            // coincident endpoints sit AT that vertex — on one of its two
+            // incident edges.  add_chord asserts the structural half
+            // (coincident endpoints, one adj arc per ∂C side).
+            const std::size_t v = c.y_tag - first_tag;
+            assert(polygon.is_y_extremum(v) &&
+                   "[C91 §2.1 tex 72]: null-length chord source must be an "
+                   "interior local y-extremum of C");
+            assert((c.left_edge == v || (v >= 1 && c.left_edge == v - 1)) &&
+                   "[C91 §2.1 tex 72]: null-length chord endpoints sit at "
+                   "the extremum vertex (edge v-1 or v)");
+            continue;
+        }
 
         assert((c.left_adj.count == 1) == matches_an_endpoint(c.left_edge, chord_y) &&
                "[C91 §2.2 tex 94]: LEFT endpoint count == 1 ⟺ endpoint is a polygon vertex");

@@ -1508,9 +1508,13 @@ SeparatorDecomposition build_separator_decomposition(
         std::vector<std::size_t> sizes(out.num_subsets, 0);
         for (std::size_t v = 0; v < mu; ++v)
             if (out.subset[v] != NONE) ++sizes[out.subset[v]];
-        for (std::size_t szv : sizes)
-            assert(szv * szv * szv <= mu * mu &&
+        for (std::size_t szv : sizes) {
+            // 128-bit exact, as in is_leaf: sz³ overflows 64 bits at
+            // realistic node counts.
+            __extension__ typedef unsigned __int128 u128;
+            assert((u128)szv * szv * szv <= (u128)mu * mu &&
                    "[C91 §3.4 tex 304]: each |D_i| ≤ μ^{2/3}");
+        }
     }
 #endif
     return out;

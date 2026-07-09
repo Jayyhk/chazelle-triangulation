@@ -308,7 +308,11 @@ static void test_cut_postconditions_valid() {
     p.curve = &C;
     p.is_boundary_piece = false;
 
-    assert_cut_postconditions(C, target, &p, 1, /*max_pieces=*/4, /*h_gamma=*/1);
+    // [C91 §2.2 tex 106]: the chordless piece's closed arc covers BOTH
+    // ∂ᾱ sides of its single edge — weight 2 — so the submap is
+    // h-granular exactly for h ≥ 2 ([C91 §2.3 tex 120] criterion (i);
+    // chordless ⟹ (ii) holds by default, tex 123).
+    assert_cut_postconditions(C, target, &p, 1, /*max_pieces=*/4, /*h_gamma=*/2);
 
     std::printf("  [PASS] cut_postconditions_valid\n");
 }

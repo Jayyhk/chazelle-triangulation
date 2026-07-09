@@ -895,7 +895,9 @@ struct DescentCutter : ArcCuttingOracle {
         a = {};
         a.first_edge = 6; a.last_edge = 2;
         a.first_side = LEFT; a.last_side = LEFT;
-        a.region_node = r_out; a.edge_count = 7;
+        // [C91 §2.2 tex 106]: per-leg ∂ᾱ count of the double-wrap arc —
+        // LEFT [6,6] + all of RIGHT [0,6] + LEFT [0,2] = 1 + 7 + 3.
+        a.region_node = r_out; a.edge_count = 11;
         std::size_t w_out = sm->add_arc(a);           // chord end → apex
 
         // P2's apex east chord of V(ᾱ): (6,24) → (13.81, 24) on edge 6.
@@ -929,6 +931,12 @@ static void test_descent() {
     ConformalityOracles oracles = rig.oracles;
     oracles.cut1 = &dcut;
     oracles.g_gamma1 = 4;
+    // [C91 §3.0(ii)(3) tex 170]: the fixture S_α is h-granular exactly
+    // for h ∈ [11, 13] — region weights 11 and 4 ([C91 §2.3 tex 120]
+    // criterion (i): h ≥ 11) and apex-chord contraction weight
+    // 2·7 = 14 (the closed arc over all of ∂ᾱ; criterion (ii),
+    // tex 121: h < 14).
+    oracles.h_gamma1 = 11;
 
     auto prov = compute_arc_provenance(fx.S, fx.C, fx.S1, fx.C1,
                                        fx.S2, fx.C2);
