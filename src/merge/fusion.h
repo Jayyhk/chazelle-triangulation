@@ -66,7 +66,12 @@ RayHit local_shoot(Point p, Side direction,
                     std::size_t region,
                     const Submap& S, const Polygon& C,
                     const RayShootingOracle& oracle,
-                    bool require_hit = true);
+                    bool require_hit = true,
+                    double source_x_offset = SOURCE_OFFSET_NONE);
+// (source_x_offset: polygon.h::perturbed_x_offset of the SOURCE's
+// wall, computed by the caller in the source's own frame — the offset
+// is plain geometry, identical in every subchain frame, so
+// cross-frame shots pass it too.)
 
 // [C91 §3.1]: Traversal state.  "We let a variable p run through ∂C₁
 // in clockwise order, stopping at a₀, ..., a_{m+1} ... determining what
@@ -127,10 +132,10 @@ struct FusionState {
 
     // [C91 §3.1 tex 224]: chord indices invalidated by a case (i)/(ii)
     // discovery in this pass — dropped by rebuild_submap's visibility
-    // filter.  `invalidated_self` indexes the walked submap (S₁) and
-    // `invalidated_other` indexes the target (S₂).
-    std::vector<bool> invalidated_self;
-    std::vector<bool> invalidated_other;
+    // filter.  `invalidated_walker_chords` indexes the walked submap (S₁) and
+    // `invalidated_target_chords` indexes the target (S₂).
+    std::vector<bool> invalidated_walker_chords;
+    std::vector<bool> invalidated_target_chords;
 };
 
 // [C91 §3.1]: The unique shoot direction at a ∂C point ("because of
@@ -186,6 +191,40 @@ void fuse_submaps(FusionState& state,
 // the tour orientation (see FusionState).
 void build_fusion_sequence(FusionState& state, const Submap& S,
                            const Polygon& C);
+
+// [C91 §3.1 tex 226] / [C91 §2.2 tex 90–96]: one chord of a raw chord
+// inventory over a curve C, in C's frame.  A submap of V(C) is fully
+// determined by its chord set (a submap IS V(C), possibly augmented,
+// minus removed chords, [C91 §2.2 tex 92]); `build_submap_from_chords`
+// realizes the normal-form representation from it.
+struct PendingChord {
+    SymbolicY y;
+    std::size_t left_edge_c;
+    Side        left_side;
+    std::size_t right_edge_c;
+    Side        right_side;
+    bool        is_null_length = false;
+};
+
+// [C91 §3.1 tex 226]: "With this information it is now straightforward
+// to set up the tree of the submap S, along with all the necessary
+// arc-structures and their relevant pointers."  Canonicalizes endpoint
+// labels (a chord endpoint at a non-extremum vertex of C is contained
+// in both incident edges, [C91 §3.0(i) tex 169] — rewritten to the
+// lower one) and slot order (left slot = smaller x), deduplicates the
+// inventory ([C91 §2.2 tex 102]: the dual graph is a tree, no duplicate
+// chords), sorts the endpoints along ∂C, and runs the parenthesis sweep
+// of Lemma 2.2 ([C91 §2.2 tex 96]) to emit arcs + regions + adjacency.
+// Skips the tree decomposition ([C91 §2.4(iv)] — the caller builds it
+// once the submap is known conformal).
+//
+// Callers: rebuild_submap (the [C91 §3.1 tex 224] fusion inventory) and
+// the naive V(C) construction of the up-phase's early grades
+// ([C91 §4.1 tex 345]).
+//
+// Time: O(k log k) for k chords (endpoint sort dominates).
+void build_submap_from_chords(Submap& out_S, const Polygon& C,
+                              std::vector<PendingChord> chords);
 
 // [C91 §3.1 tex 226]: Set up the fused submap S in normal form from the
 // chord inventory.  Sorts chord endpoints along ∂C, builds the arc-sequence

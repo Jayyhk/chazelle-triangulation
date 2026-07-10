@@ -224,7 +224,8 @@ struct GeomRayShooter : RayShootingOracle {
     }
 
     RayHit shoot(Point p, Side dir, std::size_t /*arc_idx*/,
-                 const Subarc& target) const override {
+                 const Subarc& target,
+                 double /*source_x_offset*/ = SOURCE_OFFSET_NONE) const override {
         SymbolicY sy{p.y, p.index};
         // [C91 §2.4 tex 142]: wrap-spanning targets decompose per leg.
         ArcLeg legs[3];
@@ -382,6 +383,11 @@ struct GeomArcCutter : ArcCuttingOracle {
                                    : Subarc{b, s, a, s};
             p.curve = curves.back().get();
             p.submap = submaps.back().get();
+            // [C91 §4.1 tex 352]: a chordless piece submap is
+            // γⱼ-granular exactly for γⱼ ≥ its closed arc's weight
+            // (2× its edges, [C91 §2.2 tex 106]); criterion (ii) is
+            // vacuous with no chords.
+            p.granularity = 2 * (b - a + 1);
             return p;
         };
 
@@ -919,6 +925,9 @@ struct DescentCutter : ArcCuttingOracle {
         p.subarc = Subarc{0, LEFT, 6, LEFT};
         p.curve = curves.back().get();
         p.submap = submaps.back().get();
+        // The fixture S_α is γⱼ-granular exactly for γⱼ ∈ [11, 13]
+        // (region weights 11 and 4; apex-chord contraction weight 14).
+        p.granularity = 11;
         out.push_back(p);
         return out;
     }

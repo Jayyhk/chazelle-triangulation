@@ -8,7 +8,22 @@
 // lower index → larger perturbation → higher perturbed y.  Equivalently
 // for y-only comparisons: larger tag → lower perturbed y.
 //
-// We perform no actual perturbation — just use the tag as the tie-breaker.
+// We perform no actual perturbation.  Per [10], SoS is realized by
+// evaluating every geometric predicate as the sign of the FIRST
+// NONVANISHING ε-term of its expansion on the perturbed input; with
+// this representation (raw doubles + tags) that evaluation is
+// implemented per predicate:
+//   · y-comparisons: the tag order (symbolic_y_less below);
+//   · level/edge crossings: the tag-match limits of
+//     polygon.h::edge_t_at_y / edge_crossing_x;
+//   · x-comparisons between raw-coincident points (equal-y inputs,
+//     duplicate pairs, padding clusters): the perturbed x-offsets of
+//     polygon.h::perturbed_x_offset — the first-order term
+//     (dx/dy)·δ·dsign by which the perturbation actually moves each
+//     point off the shared position;
+//   · wall-order ties along a ray: polygon.h::ray_contact_precedes.
+// None of this is machinery beyond [10]: it is [10]'s evaluation rule,
+// written out for each predicate whose raw value can vanish.
 
 #include "point.h"
 

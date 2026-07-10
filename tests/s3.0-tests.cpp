@@ -38,7 +38,8 @@ bool assert_fires(std::function<void()> fn) {
 // ════════════════════════════════════════════════════════════════
 
 struct StubRayShooter : RayShootingOracle {
-    RayHit shoot(Point, Side, std::size_t, const Subarc&) const override {
+    RayHit shoot(Point, Side, std::size_t, const Subarc&,
+                 double = SOURCE_OFFSET_NONE) const override {
         return {}; // no hit
     }
 };
@@ -312,6 +313,7 @@ static void test_cut_postconditions_valid() {
     // ∂ᾱ sides of its single edge — weight 2 — so the submap is
     // h-granular exactly for h ≥ 2 ([C91 §2.3 tex 120] criterion (i);
     // chordless ⟹ (ii) holds by default, tex 123).
+    p.granularity = 2;
     assert_cut_postconditions(C, target, &p, 1, /*max_pieces=*/4, /*h_gamma=*/2);
 
     std::printf("  [PASS] cut_postconditions_valid\n");

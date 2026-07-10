@@ -1,10 +1,12 @@
 // src/merge/conformality.cpp — [C91 §3.2 tex 236–272]: Restoring Conformality.
 
 #include "conformality.h"
+#include "../visibility/naive_visibility.h"
 #include "fusion.h"
 #include "../submap/shielding.h"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace chazelle {
 
@@ -167,8 +169,13 @@ std::vector<ArcProvenance> compute_arc_provenance(
         for (std::size_t k = 0; k < cands.count; ++k) {
             std::size_t si_arc = cands.arcs[k];
             const Arc& sa = Si.arc(si_arc);
-            if (!sa.covers(edge_i, a.first_side,
-                           Si.start_vertex, Si.end_vertex)) continue;
+            // Position-exact containment ([C91 §2.4 tex 133]): several
+            // arcs of Sᵢ can share one (edge, side) face — e.g. the
+            // apex face of a global y-extremum stacks the cap's zero
+            // arc, the band arc, and the wrap arc — so edge-granular
+            // coverage is not enough.
+            if (!fused_arc_contains(Si, Ci, si_arc, edge_i, a.first_side,
+                                    sy)) continue;
             bool ends_here =
                 sa.last_edge == edge_i && sa.last_side == a.first_side &&
                 symbolic_y_equal(Si.arc_end_symbolic_y(si_arc, Ci), sy);
@@ -247,56 +254,10 @@ FusedRegionCycle fused_region_cycle(const Submap& S, const Polygon& C,
     return cycle;
 }
 
-namespace {
-
-// [C91 §2.1 tex 72]: is the ∂C point (edge, side) at vertex `vidx` one of
-// a y-extremum's INSIDE-pair duplicates?  "one of these pairs, the one on
-// the 'inside' of the turn, gives rise to a chord of null length" — such
-// a point sees only its distance-0 sibling and can never source a chord
-// to another arc, so Lemma 3.2 never shoots from it.  The inside face
-// computation mirrors rebuild_submap's junction null-chord synthesis
-// ([C91 §3.1 tex 224], fusion.cpp).
-bool is_inside_companion(const Polygon& C, std::size_t edge, Side side,
-                         std::size_t vidx) {
-    if (vidx == 0 || vidx + 1 >= C.num_vertices()) return false;  // case 3
-    const Point& u = C.vertex(vidx - 1);
-    const Point& v = C.vertex(vidx);
-    const Point& w = C.vertex(vidx + 1);
-    if (!is_local_y_extremum(u, v, w)) return false;              // case 1
-    const bool is_max = point_y_above(v, u) && point_y_above(v, w);
-
-    // Branch x-order infinitesimally off v ([C91 §2 tex 47], exact
-    // cross-multiplied slopes as in fusion.cpp's junction synthesis).
-    const double t_prev = is_max ? (u.x - v.x) * (v.y - w.y)
-                                 : (u.x - v.x) * (w.y - v.y);
-    const double t_next = is_max ? (w.x - v.x) * (v.y - u.y)
-                                 : (w.x - v.x) * (u.y - v.y);
-    assert(t_prev != t_next &&
-           "[C91 §2 tex 47]: extremum branches have distinct x-slopes");
-    const bool prev_left = t_prev < t_next;
-
-    auto minus_x_face = [&](std::size_t e) -> Side {
-        const auto& ed = C.edge(e);
-        bool asc = symbolic_y_less(symbolic_y_of(C.vertex(ed.start_idx)),
-                                   symbolic_y_of(C.vertex(ed.end_idx)));
-        return asc ? LEFT : RIGHT;
-    };
-    auto plus_x_face = [&](std::size_t e) -> Side {
-        return minus_x_face(e) == LEFT ? RIGHT : LEFT;
-    };
-
-    // The wedge (inside of the turn) lies between the two branches: the
-    // prev edge's inside face looks toward the next branch and vice
-    // versa.
-    Side inside_next = prev_left ? minus_x_face(vidx) : plus_x_face(vidx);
-    Side inside_prev = prev_left ? plus_x_face(vidx - 1)
-                                 : minus_x_face(vidx - 1);
-    if (edge == vidx && side == inside_next) return true;
-    if (edge == vidx - 1 && side == inside_prev) return true;
-    return false;
-}
-
-} // namespace
+// [C91 §2.1 tex 72]: is_inside_companion lives in polygon/polygon.h —
+// shared with the naive V(C) construction ([C91 §4.1 tex 345]) and the
+// up-phase oracles ([C91 §4.1 tex 350–352]), which resolve ray ties by
+// the same outside-wall rule.
 
 // ════════════════════════════════════════════════════════════════
 //  local_shoot_fused — [C91 §3.2 tex 244/246]
@@ -305,7 +266,14 @@ bool is_inside_companion(const Polygon& C, std::size_t edge, Side side,
 RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
                          const FusedRegionCycle& cycle,
                          const FusedShootContext& ctx,
-                         bool require_hit) {
+                         bool require_hit, std::size_t source_edge_c) {
+    // [C91 §2 tex 47]: the source wall's perturbed x-offset, computed
+    // once in the merged frame — plain geometry, identical in every
+    // frame, threads through the per-arc oracles unchanged.
+    const double source_x_offset =
+        (source_edge_c == NONE)
+            ? SOURCE_OFFSET_NONE
+            : perturbed_x_offset(*ctx.C, p_y, source_edge_c);
     assert(ctx.S && ctx.C && ctx.C1 && ctx.C2 && ctx.ray1 && ctx.ray2 &&
            ctx.provenance);
     const Submap& S = *ctx.S;
@@ -345,7 +313,8 @@ RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
             target.last_y = S.arc_end_symbolic_y(ai, C);
             assert_subarc_clockwise(target);
 
-            RayHit hit = oracle.shoot(p, direction, pr.arc_in_si, target);
+            RayHit hit = oracle.shoot(p, direction, pr.arc_in_si, target,
+                                      source_x_offset);
             if (!hit.hit) continue;
 
             // [C91 §3.0(i) tex 169 + §2.1 tex 70]: a direct hit lies
@@ -355,25 +324,19 @@ RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
             if (hit.wrapped)
                 assert(d <= 0.0 &&
                        "[C91 §2.1 tex 70]: a wrapped hit lies at or behind "
-                       "the source in the travel direction (d == 0 is the "
-                       "source's own duplicate met after a full wrap)");
+                       "the source in the travel direction (d == 0: a "
+                       "raw-coincident wall not strictly forward, met "
+                       "after a full wrap)");
             else
-                assert(d > 0.0 &&
-                       "[C91 §3.0(i) tex 169]: a direct hit lies strictly "
-                       "forward (same-position hits are only reachable "
-                       "through the wrap)");
+                assert((d > 0.0 || (d == 0.0 && source_edge_c != NONE)) &&
+                       "[C91 §3.0(i) tex 169/§2 tex 47]: a direct hit lies "
+                       "strictly forward — at raw distance 0 only by the "
+                       "source's own perturbed x-offset order "
+                       "(perturbed_hit_forward)");
 
             hit.edge += off;    // back to C's frame
 
-            // [C91 §3.0(i) tex 169]: the Subarc target is endpoint-
-            // exact, so the oracle's report lies on the fused arc by
-            // contract; [C91 Lemma 2.1 tex 77] pins the hit to a wall
-            // of the region, so the arc's exact span must contain it.
-            assert(fused_arc_contains(S, C, ai, hit.edge, hit.side, p_y) &&
-                   "[C91 §3.0(i) tex 169 + Lemma 2.1]: the report lies "
-                   "on α′ (the fused arc's exact span)");
-
-            hit.hit_arc_idx = ai;   // fused-table attribution
+            hit.hit_arc_idx = ai;   // provisional attribution
 
             if (!best.hit) {
                 best = hit;
@@ -411,39 +374,51 @@ RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
                 assert(opposes_ray(hit) && opposes_ray(best) &&
                        "[C91 §3.0(i) tex 169]: a reported hit is a wall "
                        "opposing the ray's travel");
-                if (hit.edge != best.edge) {
-                    // Two opposing walls at one point of C: the shared
-                    // vertex of the two edges, at the ray's exact
-                    // symbolic level ([C91 §2 tex 47]: SoS admits no
-                    // other coincidence).  At a y-extremum exactly one
-                    // face is the inside-of-turn duplicate ([C91 §2.1
-                    // tex 72]), which sees only its distance-0 sibling —
-                    // the outer wall shields the wedge, so the non-inside
-                    // face is struck.  At a non-extremum both faces name
-                    // the same companion point; keep the first found.
-                    const std::size_t vidx = std::max(hit.edge, best.edge);
-                    assert(vidx == std::min(hit.edge, best.edge) + 1 &&
-                           "[C91 §2 tex 47]: same-position walls lie on "
-                           "edges sharing one vertex of C");
-                    assert(symbolic_y_equal(
-                               symbolic_y_of(C.vertex(vidx)), p_y) &&
-                           "[C91 §2 tex 47]: the tie point is the shared "
-                           "vertex at the ray's level");
-                    const bool hit_inside =
-                        is_inside_companion(C, hit.edge, hit.side, vidx);
-                    const bool best_inside =
-                        is_inside_companion(C, best.edge, best.side, vidx);
-                    if (best_inside && !hit_inside) best = hit;
-                }
+                // Same raw travel position: two walls at one tag-matched
+                // vertex (the outside wall shields the wedge, [C91 §2.1
+                // tex 72]) or a strict crossing tied with the padding
+                // cluster ([C91 §4 tex 316]) — resolved by the SoS order
+                // of [C91 §2 tex 47] (polygon.h::ray_contact_precedes).
+                if (ray_contact_precedes(C, p_y, direction,
+                                         hit.edge, hit.side,
+                                         best.edge, best.side))
+                    best = hit;
             }
         }
     }
 
+    // [C91 §3.2 tex 246]: "local shooting reports edges of P and does
+    // not tell us if the point hit is on the desired arc or is the
+    // companion of a point of the arc ... local checking can decide
+    // which way it is in constant time."  The [C91 §3.0(i) tex 169]
+    // report is the first ᾱ'-contact, companion side included —
+    // attribute the winner to the fused arc whose exact span contains
+    // it (the reporter when it does; a shared-endpoint contact belongs
+    // to two arcs, keep the reporter), else NONE (companion contact).
+    if (best.hit) {
+        std::size_t attributed = NONE;
+        for (std::size_t li = 0; li < cycle.count; ++li) {
+            const std::size_t ai = cycle.arcs[li].arc;
+            if (!fused_arc_contains(S, C, ai, best.edge, best.side, p_y))
+                continue;
+            if (ai == best.hit_arc_idx) {
+                attributed = ai;
+                break;
+            }
+            if (attributed == NONE) attributed = ai;
+        }
+        best.hit_arc_idx = attributed;
+    }
+
     // [C91 §3.1 tex 181 / §2.2 Lemma 2.1]: regions are closed under
     // visibility — shooting from a boundary point of the region hits.
-    if (require_hit)
+    if (require_hit) {
         assert(best.hit &&
                "[C91 §3.2 tex 244]: local shoot within a fused region must hit");
+        assert(best.hit_arc_idx != NONE &&
+               "[C91 §2.2 Lemma 2.1]: an in-region shot's first contact "
+               "lies ON the region's boundary arcs");
+    }
     return best;
 }
 
@@ -455,7 +430,8 @@ namespace {
 
 // Does chord (y, {e1,s1}—{e2,s2}) duplicate an existing chord of the
 // region?  [C91 §2.1 tex 70]: a ∂C point's horizontal visibility is
-// unique, so a site at an existing chord endpoint can only re-derive
+// unique, so a candidate at an existing chord endpoint can only
+// re-derive
 // that same chord — which must not be added again ([C91 §2.2 tex 102]:
 // the dual graph is a tree, no duplicate chords).
 bool duplicates_region_chord(const Submap& S, std::size_t region,
@@ -475,7 +451,7 @@ bool duplicates_region_chord(const Submap& S, std::size_t region,
     return false;
 }
 
-struct SiteShot {
+struct CandidateShot {
     bool success = false;   // hit lands on A₂ and is a NEW chord
     RayHit hit{};
 };
@@ -484,13 +460,13 @@ struct SiteShot {
 // the point already IS a chord endpoint of the region, its visibility is
 // realized by that chord — a shot from it would just retrace the chord
 // (as fusion's case (i) reads t off the stored chord, [C91 §3.1 tex 220]).
-struct RealizedVisibility {
-    bool realized = false;
+struct ExistingChord {
+    bool exists = false;
     std::size_t other_edge = NONE;  // the chord's far endpoint
     Side other_side = LEFT;
 };
 
-RealizedVisibility region_chord_at(const Submap& S, std::size_t region,
+ExistingChord existing_region_chord_at(const Submap& S, std::size_t region,
                                    std::size_t edge, Side side,
                                    SymbolicY y) {
     for (std::size_t ci : S.node(region).incident_chords) {
@@ -510,22 +486,52 @@ RealizedVisibility region_chord_at(const Submap& S, std::size_t region,
 // from the ∂C point (edge_c, side, y) within the region and test whether
 // the point it sees lies on A₂.  Sites whose visibility is already
 // realized by an existing chord ([C91 §2.1 tex 70]) never qualify.
-SiteShot try_site(std::size_t edge_c, Side side, SymbolicY y,
+CandidateShot try_candidate_vertex(std::size_t edge_c, Side side, SymbolicY y,
                   const Submap& S, const Polygon& C, std::size_t region,
                   std::size_t A2, const FusedRegionCycle& cycle,
                   const FusedShootContext& fctx) {
-    if (region_chord_at(S, region, edge_c, side, y).realized)
-        return SiteShot{};
+    // [C91 §2.1 tex 70/72]: an interior-extremum inside duplicate sees
+    // its sibling duplicate at distance 0 — their null-length chord.
+    // The sibling is an adjacent boundary point, never the
+    // nonconsecutive A₂ ([C91 §3.2 Lemma 3.3(i)]).  Shooters report
+    // d=0 siblings structurally rather than via rays (the junction
+    // convention of [C91 §3.1 tex 224], fusion.cpp), so resolve the
+    // candidacy here without shooting.  This holds whether or not S
+    // retains the null chord (V(C)'s visibility is independent of S),
+    // and under either of the pair's wall labels (the chord record
+    // canonicalizes both endpoints to the wedge face of the NEXT edge,
+    // naive_visibility.cpp).
+    {
+        const auto& ed = C.edge(edge_c);
+        for (std::size_t vi : {ed.start_idx, ed.end_idx}) {
+            if (symbolic_y_of(C.vertex(vi)).tag != y.tag) continue;
+            if (is_inside_companion(C, edge_c, side, vi))
+                return CandidateShot{};
+            break;
+        }
+    }
+    if (existing_region_chord_at(S, region, edge_c, side, y).exists)
+        return CandidateShot{};
 
     Point p{edge_x_at_y(C, edge_c, y), y.y, y.tag};
     Side dir = shooting_direction(edge_c, side, C);
-    RayHit hit = local_shoot_fused(p, y, dir, cycle, fctx);
+    RayHit hit = local_shoot_fused(p, y, dir, cycle, fctx,
+                                   /*require_hit=*/true,
+                                   /*source_edge_c=*/edge_c);
 
-    SiteShot out;
+    CandidateShot out;
     out.hit = hit;
     out.success = hit.hit_arc_idx == A2 &&
         !duplicates_region_chord(S, region, y, edge_c, side,
                                  hit.edge, hit.side);
+#ifdef CHAZELLE_TRACE_FUSION
+    std::fprintf(stderr,
+                 "[cand] (%zu,%s,y=%g@%zu) -> hit=(%zu,%s,x=%g arc=%zd) "
+                 "A2=%zu ok=%d\n",
+                 edge_c, side == LEFT ? "L" : "R", y.y, y.tag, hit.edge,
+                 hit.side == LEFT ? "L" : "R", hit.x,
+                 (ptrdiff_t)hit.hit_arc_idx, A2, (int)out.success);
+#endif
     return out;
 }
 
@@ -561,7 +567,7 @@ struct PieceSearchContext {
     TourPos c_pos_c{}, d_pos_c{};   // C-frame ∂C tour
 };
 
-// Fill in a VisiblePoint from a successful site shot.
+// Fill in a VisiblePoint from a successful candidate-vertex shot.
 VisiblePoint make_success(const PieceSearchContext& ctx,
                           std::size_t p_edge_c, Side p_side,
                           SymbolicY y, const RayHit& hit) {
@@ -569,7 +575,7 @@ VisiblePoint make_success(const PieceSearchContext& ctx,
     vp.found = true;
     assert(fused_arc_contains(*ctx.S, *ctx.C, ctx.A1, p_edge_c, p_side,
                               y) &&
-           "[C91 §3.2]: the site must lie on A₁");
+           "[C91 §3.2]: the candidate vertex must lie on A₁");
     vp.p_table_arc = ctx.A1;
     vp.p_edge = p_edge_c;
     vp.p_side = p_side;
@@ -594,12 +600,39 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
     const TDNode& node = td.node(node_idx);
     const Chord& ab = Sa.chord(node.chord_idx);
 
-    // [C91 §2.3]: an h(γ)-granular submap has no null-length chords —
-    // a null chord's inner region is empty and degree-1, so contracting
-    // it never exceeds the weight bound (granularity criterion (ii)
-    // would fail).  The descent therefore never meets one.
-    assert(!ab.is_null_length &&
-           "[C91 §2.3]: granular S_α cannot contain null-length chords");
+    // [C91 §2.3 tex 106]: "chords of zero length (if any) are taken
+    // into account inasmuch as they separate arcs" — a null-length
+    // chord (an interior-extremum inside pair, [C91 §2.1 tex 70/72])
+    // persists in a granular submap whenever contracting it would
+    // over-weight the arc glued across it, so the descent CAN meet
+    // one.  Its corner side — the piece of ∂ᾱ between the coincident
+    // endpoints across the apex turn — bounds the empty region
+    // (weight 0, [C91 §2.3 tex 105]) and carries no vertex of ∂ᾱ, so
+    // [C91 §3.2 tex 252]'s test resolves without shooting: α ∩
+    // (corner piece) is empty; branch to the child covering the other
+    // piece.  (The empty region is degree 1, so its dual-tree
+    // component is that single leaf.)
+    if (ab.is_null_length) {
+        std::size_t lens = NONE;
+        for (std::size_t ri = 0; ri < 2 && lens == NONE; ++ri) {
+            const std::size_t r = ab.region[ri];
+            RegionArcs ra = collect_region_arcs(Sa, r);
+            bool empty = true;
+            for (std::size_t k = 0; k < ra.count && empty; ++k)
+                empty = Sa.arc(ra.arcs[k]).edge_count == 0;
+            if (empty) lens = r;
+        }
+        assert(lens != NONE &&
+               "[C91 §2.3 tex 105]: a null-length chord bounds the empty "
+               "region hugging the apex turn on its corner side");
+        // tree_decomposition.cpp's convention maps left_child ↔ the
+        // component of chord.region[0].
+        *next_node = (lens == ab.region[0]) ? node.right_child
+                                            : node.left_child;
+        assert(*next_node != NONE &&
+               "[C91 §2.3]: internal TD node has two children");
+        return VisiblePoint{};
+    }
 
     const SymbolicY y_ab = ab.symbolic_y();
 
@@ -617,6 +650,15 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
     AlphaPoint er = alpha_point(false);
     assert(tour_cmp(el.pos_a, er.pos_a) != 0 &&
            "[C91 §2.1 tex 70]: non-null chord endpoints are distinct ∂ᾱ points");
+
+    // [C91 §2.1 tex 70]: an h-granular conformal S_α CAN retain chords
+    // that run through infinity (e.g. a global-extremum outside-pair
+    // chord whose contraction would over-weight the merged arc survives
+    // criterion (ii)) — the up-phase cutter's chain submaps carry them.
+    // All traversal-order tests below therefore use the lexicographic
+    // (wrapped, distance) metric of [C91 §2.1 tex 70]; Lemma 2.4
+    // (tex 150–156) is purely topological and covers wrapping ab as-is.
+    const bool ab_wraps = chord_runs_through_infinity(Ca, ab);
 
     // [C91 §2.5 tex 150]: label the endpoints so that a, c, b occur
     // clockwise with respect to D (the outside disk).  ∂C-clockwise is
@@ -653,10 +695,70 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
                              double* px, VisiblePoint* success) -> bool {
         Side dir = shooting_direction(from.edge_c, from.side, *ctx.C);
         // ab is a chord of V(ᾱ): the unique shooting direction at `from`
-        // points along the chord toward the other endpoint.
-        assert(((dir == RIGHT) == (other.x > from.x)) &&
-               "[C91 §2.1 tex 70]: shooting direction at a chord endpoint "
-               "points toward the chord's other endpoint");
+        // traces the chord toward the other endpoint — directly for a
+        // direct chord, through the point at infinity for a wrapping
+        // one ([C91 §2.1 tex 70]).  (A wrapping chord with coincident
+        // endpoint x's — an outside duplicate pair — constrains neither
+        // direction.)
+        if (!ab_wraps)
+            assert(((dir == RIGHT) == (other.x > from.x)) &&
+                   "[C91 §2.1 tex 70]: a direct chord's shooting "
+                   "direction points toward the other endpoint");
+        else if (other.x != from.x)
+            assert(((dir == RIGHT) == (other.x < from.x)) &&
+                   "[C91 §2.1 tex 70]: a wrapping chord's shooting "
+                   "direction points away from the other endpoint");
+        // [C91 §2.1 tex 70/72]: an interior-extremum inside duplicate
+        // of C sees its sibling duplicate at distance 0 (their null
+        // chord).  A non-null ab can be incident on such a wall only
+        // where the ᾱ frame disagrees with C — at a chain endpoint
+        // (the wall is an endpoint-turnaround duplicate of ᾱ, while a
+        // chain-INTERIOR apex carries only its null chord in V(ᾱ)) —
+        // so the sibling's edge lies beyond ᾱ and is a point of A.
+        // The sibling is then the first point of ab ∩ A ([C91 §2.5
+        // Lemma 2.4], at travel distance 0); if it lies on A₂ we are
+        // done ([C91 §3.2 tex 260]).  Shooters report d=0 siblings
+        // structurally, never via rays ([C91 §3.1 tex 224] junction
+        // convention), so resolve this before any shot.
+        {
+            const auto& ed = ctx.C->edge(from.edge_c);
+            for (std::size_t vi : {ed.start_idx, ed.end_idx}) {
+                if (symbolic_y_of(ctx.C->vertex(vi)).tag != y_ab.tag)
+                    continue;
+                if (!is_inside_companion(*ctx.C, from.edge_c, from.side,
+                                         vi))
+                    break;
+                const std::size_t sib_edge =
+                    (from.edge_c == vi) ? vi - 1 : vi;
+                const Side sib_side =
+                    is_inside_companion(*ctx.C, sib_edge, LEFT, vi)
+                        ? LEFT : RIGHT;
+                assert(is_inside_companion(*ctx.C, sib_edge, sib_side,
+                                           vi) &&
+                       "[C91 §2.1 tex 72]: exactly one face of the other "
+                       "edge at an interior extremum is the wedge face");
+                if (fused_arc_contains(*ctx.S, *ctx.C, ctx.A2, sib_edge,
+                                       sib_side, y_ab)) {
+                    RayHit h;
+                    h.hit = true;
+                    h.x = from.x;
+                    h.y = y_ab.y;
+                    h.edge = sib_edge;
+                    h.side = sib_side;
+                    h.wrapped = false;
+                    h.hit_arc_idx = ctx.A2;
+                    *success = make_success(ctx, from.edge_c, from.side,
+                                            y_ab, h);
+                    return true;
+                }
+                *prime_exists = true;
+                *prime_pos = tour_pos(*ctx.C, sib_edge, sib_side, y_ab);
+                *pe = sib_edge;
+                *ps = sib_side;
+                *px = from.x;
+                return false;
+            }
+        }
         // [C91 §2.1 tex 70]: if `from` coincides with an existing chord
         // endpoint of the region (possible only at α's own endpoints c/d),
         // its visibility IS that chord — the ray retraces it, so the
@@ -664,9 +766,9 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
         // the neighboring arc ⊆ A), read off in O(1) exactly as fusion's
         // case (i) reads t ([C91 §3.1 tex 220]).  No new chord from here.
         {
-            RealizedVisibility rv = region_chord_at(
+            ExistingChord rv = existing_region_chord_at(
                 *ctx.S, ctx.region, from.edge_c, from.side, y_ab);
-            if (rv.realized) {
+            if (rv.exists) {
                 *prime_exists = true;
                 *prime_pos = tour_pos(*ctx.C, rv.other_edge, rv.other_side,
                                       y_ab);
@@ -676,28 +778,31 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
                 return false;
             }
         }
-        SiteShot shot = try_site(from.edge_c, from.side, y_ab,
+        CandidateShot shot = try_candidate_vertex(from.edge_c, from.side, y_ab,
                                  *ctx.S, *ctx.C, ctx.region,
                                  ctx.A2, *ctx.cycle, *ctx.fctx);
-        // The other chord endpoint is a ∂C point ON the ray, so a direct
-        // crossing exists at d_other and the first hit — on ∂R by
-        // [C91 §2.2 Lemma 2.1] — is direct (never through infinity).
-        assert(!shot.hit.wrapped &&
-               "[C91 §2.2 Lemma 2.1]: shot toward the chord's other "
-               "endpoint cannot wrap");
+        // The other chord endpoint is a ∂C point ON the ray's path, at
+        // travel position (ab_wraps, d_other) in the wrap metric of
+        // [C91 §2.1 tex 70]; by [C91 §2.2 Lemma 2.1] the first hit lies
+        // at or before it in that metric.
+        double d_hit = (dir == LEFT) ? (from.x - shot.hit.x)
+                                     : (shot.hit.x - from.x);
+        double d_other = (dir == LEFT) ? (from.x - other.x)
+                                       : (other.x - from.x);
+        const bool hit_at_other =
+            shot.hit.wrapped == ab_wraps && d_hit == d_other;
+        const bool hit_before_other =
+            (!shot.hit.wrapped && ab_wraps) ||
+            (shot.hit.wrapped == ab_wraps && d_hit < d_other);
+        assert((hit_at_other || hit_before_other) &&
+               "[C91 §2.2 Lemma 2.1]: the other chord endpoint is on ∂C, "
+               "so the first hit cannot lie beyond it in the wrap metric");
         if (shot.success) {
             *success = make_success(ctx, from.edge_c, from.side, y_ab,
                                     shot.hit);
             return true;
         }
-        double d_hit = (dir == LEFT) ? (from.x - shot.hit.x)
-                                     : (shot.hit.x - from.x);
-        double d_other = (dir == LEFT) ? (from.x - other.x)
-                                       : (other.x - from.x);
-        assert(d_hit <= d_other &&
-               "[C91 §2.2 Lemma 2.1]: the other chord endpoint is on ∂C, "
-               "so the first hit cannot lie beyond it");
-        if (d_hit < d_other) {
+        if (hit_before_other) {
             // Strict interior of ab: the hit is a point of A ([C91 §2.5]
             // — the open chord avoids ∂ᾱ, so any interior ∂C hit is on
             // ∂C \ ∂ᾱ ⊆ A).
@@ -709,6 +814,30 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
         } else if (!other_in) {
             // Clear segment, other endpoint on A: the first/last point of
             // ab ∩ A is the other endpoint itself.
+            //
+            // [C91 §3.2 tex 260]: "If ever a (resp. b) is a point of α
+            // and a' (resp. b') belongs to A₂, then obviously we are
+            // done and successful in our search."  Here a' = b, a ∂ᾱ
+            // point of the chain's other side — it can lie strictly
+            // inside A₂ (unlike a realized chord's far endpoint, which
+            // is an arc junction: an arc never contains a chord
+            // attachment, [C91 §2.3 tex 106]).  ab is clear and not an
+            // existing chord of S (that case returned via
+            // existing_region_chord_at above), so the pair yields a NEW chord.
+            if (fused_arc_contains(*ctx.S, *ctx.C, ctx.A2, other.edge_c,
+                                   other.side, y_ab)) {
+                RayHit h;
+                h.hit = true;
+                h.x = other.x;
+                h.y = y_ab.y;
+                h.edge = other.edge_c;
+                h.side = other.side;
+                h.wrapped = ab_wraps;
+                h.hit_arc_idx = ctx.A2;
+                *success = make_success(ctx, from.edge_c, from.side, y_ab,
+                                        h);
+                return true;
+            }
             *prime_exists = true;
             *prime_pos = tour_pos(*ctx.C, other.edge_c, other.side, y_ab);
             *pe = other.edge_c;
@@ -775,8 +904,49 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
         bool a_eq_b = a_prime_exists && b_prime_exists &&
                       ap_edge == bp_edge && ap_side == bp_side &&
                       ap_x == bp_x;
-        ShieldingResult sh = classify_shielding(a_prime_exists,
-                                                b_prime_exists, a_eq_b);
+        const std::size_t num_pieces = shielding_piece_count(
+            a_prime_exists, b_prime_exists, a_eq_b);
+
+        // [C91 §2.5 Lemma 2.4 tex 156]: "Which one can be determined by
+        // simple examination of the relative order of the points a, b,
+        // c, d, a', b' around the boundary of R" — the assignment is
+        // configuration-dependent, decided by the side of ab (one of
+        // the two components of D∖ab; ab is diametrical) on which A's
+        // c-adjacent piece lies.  Both anchors below sit ON the chord's
+        // closure, where side ⟺ the local y-direction off the
+        // horizontal level:
+        //  · with a' defined, A's c-adjacent piece meets ab at a' via
+        //    its ∂C-clockwise-onward branch (A runs d→c clockwise), so
+        //    its side is that branch's traversal y-direction;
+        //  · with no crossing and c strictly interior to an α-piece,
+        //    A stays in c's component (fig 2.8.1's configuration);
+        //  · with no crossing and c AT a (the chord endpoint — a
+        //    full-side chain piece whose subarc begins there), A's side
+        //    is its arrival branch's side at c.
+        // Piece 1 of α meets ab at a via the ∂ᾱ-clockwise branch from
+        // a, giving its side the same way.  Pieces of A alternate
+        // sides across each proper crossing (an a' = b' touch does not
+        // cross).
+        auto face_trav_up = [&](std::size_t e_, Side s_) {
+            const auto& ed_ = ctx.C->edge(e_);
+            bool asc_ = symbolic_y_less(
+                symbolic_y_of(ctx.C->vertex(ed_.start_idx)),
+                symbolic_y_of(ctx.C->vertex(ed_.end_idx)));
+            return (s_ == LEFT) ? asc_ : !asc_;
+        };
+        const bool piece1_side_up = face_trav_up(A.edge_c, A.side);
+        bool first_on_piece1_side;
+        if (a_prime_exists) {
+            first_on_piece1_side =
+                (face_trav_up(ap_edge, ap_side) == piece1_side_up);
+        } else if (tour_cmp(ctx.c_pos_a, A.pos_a) == 0) {
+            // c == a: A's arrival branch at c is the ∂C face just
+            // before α's start — the opposite side from α's own
+            // departure (both cross the level at one point).
+            first_on_piece1_side = !c_in_piece1;
+        } else {
+            first_on_piece1_side = c_in_piece1;
+        }
 
         // A₂'s piece along A (indexed from c per shielding.h).  A runs
         // clockwise along ∂C from d to c (tex 258), so rank positions
@@ -814,13 +984,19 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
                 assert(at_or_before_d(ctx.a2_end, b_prime_pos));
             }
         }
-        assert(piece_idx < sh.num_pieces &&
+        assert(piece_idx < num_pieces &&
                "[C91 §2.5 Lemma 2.4]: A₂'s piece must be one of the 1–3 pieces");
 
-        // B₁ is the piece of ∂D between a and b containing c
-        // ([C91 §2.5 tex 150]: H₁ ∋ c; B₁ = closure(α ∩ H₁)).
-        BoundarySide rejected_b = sh.shielded_from[piece_idx];
-        reject_piece1 = (rejected_b == BoundarySide::B1) == c_in_piece1;
+        // Side of A₂'s piece: alternate from the c-adjacent piece
+        // across proper crossings (a' = b' touches both pieces without
+        // crossing).  A piece on one side of ab touches only that
+        // side's α-part, so it is shielded from the OTHER α-piece
+        // ([C91 §2.5 Lemma 2.4] proof: each region's ∂D-arc avoids one
+        // Bᵢ entirely).
+        const std::size_t flips = a_eq_b ? 0 : piece_idx;
+        const bool a2_on_piece1_side =
+            first_on_piece1_side == (flips % 2 == 0);
+        reject_piece1 = !a2_on_piece1_side;
     }
 
     // ── Branch to the child covering the KEPT piece (tex 252: "we find
@@ -871,6 +1047,18 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
     bool keep_piece1 = !reject_piece1;
     bool keep_probe_side = (keep_piece1 == probe_in_piece1);
     bool go_left = (keep_probe_side == probe_child_is_left);
+#ifdef CHAZELLE_TRACE_FUSION
+    std::fprintf(stderr,
+                 "[descend] ab y=%g@%zu L=(%zu,%s) R=(%zu,%s) wraps=%d "
+                 "a=%s a_in=%d b_in=%d a'=%d b'=%d rej1=%d probe=%zu "
+                 "p1=%d\n",
+                 y_ab.y, y_ab.tag, ab.left_edge,
+                 ab.left_side == LEFT ? "L" : "R", ab.right_edge,
+                 ab.right_side == LEFT ? "L" : "R", (int)ab_wraps,
+                 left_is_a ? "left" : "right", (int)a_in, (int)b_in,
+                 (int)a_prime_exists, (int)b_prime_exists,
+                 (int)reject_piece1, probe_arc, (int)probe_in_piece1);
+#endif
     *next_node = go_left ? node.left_child : node.right_child;
     assert(*next_node != NONE &&
            "[C91 §2.3]: internal TD node has two children");
@@ -930,20 +1118,20 @@ VisiblePoint search_piece(const PieceSearchContext& ctx) {
                                                 vidx_c))
                             continue;
                     }
-                    // The site must lie on THIS arc (a mid-edge chord
+                    // The candidate must lie on THIS arc (a mid-edge chord
                     // endpoint may cut the edge short); vertices outside
                     // the arc belong to a neighboring region.
-                    TourPos site = tour_pos(Ca, ee, ctx.s, vy);
+                    TourPos cand = tour_pos(Ca, ee, ctx.s, vy);
                     TourPos a_start = tour_pos(
                         Ca, ra.first_edge, ra.first_side,
                         Sa.arc_start_symbolic_y(arcs.arcs[k], Ca));
                     TourPos a_end = tour_pos(
                         Ca, ra.last_edge, ra.last_side,
                         Sa.arc_end_symbolic_y(arcs.arcs[k], Ca));
-                    if (!in_closed_cyclic(site, a_start, a_end)) continue;
+                    if (!in_closed_cyclic(cand, a_start, a_end)) continue;
 
                     std::size_t edge_c = ctx.edge_off + ctx.lo + ee;
-                    SiteShot shot = try_site(edge_c, ctx.s, vy,
+                    CandidateShot shot = try_candidate_vertex(edge_c, ctx.s, vy,
                                              *ctx.S, *ctx.C, ctx.region,
                                              ctx.A2, *ctx.cycle, *ctx.fctx);
                     if (shot.success)
@@ -1051,7 +1239,7 @@ VisiblePoint find_visible_point(const Submap& S, const Polygon& C,
                         if (is_inside_companion(C, off + e, s, vidx_c))
                             continue;
                     }
-                    SiteShot shot = try_site(off + e, s, vy, S, C, region,
+                    CandidateShot shot = try_candidate_vertex(off + e, s, vy, S, C, region,
                                              A2, cycle, fctx);
                     if (shot.success) {
                         VisiblePoint vp;
@@ -1188,6 +1376,34 @@ void restore_conformality(Submap& S, const Polygon& C,
                     cycle, provenance, oracles);
                 if (!vp.found) continue;
 
+#ifdef CHAZELLE_EXPENSIVE_ASSERTS
+                // [C91 §3.2 tex 264]: the added chord joins a mutually
+                // visible pair with respect to C ([C91 §2.1 tex 74]).
+                // Gated: O(m) brute-force shot per insertion.
+                {
+                    Point pp{vp.p_x, vp.y.y, vp.y.tag};
+                    RayHit h = naive_first_contact(
+                        C, pp, vp.y,
+                        shooting_direction(vp.p_edge, vp.p_side, C),
+                        /*source_edge=*/vp.p_edge);
+                    [[maybe_unused]] bool ok = h.hit && h.x == vp.q_x;
+                    if (!ok)
+                        std::fprintf(stderr,
+                                     "BAD 3.2 CHORD y=%g@%zu p=(%zu,%s,"
+                                     "x=%g) q=(%zu,%s,x=%g) truth=(%zu,"
+                                     "%s,x=%g)\n",
+                                     vp.y.y, vp.y.tag, vp.p_edge,
+                                     vp.p_side == LEFT ? "L" : "R",
+                                     vp.p_x, vp.q_edge,
+                                     vp.q_side == LEFT ? "L" : "R",
+                                     vp.q_x, h.edge,
+                                     h.side == LEFT ? "L" : "R", h.x);
+                    assert(ok &&
+                           "[C91 §3.2 tex 264]: Lemma 3.2's point must "
+                           "actually see its partner w.r.t. C");
+                }
+#endif
+
                 // The cycle's table arcs, in boundary order, for
                 // insert_chord.
                 std::vector<std::size_t> flat;
@@ -1222,6 +1438,48 @@ void restore_conformality(Submap& S, const Polygon& C,
                 found = true;
             }
         }
+#ifdef CHAZELLE_TRACE_FUSION
+        if (!found) {
+            // Diagnostic: brute-force the Lemma 3.3 guarantee.
+            for (std::size_t i = 0; i < k; ++i) {
+                const Arc& ga = S.arc(cycle.arcs[i].arc);
+                ArcLeg lg[3];
+                std::size_t nl = ga.legs(S.start_vertex, S.end_vertex, lg);
+                for (std::size_t g = 0; g < nl; ++g)
+                    for (std::size_t e = lg[g].lo; e <= lg[g].hi; ++e)
+                        for (std::size_t vv = e; vv <= e + 1; ++vv) {
+                            SymbolicY vy = symbolic_y_of(C.vertex(vv));
+                            if (!fused_arc_contains(S, C,
+                                    cycle.arcs[i].arc, e, lg[g].side, vy))
+                                continue;
+                            if (is_inside_companion(C, e, lg[g].side, vv))
+                                continue;
+                            Point p{edge_x_at_y(C, e, vy), vy.y, vy.tag};
+                            RayHit h = naive_first_contact(
+                                C, p, vy,
+                                shooting_direction(e, lg[g].side, C),
+                                /*source_edge=*/e);
+                            if (!h.hit) continue;
+                            for (std::size_t j = 0; j < k; ++j) {
+                                if (j == i || j == (i + 1) % k ||
+                                    j == (i + k - 1) % k)
+                                    continue;
+                                if (fused_arc_contains(S, C,
+                                        cycle.arcs[j].arc, h.edge,
+                                        h.side, vy))
+                                    std::fprintf(stderr,
+                                        "[3.3] candidate arc#%zu (%zu,%s,y=%g"
+                                        "@%zu) sees arc#%zu at (%zu,%s,"
+                                        "x=%g)\n",
+                                        i, e,
+                                        lg[g].side == LEFT ? "L" : "R",
+                                        vy.y, vy.tag, j, h.edge,
+                                        h.side == LEFT ? "L" : "R", h.x);
+                            }
+                        }
+            }
+        }
+#endif
         // [C91 §3.2 Lemma 3.3]: k > 4 guarantees a nonconsecutive pair
         // with a vertex of ∂C on one seeing the other; Lemma 3.2 finds
         // it.  (Zero-length arcs cannot carry the guarantee — their

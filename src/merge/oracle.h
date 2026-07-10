@@ -129,9 +129,22 @@ struct RayHit {
 // Conditions (1)–(3) summarized; full quotes in `assert_cut_postconditions`.
 struct ArcPiece {
     Subarc subarc;                  // (1): location on ∂C, clockwise.
-    const Submap* submap = nullptr; // (3): h(γᵢ)-granular conformal V(ᾱⱼ); null for boundary pieces.
+    const Submap* submap = nullptr; // (3): conformal V(ᾱⱼ); null for boundary pieces.
     const Polygon* curve = nullptr; // (3): underlying ᾱⱼ; null for boundary pieces.
     bool is_boundary_piece = false; // true ⟹ single-edge ᾱ₁/ᾱ₂ at α''s endpoints.
+    // (3): the γⱼ for which `submap` is γⱼ-granular, with γⱼ ≤ h(γᵢ).
+    // tex 170 says "an h(γᵢ)-granular conformal submap of V(ᾱⱼ) is
+    // available", but granularity is not monotone in γ (criterion (ii)
+    // of [C91 §2.3 tex 121] demands MORE contraction at larger γ), and
+    // the paper's own oracle hands out pieces of differing
+    // granularities: [C91 §4.1 tex 352] "we have conformal submaps of
+    // granularity AT MOST 2^⌈β⌈βλ⌉⌉" — the up-phase pieces are chains
+    // in grades μ ≤ ⌈βλ⌉ whose canonical submaps are 2^⌈βμ⌉-granular
+    // ([C91 §4.1 tex 338]).  h(γᵢ) is the uniform bound (tex 353:
+    // "h(γ) ≤ 2^⌈β⌈βλ⌉⌉") entering the §3.2 complexity ("there are only
+    // O(h(γ₂)) vertices in the region", tex 252), which needs region
+    // weights ≤ h — implied by γⱼ-granularity with γⱼ ≤ h.
+    std::size_t granularity = 0;
 };
 
 // [C91 §3.0(i) tex 166–169]: Ray-shooter — "given any point p along with
@@ -142,9 +155,25 @@ struct RayShootingOracle {
     virtual ~RayShootingOracle() = default;
     // @param arc_idx  region arc α's index in Sᵢ's arc-sequence
     //                 (tex 166: "specified by a pointer to its arc-structure").
+    // @param source_x_offset  the SOURCE wall's perturbed x-offset
+    //                 (polygon.h::perturbed_x_offset — how far the SoS
+    //                 perturbation really moves the point off its raw
+    //                 position, computed once by the original caller in
+    //                 the source's own frame; the offset is plain
+    //                 geometry, identical in every subchain frame), or
+    //                 SOURCE_OFFSET_NONE.  [C91 §2 tex 47]: a contact
+    //                 at raw distance 0 shares the source's raw point;
+    //                 whether it is strictly FORWARD (direct) or met
+    //                 after a full wrap is decided by comparing the two
+    //                 perturbed x-offsets
+    //                 (polygon.h::perturbed_hit_forward).  Without the
+    //                 source's offset the historic convention applies
+    //                 (d = 0 ⟹ wrapped), exact when p is a wall of its
+    //                 own duplicate pair.
     virtual RayHit shoot(Point p, Side direction,
                          std::size_t arc_idx,
-                         const Subarc& target) const = 0;
+                         const Subarc& target,
+                         double source_x_offset = SOURCE_OFFSET_NONE) const = 0;
 };
 
 // [C91 §3.0(ii) tex 170]: Arc-cutter — subdivides α' into at most g(γᵢ)
@@ -258,14 +287,22 @@ inline void assert_cut_postconditions(
             assert(!p.submap->tree_decomposition().empty() &&
                    "[C91 §2.4(iv) tex 139]: normal-form conformal submap "
                    "needs its tree decomposition");
+            // (3) + [C91 §4.1 tex 352]: each piece submap is γⱼ-granular
+            // for a declared γⱼ ≤ h(γᵢ) (see ArcPiece::granularity).
+            assert(p.granularity >= 1 && p.granularity <= h_gamma &&
+                   "[C91 §4.1 tex 352]: piece granularity is at most h(γᵢ)");
 #ifdef CHAZELLE_EXPENSIVE_ASSERTS
             // Gated: O(m) per piece × g(γᵢ) pieces would blow cut()'s
             // O(g(γᵢ)) budget at [C91 §3.0(ii) tex 170].
             p.submap->check_invariants(*p.curve);
             assert(p.submap->is_conformal() &&
                    "[C91 §3.0(ii)(3) tex 170]: non-boundary piece must be conformal");
-            assert(p.submap->is_granular(h_gamma, *p.curve) &&
-                   "[C91 §3.0(ii)(3) tex 170]: non-boundary piece must be h(γᵢ)-granular");
+            assert(p.submap->is_granular(p.granularity, *p.curve) &&
+                   "[C91 §3.0(ii)(3) tex 170]: non-boundary piece must be "
+                   "γⱼ-granular for its declared γⱼ");
+            assert(p.submap->is_semigranular(h_gamma) &&
+                   "[C91 §3.2 tex 252]: O(h(γᵢ)) vertices per piece region "
+                   "— weights bounded by h(γᵢ)");
 #endif
         } else {
             // (3): boundary pieces are single-edge at α''s endpoints.

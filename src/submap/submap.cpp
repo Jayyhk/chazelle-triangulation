@@ -1,6 +1,7 @@
 // src/submap/submap.cpp
 
 #include "submap.h"
+#include <cstdio>
 #include "../polygon/polygon.h"
 
 #include <algorithm>
@@ -156,9 +157,127 @@ std::size_t Submap::add_chord(Chord chord) {
     return idx;
 }
 
+// ════════════════════════════════════════════════════════════════
+//  chord_regions_below_above ([C91 §2.2 tex 96])
+// ════════════════════════════════════════════════════════════════
+
+// [C91 §2.2 tex 96]: does the region of `arc_idx` lie strictly ABOVE
+// the chord, judged locally at the chord endpoint (edge_at, side_at)?
+// (The polygon vertex adjacent to the chord along the arc's traversal
+// decides; SoS gives it a definite side.)
+namespace {
+
+bool arc_region_above_chord(const Submap& S, const Polygon& C,
+                            const Chord& ch, std::size_t edge_at,
+                            Side side_at, std::size_t arc_idx) {
+    const Arc& a = S.arc(arc_idx);
+    bool first_matches =
+        (a.first_edge == edge_at && a.first_side == side_at);
+    bool last_matches =
+        (a.last_edge == edge_at && a.last_side == side_at);
+    bool starts_at_chord;
+    if (first_matches && !last_matches) {
+        starts_at_chord = true;
+    } else if (!first_matches && last_matches) {
+        starts_at_chord = false;
+    } else {
+        assert(first_matches && last_matches &&
+               "adj arc must touch the chord endpoint via first or last");
+        starts_at_chord = symbolic_y_equal(
+            S.arc_start_symbolic_y(arc_idx, C), ch.symbolic_y());
+    }
+    std::size_t adj_v;
+    if (starts_at_chord) {
+        adj_v = (a.first_side == LEFT) ? C.edge(a.first_edge).end_idx
+                                       : C.edge(a.first_edge).start_idx;
+    } else {
+        adj_v = (a.last_side == LEFT) ? C.edge(a.last_edge).start_idx
+                                      : C.edge(a.last_edge).end_idx;
+    }
+    const SymbolicY vy = symbolic_y_of(C.vertex(adj_v));
+    if (symbolic_y_equal(vy, ch.symbolic_y())) {
+        // Degenerate: the deciding arc has zero extent at the chord's
+        // own level — it is the POLAR CAP's boundary arc (a region
+        // bounded by this chord alone, plus ∂C points at its level).
+        // Such a chord wraps at a level meeting C only at its source
+        // vertex, which is therefore C's global y-extremum ([C91 §2.1
+        // tex 70]: a horizontal circle strictly inside C's y-range
+        // crosses the connected curve elsewhere).  The cap lies above
+        // ⟺ the chord sits at the global maximum.
+        const SymbolicY maxy = symbolic_y_of(C.vertex(C.max_y_vertex()));
+        if (symbolic_y_equal(ch.symbolic_y(), maxy)) return true;
+        assert(symbolic_y_equal(
+                   ch.symbolic_y(),
+                   symbolic_y_of(C.vertex(C.min_y_vertex()))) &&
+               "[C91 §2.1 tex 70]: a polar-cap chord sits at C's "
+               "global y-extremum");
+        return false;
+    }
+    return symbolic_y_greater(vy, ch.symbolic_y());
+}
+
+} // namespace
+
+// The two regions flanking a chord vertically (constant along the whole
+// chord: a chord of a submap separates exactly its two regions).
+void Submap::chord_regions_below_above(std::size_t ci, const Polygon& C,
+                                    std::size_t* below,
+                                    std::size_t* above) const {
+    const Submap& S = *this;
+    const Chord& c = S.chord(ci);
+    const Chord::AdjArcs* adj = nullptr;
+    std::size_t edge_at = NONE;
+    Side side_at = LEFT;
+    if (c.left_adj.count == 2) {
+        adj = &c.left_adj; edge_at = c.left_edge; side_at = c.left_side;
+    } else if (c.right_adj.count == 2) {
+        adj = &c.right_adj; edge_at = c.right_edge; side_at = c.right_side;
+    }
+    if (adj) {
+        bool a0 = arc_region_above_chord(S, C, c, edge_at, side_at,
+                                         adj->arcs[0]);
+        bool a1 = arc_region_above_chord(S, C, c, edge_at, side_at,
+                                         adj->arcs[1]);
+        assert(a0 != a1 &&
+               "[C91 §2.2 tex 96]: the two adj arcs at a mid-edge chord "
+               "endpoint lie on opposite sides of the chord");
+        std::size_t r0 = S.arc(adj->arcs[0]).region_node;
+        std::size_t r1 = S.arc(adj->arcs[1]).region_node;
+        *above = a0 ? r0 : r1;
+        *below = a0 ? r1 : r0;
+        return;
+    }
+    // Both endpoints are polygon vertices: one adj arc per endpoint.
+    bool left_above = arc_region_above_chord(S, C, c, c.left_edge,
+                                             c.left_side,
+                                             c.left_adj.arcs[0]);
+    std::size_t r_arc = S.arc(c.left_adj.arcs[0]).region_node;
+    std::size_t r_other = (c.region[0] == r_arc) ? c.region[1]
+                                                 : c.region[0];
+    *above = left_above ? r_arc : r_other;
+    *below = left_above ? r_other : r_arc;
+}
+
+
+// ── Point-arc test ([C91 §2.2 tex 96/106]) ──────────────────────
+
+bool Submap::arc_is_point(std::size_t arc_idx,
+                          const Polygon& polygon) const {
+    assert(arc_idx < arc_sequence_.size() && !arc_sequence_[arc_idx].dead);
+    const Arc& a = arc_sequence_[arc_idx];
+    // A wrap encoding always spans a turnaround crossing; a same-face
+    // pair is a point iff its two endpoint positions coincide (same
+    // symbolic y on the same face — [C91 §2 tex 47]).
+    return a.edge_count == 0 && a.first_side == a.last_side &&
+           a.first_edge == a.last_edge &&
+           symbolic_y_equal(arc_start_symbolic_y(arc_idx, polygon),
+                            arc_end_symbolic_y(arc_idx, polygon));
+}
+
 // ── Junction-mate lookup ([C91 §2.2 tex 96]) ────────────────────
 
 std::size_t Submap::find_junction_arc(const Chord& c,
+                                      bool query_left,
                                       std::size_t edge, Side side,
                                       std::size_t vertex_idx,
                                       bool want_after,
@@ -178,6 +297,37 @@ std::size_t Submap::find_junction_arc(const Chord& c,
            "[C91 §2.2 tex 96]: junction vertex must bound the endpoint edge");
 
     SymbolicY jy = c.symbolic_y();
+
+    // [C91 §2.2 tex 96] alternation: pin the mate's region (see
+    // submap.h).  Null-length chords keep the exclusion-based
+    // disambiguation (their two slots share one position).
+    std::size_t expected_region = NONE;
+    if (!c.is_null_length) {
+        const Chord::AdjArcs& other = query_left ? c.right_adj
+                                                 : c.left_adj;
+        std::size_t other_before;
+        if (other.count == 1) {
+            other_before = other.arcs[0];
+        } else {
+            const std::size_t oe = query_left ? c.right_edge
+                                              : c.left_edge;
+            const Side os = query_left ? c.right_side : c.left_side;
+            auto starts_there = [&](std::size_t ai) {
+                const Arc& a = arc_sequence_[ai];
+                return a.first_edge == oe && a.first_side == os &&
+                       symbolic_y_equal(
+                           arc_start_symbolic_y(ai, polygon), jy);
+            };
+            other_before = starts_there(other.arcs[0]) ? other.arcs[1]
+                                                       : other.arcs[0];
+        }
+        const std::size_t rb = arc_sequence_[other_before].region_node;
+        assert((rb == c.region[0] || rb == c.region[1]) &&
+               "[C91 §2.4(ii)]: slot arcs bound the chord's regions");
+        expected_region = want_after
+            ? rb
+            : (c.region[0] == rb ? c.region[1] : c.region[0]);
+    }
 
     // A mate at vertex v carries one of v's two incident edges,
     // v−1 or v (edge i runs vertex i → i+1): arcs bounded at a vertex
@@ -199,10 +349,31 @@ std::size_t Submap::find_junction_arc(const Chord& c,
         if (a.dead) return;
         if (a.region_node != c.region[0] && a.region_node != c.region[1])
             return;
+        if (expected_region != NONE && a.region_node != expected_region)
+            return;
         Side a_side = want_after ? a.first_side : a.last_side;
         std::size_t a_edge = want_after ? a.first_edge : a.last_edge;
-        if (a_side != side) return;
         if (a_edge + 1 < vertex_idx || a_edge > vertex_idx) return;
+        if (a_side != side) {
+            // [C91 §2.1 tex 72]: at an interior-EXTREMUM junction the
+            // tour crosses the vertex between corner-SIBLING walls on
+            // the two adjacent edges, and the sibling's side label
+            // flips whenever the edges' orientations differ (inside
+            // companions face each other across the wedge; outside
+            // companions round the outer turn).  Accept the mate under
+            // the sibling label: other edge, same companion class.  At
+            // a non-extremum vertex the geometric wall keeps its side
+            // label across the corner, so a flipped label there names
+            // the curve's OTHER side — never the junction's mate.
+            if (!polygon.is_y_extremum(vertex_idx)) return;
+            const std::size_t other_e =
+                (edge == vertex_idx) ? vertex_idx - 1 : vertex_idx;
+            if (a_edge != other_e) return;
+            if (is_inside_companion(polygon, a_edge, a_side,
+                                    vertex_idx) !=
+                is_inside_companion(polygon, edge, side, vertex_idx))
+                return;
+        }
         SymbolicY ay = want_after ? arc_start_symbolic_y(ai, polygon)
                                   : arc_end_symbolic_y(ai, polygon);
         if (!symbolic_y_equal(ay, jy)) return;
@@ -337,9 +508,41 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
     bool left_is_vertex  = left_vertex != NONE;
     bool right_is_vertex = right_vertex != NONE;
 
+    // ── Endpoint-y derivation cache ──────────────────────────────
+    // A glue extends its survivor past the removed chord's endpoint,
+    // but the chord's adjacency slots still name the survivor as the
+    // arc bounded there ([C91 §2.4(ii)]) until the removal completes —
+    // so a LATER glue in this same removal must read the survivor's
+    // true endpoints from the values the earlier glue established, not
+    // from the (now stale) slot derivations.  ≤ 2 glues per removal
+    // ([C91 §2.2 tex 94]).
+    struct GluedYs { std::size_t arc; SymbolicY start, end; };
+    GluedYs glued[2];
+    std::size_t n_glued = 0;
+    auto start_of = [&](std::size_t ai) -> SymbolicY {
+        for (std::size_t k = 0; k < n_glued; ++k)
+            if (glued[k].arc == ai) return glued[k].start;
+        return arc_start_symbolic_y(ai, polygon);
+    };
+    auto end_of = [&](std::size_t ai) -> SymbolicY {
+        for (std::size_t k = 0; k < n_glued; ++k)
+            if (glued[k].arc == ai) return glued[k].end;
+        return arc_end_symbolic_y(ai, polygon);
+    };
+    auto record_glued = [&](std::size_t ai, SymbolicY sy, SymbolicY ey) {
+        for (std::size_t k = 0; k < n_glued; ++k)
+            if (glued[k].arc == ai) {
+                glued[k].start = sy;
+                glued[k].end = ey;
+                return;
+            }
+        assert(n_glued < 2 && "[C91 §2.2 tex 94]: at most 2 glues");
+        glued[n_glued++] = {ai, sy, ey};
+    };
+
     // [C91 §2.2 tex 94]: "glue back ∂C" — merge arc pairs at non-vertex
     // endpoints.  O(1): at most 2 pairs.
-    auto do_merge = [&](std::size_t ai, std::size_t aj) {
+    auto glue_arcs = [&](std::size_t ai, std::size_t aj) {
         assert(ai != NONE && ai < arc_sequence_.size() &&
                aj != NONE && aj < arc_sequence_.size() &&
                !arc_sequence_[ai].dead && !arc_sequence_[aj].dead &&
@@ -376,55 +579,57 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         // (per leg — both sides of a doubled-over C edge count; see
         // arc.h::arc_boundary_edge_count).
         //
-        // Zero-length pieces ([C91 §2.2 tex 96/106]: a single ∂C point;
-        // edge_count == 0) contribute NO edges — their recorded edge
-        // index is boundary-ambiguous (either edge incident on the
-        // vertex, [C91 §2.1 tex 72]), so folding it into the merged
-        // range could pick up an edge the arc does not span.
-        //
-        // Exception: a zero-length WRAP piece (first_side != last_side —
-        // the geometrically-empty passage around an endpoint of C
-        // between its two companions, [C91 §2.1 tex 72] case 3) must
-        // donate its side crossing, or the merged structure would lose
-        // the double-backing ([C91 §2.4 tex 142]).  Its edges are
-        // unambiguous: a C endpoint has a single incident edge.
-        if (a_dead.edge_count == 0) {
-            if (a_dead.first_side != a_dead.last_side) {
-                a_keep.last_edge = a_dead.last_edge;
-                a_keep.last_side = a_dead.last_side;
-                // edge_count unchanged: the adopted crossing adds a
-                // zero-extent corner leg — no nonnull-length ∂C edge
-                // ([C91 §2.2 tex 106]).
-            }
-            // else: merged arc = a_keep plus a point at its end.
-        } else if (a_keep.edge_count == 0) {
-            if (a_keep.first_side != a_keep.last_side) {
-                // Keep the crossing at a_keep's start; adopt the span.
-                a_keep.last_edge  = a_dead.last_edge;
-                a_keep.last_side  = a_dead.last_side;
-                a_keep.edge_count = a_dead.edge_count;
-            } else {
-                // Merged arc = a point plus a_dead's span: adopt it.
-                a_keep.first_edge = a_dead.first_edge;
-                a_keep.first_side = a_dead.first_side;
-                a_keep.last_edge  = a_dead.last_edge;
-                a_keep.last_side  = a_dead.last_side;
-                a_keep.edge_count = a_dead.edge_count;
-            }
+        // POINT pieces ([C91 §2.2 tex 96]: a single ∂C point —
+        // arc_is_point, which distinguishes them from zero-WEIGHT arcs
+        // spanning null-edge faces of [C91 §4 tex 316]'s padding)
+        // contribute NO extent, and their recorded edge index is
+        // boundary-ambiguous (either edge incident on the vertex,
+        // [C91 §2.1 tex 72]), so folding it into the merged range could
+        // pick up an edge the arc does not span.  Every non-point mate —
+        // including a zero-weight null-run span and the zero-length WRAP
+        // passage around an endpoint of C ([C91 §2.4 tex 142]: the
+        // crossing must be donated or the merged structure loses its
+        // double-backing) — folds its span into the encoding.
+        // Point tests through the cache (a prior survivor's slot
+        // derivations are stale, see above).
+        auto is_point_here = [&](std::size_t idx) {
+            const Arc& a = arc_sequence_[idx];
+            return a.edge_count == 0 && a.first_side == a.last_side &&
+                   a.first_edge == a.last_edge &&
+                   symbolic_y_equal(start_of(idx), end_of(idx));
+        };
+        const bool dead_is_point = is_point_here(aj);
+        const bool keep_is_point = is_point_here(ai);
+        SymbolicY merged_start_y{}, merged_end_y{};
+        if (dead_is_point) {
+            // Merged arc = a_keep plus a point at its end: unchanged.
+            merged_start_y = start_of(ai);
+            merged_end_y   = end_of(ai);
+        } else if (keep_is_point) {
+            // Merged arc = a point plus a_dead's span: adopt it.
+            merged_start_y = start_of(aj);
+            merged_end_y   = end_of(aj);
+            a_keep.first_edge = a_dead.first_edge;
+            a_keep.first_side = a_dead.first_side;
+            a_keep.last_edge  = a_dead.last_edge;
+            a_keep.last_side  = a_dead.last_side;
+            a_keep.edge_count = a_dead.edge_count;
         } else {
             // Recompute from the merged encoding rather than adding
             // `a+b−shared`: a mid-edge junction's shared edge would be
             // double-counted, and per-leg counting needs the corner
             // corrections.  Endpoint ys are read BEFORE the mutation,
-            // while both arcs' bounding chords still reference them.
-            SymbolicY merged_start_y = arc_start_symbolic_y(ai, polygon);
-            SymbolicY merged_end_y   = arc_end_symbolic_y(aj, polygon);
+            // while both arcs' bounding chords still reference them
+            // (or from the cache for a prior glue's survivor).
+            merged_start_y = start_of(ai);
+            merged_end_y   = end_of(aj);
             a_keep.last_edge = a_dead.last_edge;
             a_keep.last_side = a_dead.last_side;
             a_keep.edge_count = arc_boundary_edge_count(
                 a_keep, polygon, start_vertex, end_vertex,
                 merged_start_y, merged_end_y);
         }
+        record_glued(ai, merged_start_y, merged_end_y);
 
         // Tombstone the dead arc.
         a_dead.dead = true;
@@ -509,17 +714,17 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
              oa.last_edge + 1 == c.left_edge || oa.last_edge == c.left_edge + 1) &&
             symbolic_y_equal(arc_end_symbolic_y(outer, polygon), c.symbolic_y());
         if (outer_is_before) {
-            do_merge(outer, inner);
+            glue_arcs(outer, inner);
             std::size_t after = find_junction_arc(
-                c, c.left_edge, c.left_side, left_vertex,
-                /*want_after=*/true, outer, inner, polygon);
-            do_merge(outer, after);
+                c, /*query_left=*/true, c.left_edge, c.left_side,
+                left_vertex, /*want_after=*/true, outer, inner, polygon);
+            glue_arcs(outer, after);
         } else {
             std::size_t before = find_junction_arc(
-                c, c.left_edge, c.left_side, left_vertex,
-                /*want_after=*/false, outer, inner, polygon);
-            do_merge(before, inner);
-            do_merge(before, outer);
+                c, /*query_left=*/true, c.left_edge, c.left_side,
+                left_vertex, /*want_after=*/false, outer, inner, polygon);
+            glue_arcs(before, inner);
+            glue_arcs(before, outer);
         }
     } else {
         // [C91 §2.2 tex 94/96]: mid-edge endpoint ⟹ both halves recorded
@@ -529,29 +734,31 @@ std::size_t Submap::remove_chord(std::size_t chord_idx,
         // including at C's endpoint companions, where the merged arc
         // double-backs around the endpoint of C as one arc-structure
         // ([C91 §2.4 tex 142]).
-        auto glue_endpoint = [&](const Chord::AdjArcs& adj,
+        auto glue_endpoint = [&](const Chord::AdjArcs& adj, bool ql,
                                  std::size_t edge, Side side,
                                  std::size_t vtx) {
             if (vtx == NONE) {
                 assert(adj.count == 2 &&
                        "[C91 §2.2 tex 94]: non-vertex endpoint needs 2 adj arcs");
-                do_merge(adj.arcs[0], adj.arcs[1]);
+                glue_arcs(adj.arcs[0], adj.arcs[1]);
                 return;
             }
             assert(adj.count == 1 &&
                    "[C91 §2.2 tex 94]: vertex endpoint records one adj arc");
             std::size_t before = adj.arcs[0];
             std::size_t after = find_junction_arc(
-                c, edge, side, vtx, /*want_after=*/true, before, NONE,
-                polygon);
-            do_merge(before, after);
+                c, ql, edge, side, vtx, /*want_after=*/true, before,
+                NONE, polygon);
+            glue_arcs(before, after);
         };
-        glue_endpoint(c.left_adj, c.left_edge, c.left_side, left_vertex);
-        glue_endpoint(c.right_adj, c.right_edge, c.right_side, right_vertex);
+        glue_endpoint(c.left_adj, true, c.left_edge, c.left_side,
+                      left_vertex);
+        glue_endpoint(c.right_adj, false, c.right_edge, c.right_side,
+                      right_vertex);
     }
 
     // Reassign r1's arcs to r0 by walking r1's incident chords' adj arcs
-    // ([C91 §2.4(ii) tex 137]).  All entries are live: do_merge's
+    // ([C91 §2.4(ii) tex 137]).  All entries are live: glue_arcs's
     // replace_arc rewrote every reference to a killed arc — including
     // the removed chord's own slots — to the surviving arc.
     auto reassign_live = [&](const Chord::AdjArcs& adj) {
@@ -1532,14 +1739,97 @@ SymbolicY Submap::arc_start_symbolic_y(std::size_t arc_idx,
             return c.symbolic_y();
     }
 
-    // [C91 §2.1 tex 72]: arc-starts not at chords sit at polygon
-    // vertices — the outside-pair companions of an interior y-extremum
-    // (tex 72 case 2), the outer after-arc of a null-length chord's
-    // duplicate pair, or the closed arc's canonical cut at C's start
-    // turnaround ([C91 §2.4 tex 142/138]).  The polygon's input table
-    // ([C91 §2.4(iii) tex 138]) carries the y directly: edge first_edge
-    // starts at vertex(first_edge) under LEFT traversal (ascending) and
-    // at vertex(first_edge+1) under RIGHT traversal (descending).
+    // [C91 §2.1 tex 72] case 3: a chord at a companion of C's OWN
+    // endpoint.  The count-1 vertex-slot convention records only the
+    // before-arc there, and the after-arc passes THROUGH the turnaround
+    // (rebuild's sweep deliberately keeps the turnaround's single
+    // incident edge as its first pointer, [C91 §2.4 tex 142]), so its
+    // start is the C-endpoint vertex itself — NOT the face's
+    // traversal-start vertex derived below.  Exactly two positions
+    // behave this way: the start vertex's RIGHT companion (the tour's
+    // last position — its after-arc is the start_arc) and the end
+    // vertex's LEFT companion (just before the end turnaround — its
+    // after-arc is the end_arc).  A chord there pins that arc's start
+    // to the companion exactly: no ∂C position lies between the
+    // companion and the turnaround.
+    if (start_vertex != NONE && end_vertex != NONE) {
+        auto companion_chord_at = [&](std::size_t edge, Side side,
+                                      SymbolicY vy) -> bool {
+            for (std::size_t ci : nodes_[a.region_node].incident_chords) {
+                const Chord& c = chords_[ci];
+                if (c.dead) continue;
+                if (!symbolic_y_equal(c.symbolic_y(), vy)) continue;
+                if ((c.left_edge == edge && c.left_side == side) ||
+                    (c.right_edge == edge && c.right_side == side))
+                    return true;
+            }
+            return false;
+        };
+        if (arc_idx == start_arc && a.first_side == RIGHT &&
+            a.first_edge == start_vertex) {
+            SymbolicY vy = symbolic_y_of(polygon.vertex(start_vertex));
+            if (companion_chord_at(a.first_edge, RIGHT, vy)) return vy;
+        }
+        if (arc_idx == end_arc && a.first_side == LEFT &&
+            a.first_edge + 1 == end_vertex) {
+            SymbolicY vy = symbolic_y_of(polygon.vertex(end_vertex));
+            if (companion_chord_at(a.first_edge, LEFT, vy)) return vy;
+        }
+    }
+
+    // [C91 §2.2 tex 96]: an arc may START at a chord endpoint that
+    // sits AT a polygon vertex — the count-1 vertex-slot convention
+    // records only the BEFORE-arc there ([C91 §2.4(ii) tex 137]), so
+    // the junction's after-arc reaches this derivation unrecorded.  It
+    // starts at the face's traversal-END vertex (where the chord
+    // attaches), not the traversal-start vertex of the input-table
+    // derivation below.
+    // The chord's endpoint label and the arc's first label both name
+    // that corner point, possibly under the two adjacent edges' labels
+    // ([C91 §2.1 tex 72] corner siblings; at an extremum the sibling's
+    // side flips with edge orientation).
+    {
+        const std::size_t vend = (a.first_side == LEFT)
+                                     ? a.first_edge + 1
+                                     : a.first_edge;
+        const SymbolicY vy = symbolic_y_of(polygon.vertex(vend));
+        const std::size_t other_e = (a.first_edge == vend)
+                                        ? vend - 1
+                                        : vend;
+        auto corner_label_matches = [&](std::size_t ce, Side cs) {
+            if (ce == a.first_edge && cs == a.first_side) return true;
+            if (ce != other_e || other_e >= polygon.num_edges())
+                return false;
+            if (polygon.is_y_extremum(vend))
+                return is_inside_companion(polygon, ce, cs, vend) ==
+                       is_inside_companion(polygon, a.first_edge,
+                                           a.first_side, vend);
+            return cs == a.first_side;
+        };
+        for (std::size_t ci : nodes_[a.region_node].incident_chords) {
+            const Chord& c = chords_[ci];
+            if (c.dead || c.is_null_length) continue;
+            if (!symbolic_y_equal(c.symbolic_y(), vy)) continue;
+            const Chord::AdjArcs* adj = nullptr;
+            if (corner_label_matches(c.left_edge, c.left_side))
+                adj = &c.left_adj;
+            else if (corner_label_matches(c.right_edge, c.right_side))
+                adj = &c.right_adj;
+            if (!adj || adj->count != 1) continue;
+            if (adj->arcs[0] == arc_idx) continue;   // the before-arc
+            return c.symbolic_y();
+        }
+    }
+
+    // [C91 §2.1 tex 72]: remaining arc-starts not at chords sit at
+    // polygon vertices — the outside-pair companions of an interior
+    // y-extremum (tex 72 case 2), the outer after-arc of a null-length
+    // chord's duplicate pair, or the closed arc's canonical cut at C's
+    // start turnaround ([C91 §2.4 tex 142/138]).  The polygon's input
+    // table ([C91 §2.4(iii) tex 138]) carries the y directly: edge
+    // first_edge starts at vertex(first_edge) under LEFT traversal
+    // (ascending) and at vertex(first_edge+1) under RIGHT traversal
+    // (descending).
     assert(a.first_edge < polygon.num_edges() &&
            "[C91 §2.4(iii)]: first_edge must be a valid edge index");
     std::size_t vidx = (a.first_side == LEFT)
@@ -2107,15 +2397,15 @@ std::size_t Submap::simulated_contraction_weight(
              oa.last_edge + 1 == c.left_edge || oa.last_edge == c.left_edge + 1) &&
             symbolic_y_equal(arc_end_symbolic_y(outer, polygon), c.symbolic_y());
         std::size_t missing = find_junction_arc(
-            c, c.left_edge, c.left_side, v, /*want_after=*/outer_is_before,
-            outer, inner, polygon);
+            c, /*query_left=*/true, c.left_edge, c.left_side, v,
+            /*want_after=*/outer_is_before, outer, inner, polygon);
         std::size_t before = outer_is_before ? outer : missing;
         std::size_t after  = outer_is_before ? missing : outer;
         pairs[np++] = {before, inner};
         pairs[np++] = {inner, after};
     } else {
-        auto collect = [&](const Chord::AdjArcs& adj, std::size_t edge,
-                           Side side) {
+        auto collect = [&](const Chord::AdjArcs& adj, bool ql,
+                           std::size_t edge, Side side) {
             std::size_t v = endpoint_vertex(edge);
             if (v == NONE) {
                 assert(adj.count == 2 &&
@@ -2126,17 +2416,17 @@ std::size_t Submap::simulated_contraction_weight(
             assert(adj.count == 1 &&
                    "[C91 §2.2 tex 94]: vertex endpoint records one adj arc");
             std::size_t after = find_junction_arc(
-                c, edge, side, v, /*want_after=*/true, adj.arcs[0], NONE,
-                polygon);
+                c, ql, edge, side, v, /*want_after=*/true, adj.arcs[0],
+                NONE, polygon);
             pairs[np++] = {adj.arcs[0], after};
         };
-        collect(c.left_adj, c.left_edge, c.left_side);
-        collect(c.right_adj, c.right_edge, c.right_side);
+        collect(c.left_adj, true, c.left_edge, c.left_side);
+        collect(c.right_adj, false, c.right_edge, c.right_side);
     }
 
     // [C91 §2.2 tex 106]: the simulated merged arc's count must equal
-    // what remove_chord's do_merge would produce — fold the chain
-    // members left to right with do_merge's exact zero-length algebra
+    // what remove_chord's glue_arcs would produce — fold the chain
+    // members left to right with glue_arcs's exact zero-length algebra
     // to obtain the merged ENCODING, then count nonnull ∂C edges per
     // leg (arc.h::arc_boundary_edge_count).  The merged arc's endpoint
     // ys come from the chain's OUTER bounds, whose chords are all
@@ -2147,34 +2437,26 @@ std::size_t Submap::simulated_contraction_weight(
                    !arc_sequence_[members[i]].dead &&
                    "[C91 §2.4(ii)]: glue mates must be valid + live");
 
+        // Fold with glue_arcs's exact algebra: POINT members
+        // (arc_is_point) add nothing; every other member — including
+        // zero-weight null-run spans ([C91 §4 tex 316] padding) and
+        // zero-length wrap passages ([C91 §2.4 tex 142]) — folds its
+        // span into the encoding.
         Arc acc = arc_sequence_[members[0]];
+        bool acc_point = arc_is_point(members[0], polygon);
         for (std::size_t i = 1; i < n; ++i) {
             const Arc& d = arc_sequence_[members[i]];
-            if (d.edge_count == 0) {
-                // do_merge: a zero-length WRAP mate donates its side
-                // crossing; a zero non-wrap mate adds a point only.
-                if (d.first_side != d.last_side) {
-                    acc.last_edge = d.last_edge;
-                    acc.last_side = d.last_side;
-                }
-            } else if (acc.edge_count == 0) {
-                if (acc.first_side != acc.last_side) {
-                    // Keep the crossing at acc's start; adopt the span.
-                    acc.last_edge = d.last_edge;
-                    acc.last_side = d.last_side;
-                    acc.edge_count = d.edge_count;
-                } else {
-                    acc = d;    // point + span: adopt wholesale
-                }
+            if (arc_is_point(members[i], polygon)) {
+                // adds a point only
+            } else if (acc_point) {
+                acc = d;    // point + span: adopt wholesale
+                acc_point = false;
             } else {
                 acc.last_edge = d.last_edge;
                 acc.last_side = d.last_side;
-                // Exact count comes below; only nonzero-ness matters
-                // for the fold's branch tests.
-                acc.edge_count = 1;
             }
         }
-        if (acc.edge_count == 0) return;   // all-zero chain: one ∂C point
+        if (acc_point) return;   // all-point chain: one ∂C point
         std::size_t merged = arc_boundary_edge_count(
             acc, polygon, start_vertex, end_vertex,
             arc_start_symbolic_y(members[0], polygon),

@@ -1,4 +1,11 @@
-// tests/s2.5-tests.cpp — Tests for [C91 §2.5]: Shielding (Lemma 2.4).
+// tests/s2.5-tests.cpp — Tests for [C91 §2.5]: Lemma 2.4's piece
+// structure.
+//
+// The SIDE assignment (which B each piece is shielded from) is
+// configuration-dependent ([C91 §2.5 tex 156]) and computed from real
+// geometry in conformality.cpp::descend_step — its behavior is pinned
+// by the §3.2/§4.1 suites.  This suite pins the piece COUNTS and the
+// lemma's structural preconditions.
 
 #include "submap/shielding.h"
 
@@ -12,44 +19,29 @@ using namespace chazelle;
 // ════════════════════════════════════════════════════════════════
 
 static void test_no_intersection() {
-    // [C91 §2.5]: "else the lemma is trivially correct."
-    // A does not cross ab.  1 piece, shielded from B₂.
-    auto r = classify_shielding(false, false);
-    assert(r.num_pieces == 1);
-    assert(r.shielded_from[0] == BoundarySide::B2);
-
+    // [C91 §2.5]: "else the lemma is trivially correct."  A does not
+    // cross ab: one piece.
+    assert(shielding_piece_count(false, false) == 1);
     std::printf("  [PASS] no_intersection\n");
 }
 
 // ════════════════════════════════════════════════════════════════
-//  2. Only a' — single crossing (d on opposite side)
+//  2. Only a' — single crossing (Fig 2.8.2)
 // ════════════════════════════════════════════════════════════════
 
 static void test_a_prime_only() {
-    // d on H₂.  A crosses ab once at a'.
-    // [c, a'] shielded from B₂.
-    // [a', d] shielded from B₁.
-    auto r = classify_shielding(true, false);
-    assert(r.num_pieces == 2);
-    assert(r.shielded_from[0] == BoundarySide::B2);
-    assert(r.shielded_from[1] == BoundarySide::B1);
-
+    // A crosses ab once at a': pieces [c, a'] and [a', d].
+    assert(shielding_piece_count(true, false) == 2);
     std::printf("  [PASS] a_prime_only\n");
 }
 
 // ════════════════════════════════════════════════════════════════
-//  3. Both a' and b', distinct — double crossing
+//  3. Both a' and b', distinct — double crossing (Fig 2.8.1)
 // ════════════════════════════════════════════════════════════════
 
 static void test_both_distinct() {
-    // d on H₁ (between c and b).  A crosses ab twice.
-    // [c, a'] from B₂, [a', b'] from B₁, [b', d] from B₂.
-    auto r = classify_shielding(true, true, false);
-    assert(r.num_pieces == 3);
-    assert(r.shielded_from[0] == BoundarySide::B2);
-    assert(r.shielded_from[1] == BoundarySide::B1);
-    assert(r.shielded_from[2] == BoundarySide::B2);
-
+    // Pieces [c, a'], [a', b'], [b', d].
+    assert(shielding_piece_count(true, true, false) == 3);
     std::printf("  [PASS] both_distinct\n");
 }
 
@@ -58,98 +50,35 @@ static void test_both_distinct() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_both_coincident() {
-    // d on H₁.  A touches ab at one point (a' = b').
-    // Both pieces stay on B₁-side.
-    // [c, a'] from B₂, [a', d] from B₂.
-    auto r = classify_shielding(true, true, true);
-    assert(r.num_pieces == 2);
-    assert(r.shielded_from[0] == BoundarySide::B2);
-    assert(r.shielded_from[1] == BoundarySide::B2);
-
+    // A touches ab at one point (a' = b', no crossing): pieces
+    // [c, a'] and [a', d].
+    assert(shielding_piece_count(true, true, true) == 2);
     std::printf("  [PASS] both_coincident\n");
 }
 
 // ════════════════════════════════════════════════════════════════
-//  5. Shielding properties — consistency checks
+//  5. Structural properties over all admissible inputs
 // ════════════════════════════════════════════════════════════════
 
 static void test_properties() {
-    // Property: first piece is ALWAYS shielded from B₂ (c is on B₁-side).
+    // [C91 §2.5 Lemma 2.4 tex 153]: "subdivide A into a total of one,
+    // two, or three connected curves" — over every admissible input,
+    // the piece count is 1 + the number of DISTINCT subdivision
+    // points of ab ∩ A (a' and b' coinciding contribute one point).
     for (int a = 0; a <= 1; ++a) {
         for (int b = 0; b <= 1; ++b) {
-            if (b && !a) continue; // impossible
+            if (b && !a) continue;  // impossible: b' requires a'
             for (int eq = 0; eq <= 1; ++eq) {
-                if (!(a && b) && eq) continue; // eq only meaningful when both
-                auto r = classify_shielding(a != 0, b != 0, eq != 0);
-                assert(r.num_pieces >= 1 && r.num_pieces <= 3);
-                assert(r.shielded_from[0] == BoundarySide::B2 &&
-                       "[C91 §2.5]: first piece (from c) must always be "
-                       "shielded from B₂");
+                if (!(a && b) && eq) continue;  // eq needs both
+                const std::size_t n =
+                    shielding_piece_count(a != 0, b != 0, eq != 0);
+                const std::size_t points =
+                    !a ? 0u : (!b ? 1u : (eq ? 1u : 2u));
+                assert(n == 1 + points);
             }
         }
     }
-
-    // Property: when 3 pieces, middle piece is shielded from B₁
-    // (it crossed to the B₂-side of ab).
-    {
-        auto r = classify_shielding(true, true, false);
-        assert(r.num_pieces == 3);
-        assert(r.shielded_from[1] == BoundarySide::B1);
-    }
-
-    // Property: when 3 pieces, first and last are both from B₂
-    // (symmetric — A crosses ab and crosses back).
-    {
-        auto r = classify_shielding(true, true, false);
-        assert(r.shielded_from[0] == BoundarySide::B2);
-        assert(r.shielded_from[2] == BoundarySide::B2);
-    }
-
     std::printf("  [PASS] properties\n");
-}
-
-// ════════════════════════════════════════════════════════════════
-//  6. Fig 2.8.1 from the paper
-// ════════════════════════════════════════════════════════════════
-
-static void test_fig281() {
-    // Fig 2.8.1: A crosses ab at both a' and b'.
-    // "the piece of A running from c to a' is shielded from B₂"
-    // "the piece from a' to b' is shielded from B₁"
-    auto r = classify_shielding(true, true, false);
-    assert(r.num_pieces == 3);
-    assert(r.shielded_from[0] == BoundarySide::B2); // c to a'
-    assert(r.shielded_from[1] == BoundarySide::B1); // a' to b'
-    assert(r.shielded_from[2] == BoundarySide::B2); // b' to d
-
-    std::printf("  [PASS] fig281\n");
-}
-
-// ════════════════════════════════════════════════════════════════
-//  7. Fig 2.8.2 — only a' exists
-// ════════════════════════════════════════════════════════════════
-
-static void test_fig282() {
-    // Fig 2.8.2: d on opposite side, A crosses ab once.
-    // [c, a'] shielded from B₂, [a', d] shielded from B₁.
-    auto r = classify_shielding(true, false);
-    assert(r.num_pieces == 2);
-    assert(r.shielded_from[0] == BoundarySide::B2);
-    assert(r.shielded_from[1] == BoundarySide::B1);
-
-    std::printf("  [PASS] fig282\n");
-}
-
-// ════════════════════════════════════════════════════════════════
-//  8. BoundarySide enum values
-// ════════════════════════════════════════════════════════════════
-
-static void test_enum() {
-    assert(static_cast<int>(BoundarySide::B1) == 1);
-    assert(static_cast<int>(BoundarySide::B2) == 2);
-    assert(BoundarySide::B1 != BoundarySide::B2);
-
-    std::printf("  [PASS] enum\n");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -161,9 +90,6 @@ int main() {
     test_both_distinct();
     test_both_coincident();
     test_properties();
-    test_fig281();
-    test_fig282();
-    test_enum();
     std::printf("All §2.5 tests passed.\n");
     return 0;
 }

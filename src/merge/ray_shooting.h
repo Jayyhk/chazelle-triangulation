@@ -58,7 +58,9 @@ public:
     // perturbed y lies outside C's y-range.  hit_arc_idx is NOT set
     // (oracle.h contract).
     // Time: O(m) if μ = 1, else O(γ μ^{2/3}) (tex 297/308).
-    RayHit shoot_toward_boundary(Point p, Side direction) const;
+    RayHit shoot_toward_boundary(
+        Point p, Side direction,
+        double source_x_offset = SOURCE_OFFSET_NONE) const;
 
     // ── Introspection (tests) ─────────────────────────────────────
     std::size_t mu() const noexcept { return mu_; }
@@ -120,7 +122,7 @@ private:
         SymbolicY lo_y{}, hi_y{};
         std::size_t region = NONE;
     };
-    std::vector<BoundaryInterval> left_ivals_, right_ivals_;
+    std::vector<BoundaryInterval> left_intervals_, right_intervals_;
 
     // Regions whose boundary covers ∂C position (edge, side, y):
     // one region at interval interiors, both flanking regions at
@@ -157,13 +159,18 @@ private:
 //  · the case (ii) test ([C91 §3.1 tex 222]) confirms every candidate
 //    with the back-shot mutual-visibility test, which rejects exactly
 //    the pairs blocked by C.
+// The tex-341 realization itself is UpPhaseRayShooter
+// (visibility/up_phase.h), which the up-phase's Lemma 4.1 merges use;
+// this obstacle-C oracle remains for §3.4's standalone preprocessing
+// and the §2/§3 test fixtures.
 class SubmapRayShooter final : public RayShootingOracle {
 public:
     SubmapRayShooter(const Submap& S, const Polygon& C, std::size_t gamma)
         : S_(&S), C_(&C), impl_(S, C, gamma) {}
 
     RayHit shoot(Point p, Side direction, std::size_t arc_idx,
-                 const Subarc& target) const override;
+                 const Subarc& target,
+                 double source_x_offset = SOURCE_OFFSET_NONE) const override;
 
     const RayShootingStructure& structure() const noexcept { return impl_; }
 

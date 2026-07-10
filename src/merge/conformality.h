@@ -108,7 +108,8 @@ struct FusedShootContext {
 RayHit local_shoot_fused(Point p, SymbolicY p_y, Side direction,
                          const FusedRegionCycle& cycle,
                          const FusedShootContext& ctx,
-                         bool require_hit = true);
+                         bool require_hit = true,
+                         std::size_t source_edge_c = NONE);
 
 // ── [C91 §3.2 Lemma 3.2]: Finding a visible point ───────────────
 

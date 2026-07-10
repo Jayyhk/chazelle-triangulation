@@ -208,6 +208,21 @@ public:
         const class Polygon& polygon,
         std::size_t w0, std::size_t w1) const noexcept;
 
+    // [C91 §2.2 tex 96]: the two regions flanking a non-null chord
+    // vertically — constant along the whole (spherical) chord, wrapped
+    // chords included, since a chord of a submap separates exactly its
+    // two regions.  Decided by the polygon vertex adjacent to the chord
+    // along an adj arc's traversal (SoS gives it a definite side); for
+    // the degenerate polar-cap arcs (zero extent at the chord's own
+    // level — a chord at C's global y-extremum, [C91 §2.1 tex 70]) the
+    // cap lies above iff the chord sits at the maximum.  O(1) for
+    // conformal submaps.  Consumers: the vertical line of [C91 §3.4
+    // tex 306] and the case (ii) region election of [C91 §3.1 tex 206].
+    void chord_regions_below_above(std::size_t chord_idx,
+                                const class Polygon& polygon,
+                                std::size_t* below,
+                                std::size_t* above) const;
+
     // ── Compaction ──────────────────────────────────────────────
 
     // Strip dead arcs/chords/nodes; rebuild index mappings.  O(m).
@@ -337,6 +352,17 @@ public:
     }
 
 private:
+    // [C91 §2.2 tex 96/106]: is this live arc a single ∂C POINT (zero
+    // geometric length AND zero table extent)?  Distinct from an arc
+    // with edge_count == 0 but real table extent — a run of null-length
+    // edges ([C91 §4 tex 316]'s padding), which spans faces of ∂C and
+    // must fold its span into glue merges like any other arc.  A point
+    // arc's recorded edge is boundary-ambiguous ([C91 §2.1 tex 72]:
+    // either edge incident on its vertex) and contributes nothing to a
+    // merged encoding.
+    bool arc_is_point(std::size_t arc_idx,
+                      const class Polygon& polygon) const;
+
     // [C91 §2.2 tex 96]: locate the glue mate at a removed chord's
     // vertex-endpoint junction — the arc STARTING at the junction ∂C
     // point (want_after) or ENDING there (!want_after).  The 1-slot
@@ -353,7 +379,16 @@ private:
     // @param vertex_idx   the polygon vertex at the junction.
     // @param exclude, exclude2  arc indices to skip (already-known
     //     junction pieces; NONE if unused).
+    // @param query_left    true iff (edge, side) is c's LEFT slot —
+    //     [C91 §2.2 tex 96] alternation pins the mate's region: each of
+    //     c's regions traverses c between ITS ending arc at one endpoint
+    //     and ITS starting arc at the other, so the after-mate here
+    //     bounds the same region as the before-arc at c's OTHER
+    //     endpoint (and the before-mate the other region).  Applied for
+    //     non-null chords; it disambiguates same-position candidates
+    //     (an interior apex's zero-length cap arc vs the arc beyond it).
     std::size_t find_junction_arc(const Chord& c,
+                                  bool query_left,
                                   std::size_t edge, Side side,
                                   std::size_t vertex_idx,
                                   bool want_after,

@@ -50,6 +50,17 @@ Polygon::Polygon(std::vector<Point> vertices) {
             + ((s.x != e.x || s.y != e.y) ? 1 : 0);
     }
 
+    // Nonnull-successor array — one O(n) backward pass at input setup
+    // ([C91 §2.2 tex 106]: weights count nonnull edges only, so scans
+    // must be able to step over null runs in O(1)).
+    t->next_nonnull.resize(m, m);
+    for (std::size_t i = m; i-- > 0; ) {
+        t->next_nonnull[i] =
+            (t->nonnull_prefix[i + 1] > t->nonnull_prefix[i])
+                ? i
+                : (i + 1 < m ? t->next_nonnull[i + 1] : m);
+    }
+
     table_ = std::move(t);
     offset_ = 0;
     len_ = table_->vertices.size();

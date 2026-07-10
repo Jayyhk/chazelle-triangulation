@@ -216,40 +216,30 @@ inline std::size_t arc_boundary_edge_count(
         total += C.count_nonnull_edges(lg[i].lo, lg[i].hi);
     if (n == 1) return total;
 
-    // Zero-extent end legs.  The first (resp. last) leg meets its
-    // neighbor at one of C's turnarounds; if that leg spans only the
-    // turnaround's single incident edge AND the arc's endpoint sits
-    // exactly at the turnaround vertex's (symbolic) y, the leg is the
-    // corner point itself and contributes no nonnull-length edge.
-    // Which turnaround, per wrap class ([C91 §2.4 tex 142]):
-    //   end wrap   (L→R): both junctions at C's END vertex.
-    //   start wrap (R→L): both at C's START vertex.
-    //   double wrap: traversal meets END then START (LEFT-first) or
-    //   START then END (RIGHT-first).
-    bool first_at_end, last_at_end;
-    if (a.first_side == LEFT && a.last_side == RIGHT) {
-        first_at_end = true;  last_at_end = true;    // end wrap / closed
-    } else if (a.first_side == RIGHT && a.last_side == LEFT) {
-        first_at_end = false; last_at_end = false;   // start wrap
-    } else if (a.first_side == LEFT) {
-        first_at_end = true;  last_at_end = false;   // double, LEFT-first
-    } else {
-        first_at_end = false; last_at_end = true;    // double, RIGHT-first
+    // Zero-coverage end edges ([C91 §2.2 tex 106]: an arc's weight
+    // counts an edge only where the arc covers nonzero length of its
+    // face).  The FIRST edge contributes nothing when the arc starts
+    // exactly at the vertex where that face's clockwise traversal
+    // EXITS it; the LAST edge contributes nothing when the arc ends
+    // exactly at the vertex where the traversal ENTERS it.  The
+    // classic case is an endpoint at one of C's turnaround corners
+    // ([C91 §2.4 tex 142]); after a null-tail extension
+    // ([C91 §4 tex 316], up_phase.cpp) the identical geometry appears
+    // at the OLD corner, by then an ordinary interior vertex — the
+    // rule depends only on the endpoint's position within its edge,
+    // not on the vertex being a corner.
+    {
+        const auto& fe = C.edge(a.first_edge);
+        const SymbolicY f_exit = symbolic_y_of(C.vertex(
+            a.first_side == LEFT ? fe.end_idx : fe.start_idx));
+        if (symbolic_y_equal(start_y, f_exit))
+            total -= C.count_nonnull_edges(a.first_edge, a.first_edge);
+        const auto& le = C.edge(a.last_edge);
+        const SymbolicY l_entry = symbolic_y_of(C.vertex(
+            a.last_side == LEFT ? le.start_idx : le.end_idx));
+        if (symbolic_y_equal(end_y, l_entry))
+            total -= C.count_nonnull_edges(a.last_edge, a.last_edge);
     }
-    const std::size_t last_c_edge = c_end - 1;
-    auto corner_edge = [&](bool at_end) {
-        return at_end ? last_c_edge : c_start;
-    };
-    auto corner_y = [&](bool at_end) {
-        return symbolic_y_of(C.vertex(at_end ? c_end : c_start));
-    };
-    if (lg[0].lo == lg[0].hi && lg[0].lo == corner_edge(first_at_end) &&
-        symbolic_y_equal(start_y, corner_y(first_at_end)))
-        total -= C.count_nonnull_edges(lg[0].lo, lg[0].hi);
-    if (lg[n - 1].lo == lg[n - 1].hi &&
-        lg[n - 1].lo == corner_edge(last_at_end) &&
-        symbolic_y_equal(end_y, corner_y(last_at_end)))
-        total -= C.count_nonnull_edges(lg[n - 1].lo, lg[n - 1].hi);
     return total;
 }
 

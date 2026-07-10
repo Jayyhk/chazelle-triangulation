@@ -274,15 +274,20 @@ static void test_collect_region_arcs() {
 //  6. local_shoot with stub oracle
 // ════════════════════════════════════════════════════════════════
 
-// Oracle that returns a fixed hit for any subarc on the RIGHT side.
+// Oracle that returns a synthetic hit for any subarc.  Distinct x per
+// (edge, side) — coincident synthetic contacts would feed impossible
+// geometry to the exact tie-break of [C91 §2 tex 47]
+// (polygon.h::ray_contact_precedes), which asserts the coincidence
+// configurations a SIMPLE curve admits.
 struct FixedRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side /*direction*/,
                  std::size_t /*arc_idx*/,
-                 const Subarc& target) const override {
-        // Hit at the target's first edge, same y as p.
+                 const Subarc& target,
+                 double /*source_x_offset*/ = SOURCE_OFFSET_NONE) const override {
         RayHit h;
         h.hit = true;
-        h.x = 5.0; // fixed x
+        h.x = 5.0 + (double)target.first_edge +
+              (target.first_side == RIGHT ? 0.25 : 0.0);
         h.y = p.y;
         h.edge = target.first_edge;
         h.side = target.first_side;
@@ -297,12 +302,16 @@ static void test_local_shoot() {
     FixedRayShooter oracle;
     Point p{0.0, 2.0, 99};
 
+    // Synthetic oracle hits are not attributable to real arc spans
+    // (the tex-246 local checking finds no containing arc), so the
+    // Lemma 2.1 require_hit postconditions do not apply here.
     // Shoot from region 0 — should check region 0's arcs.
-    auto hit = local_shoot(p, RIGHT, 0, S1, C1, oracle);
+    auto hit = local_shoot(p, RIGHT, 0, S1, C1, oracle,
+                           /*require_hit=*/false);
     assert(hit.hit);
 
     // Shoot from region 1 (two plain arcs).
-    hit = local_shoot(p, RIGHT, 1, S1, C1, oracle);
+    hit = local_shoot(p, RIGHT, 1, S1, C1, oracle, /*require_hit=*/false);
     assert(hit.hit);
 
     std::printf("  [PASS] local_shoot\n");
@@ -316,7 +325,8 @@ static void test_local_shoot() {
 struct DistanceRayShooter : RayShootingOracle {
     RayHit shoot(Point p, Side /*direction*/,
                  std::size_t /*arc_idx*/,
-                 const Subarc& target) const override {
+                 const Subarc& target,
+                 double /*source_x_offset*/ = SOURCE_OFFSET_NONE) const override {
         RayHit h;
         h.hit = true;
         h.y = p.y;
@@ -338,14 +348,16 @@ static void test_local_shoot_nearest() {
     // Region 1 has two plain arcs (LEFT a1, RIGHT a4).
     // Shooting RIGHT from x=1: hits at x=3 (RIGHT arc) and x=10 (LEFT arc).
     // Nearest in RIGHT direction = x=3 (closer to p.x=1).
-    auto hit = local_shoot(p, RIGHT, 1, S1, C1, oracle);
+    auto hit = local_shoot(p, RIGHT, 1, S1, C1, oracle,
+                           /*require_hit=*/false);
     assert(hit.hit);
     assert(hit.x == 3.0);
 
     // Shooting LEFT from x=15: hits at x=3 and x=10.
     // Nearest in LEFT direction = x=10 (closer to p.x=15).
     Point p2{15.0, 2.0, 99};
-    hit = local_shoot(p2, LEFT, 1, S1, C1, oracle);
+    hit = local_shoot(p2, LEFT, 1, S1, C1, oracle,
+                      /*require_hit=*/false);
     assert(hit.hit);
     assert(hit.x == 10.0);
 
@@ -364,25 +376,43 @@ static void test_local_shoot_nearest() {
 struct StartupOracle : RayShootingOracle {
     const Polygon* C;
     double hit_x;
-    StartupOracle(const Polygon* c, double x) : C(c), hit_x(x) {}
+    std::size_t prefer_edge;    // report this edge's label when possible
+    StartupOracle(const Polygon* c, double x,
+                  std::size_t prefer = NONE)
+        : C(c), hit_x(x), prefer_edge(prefer) {}
     RayHit shoot(Point p, Side dir,
                  std::size_t /*arc_idx*/,
-                 const Subarc& target) const override {
-        RayHit h;
-        h.hit = true;
-        h.x = hit_x;
-        h.y = p.y;
-        h.edge = target.first_edge;
-        const auto& e = C->edge(target.first_edge);
-        bool ascending = symbolic_y_less(
-            symbolic_y_of(C->vertex(e.start_idx)),
-            symbolic_y_of(C->vertex(e.end_idx)));
-        // Ascending: face struck is opposite of dir.  Descending: same.
-        if (ascending)
-            h.side = (dir == LEFT) ? RIGHT : LEFT;
-        else
-            h.side = dir;
-        return h;
+                 const Subarc& target,
+                 double /*source_x_offset*/ = SOURCE_OFFSET_NONE) const override {
+        // Synthetic distance (hit_x) under a REAL position label: the
+        // [C91 §3.2 tex 246] local checking attributes reports by
+        // containment, so the label must name a position of the target
+        // subarc at the ray's level.
+        SymbolicY sy{p.y, p.index};
+        ArcLeg legs[3];
+        std::size_t nl = subarc_legs(target, 0, C->num_vertices() - 1,
+                                     legs);
+        for (int pass = 0; pass < 2; ++pass)
+        for (std::size_t g = 0; g < nl; ++g) {
+            for (std::size_t e = legs[g].lo; e <= legs[g].hi; ++e) {
+                if (pass == 0 && prefer_edge != NONE && e != prefer_edge)
+                    continue;
+                if (!subarc_contains_point(target, *C, e, legs[g].side,
+                                           sy, 0,
+                                           C->num_vertices() - 1))
+                    continue;
+                RayHit h;
+                h.hit = true;
+                h.x = hit_x;
+                h.y = p.y;
+                h.edge = e;
+                h.side = legs[g].side;
+                double d = (dir == RIGHT) ? (h.x - p.x) : (p.x - h.x);
+                h.wrapped = (d <= 0.0);
+                return h;
+            }
+        }
+        return {};
     }
 };
 
@@ -390,8 +420,13 @@ static void test_startup_case1() {
     // C₁ and C₂ share vertex (4,3,4).
     // C₁ = {(0,0,0), (1,2,1), (2,4,2), (3,1,3), (4,3,4)}
     // C₂ = {(4,3,4), (5,5,5), (6,1,6)}
-    auto C1 = make_C1();
-    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
+    // [C91 §2.4 tex 133]: C₁ and C₂ must be subchains of one input
+    // table (the startup d-tie branch builds the merged frame
+    // Polygon(C₁,C₂) for the [C91 §2 tex 47] wall-order resolution).
+    Polygon P({{0,0,0}, {1,2,1}, {2,4,2}, {3,1,3}, {4,3,4},
+               {5,5,5}, {6,1,6}});
+    Polygon C1 = P.subchain(0, 5);
+    Polygon C2 = P.subchain(4, 3);
     auto S1 = make_S1(C1);
 
     // Single-region S₂: the chordless submap's single closed arc
@@ -435,8 +470,13 @@ static void test_startup_case1() {
 // ════════════════════════════════════════════════════════════════
 
 static void test_startup_case2() {
-    auto C1 = make_C1();
-    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
+    // [C91 §2.4 tex 133]: C₁ and C₂ must be subchains of one input
+    // table (the startup d-tie branch builds the merged frame
+    // Polygon(C₁,C₂) for the [C91 §2 tex 47] wall-order resolution).
+    Polygon P({{0,0,0}, {1,2,1}, {2,4,2}, {3,1,3}, {4,3,4},
+               {5,5,5}, {6,1,6}});
+    Polygon C1 = P.subchain(0, 5);
+    Polygon C2 = P.subchain(4, 3);
     auto S1 = make_S1(C1);
 
     // Chordless S₂: the single closed arc ([C91 §2.4 tex 142/138]).
@@ -510,68 +550,100 @@ static void test_shooting_direction_all_cases() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  11. local_shoot — [C91 §2.1] double-boundary tie-break at same distance
+//  11. [C91 §2 tex 47] — coincident-contact tie-break
+//      (polygon.h::ray_contact_precedes, the disambiguation used by
+//      local_shoot / local_shoot_fused / the Lemma 3.6 scans)
 // ════════════════════════════════════════════════════════════════
 
-// Oracle returning two arcs at the *same* x but different sides.
-struct TieBreakRayShooter : RayShootingOracle {
-    Side first_arc_side;                        //< side of arc 0 hit
-    Side second_arc_side;                       //< side of arc 1 hit
-    TieBreakRayShooter(Side s0, Side s1)
-        : first_arc_side(s0), second_arc_side(s1) {}
-    RayHit shoot(Point p, Side /*dir*/,
-                 std::size_t arc_idx,
-                 const Subarc& target) const override {
-        RayHit h;
-        h.hit = true;
-        h.x = 5.0;                              // SAME x for both → distance tie
-        h.y = p.y;
-        h.edge = target.first_edge;
-        h.side = (arc_idx == 0) ? first_arc_side : second_arc_side;
-        return h;
+static void test_ray_contact_tie_break() {
+    // Configuration (1): two walls at one tag-matched vertex.  Λ-shaped
+    // local max at v1 = (2,4): edge 0 ascends into it, edge 1 descends
+    // out; the wedge (inside of the turn, [C91 §2.1 tex 72]) opens
+    // downward between the legs.  A ray at v1's own symbolic level
+    // strikes the OUTSIDE wall; the inside duplicate sees only its
+    // distance-0 sibling.
+    {
+        Polygon C({{0, 0, 0}, {2, 4, 1}, {4, 0, 2}});
+        SymbolicY sy = symbolic_y_of(C.vertex(1));
+        for (Side dir : {LEFT, RIGHT}) {
+            // The two candidate walls opposing a `dir` ray at the apex:
+            // the −x (dir=RIGHT) / +x (dir=LEFT) faces of edges 0 and 1.
+            auto opposing = [&](std::size_t e) -> Side {
+                const auto& ed = C.edge(e);
+                bool asc = symbolic_y_less(
+                    symbolic_y_of(C.vertex(ed.start_idx)),
+                    symbolic_y_of(C.vertex(ed.end_idx)));
+                Side minus_x = asc ? LEFT : RIGHT;
+                return (dir == RIGHT) ? minus_x
+                                      : (minus_x == LEFT ? RIGHT : LEFT);
+            };
+            Side s0 = opposing(0), s1 = opposing(1);
+            bool i0 = is_inside_companion(C, 0, s0, 1);
+            bool i1 = is_inside_companion(C, 1, s1, 1);
+            assert(i0 != i1 &&
+                   "[C91 §2.1 tex 72]: exactly one apex wall is the "
+                   "inside-of-turn duplicate");
+            // The outside wall must win, from either insertion order.
+            bool new0_wins = ray_contact_precedes(C, sy, dir, 0, s0, 1, s1);
+            bool new1_wins = ray_contact_precedes(C, sy, dir, 1, s1, 0, s0);
+            assert(new0_wins == (i1 && !i0));
+            assert(new1_wins == (i0 && !i1));
+            assert(!(new0_wins && new1_wins) && "antisymmetry");
+        }
     }
-};
 
-static void test_local_shoot_tie_break() {
-    // [C91 §2.1 tex 72] (double boundary's snake left/right): when two
-    // arcs deliver hits at exactly the same x (distance tie),
-    // the disambiguation in fusion.cpp:114-145 picks the face struck
-    // first by an infinitesimally thick ray, computed from the edge's
-    // geometric ascent and the shooting direction:
-    //   struck_first_face (dist > 0, dir=RIGHT) = minus_x_face
-    //   minus_x_face for ascending edge = LEFT
-    auto C1 = make_C1();                        // edge 1: (1,2)→(2,4) ascending
-    auto S1 = make_S1_chain(C1);
+    // Configuration (2): the padding cluster ([C91 §4 tex 316]).  The
+    // real edge 1 ascends rightward into the cluster (8,2); edges 2, 3
+    // are null ([C91 §2.2 tex 106]).  A ray at pad vertex v3's level
+    // crosses edge 1 STRICTLY (symbolically below v2, above v0's side),
+    // at raw x = 8 — tied with the null-run vertex contacts.  Under the
+    // y-only perturbation the strict crossing sits at 8 − (dx/dy)·δ,
+    // LEFT of the cluster (dx/dy > 0): it precedes for a RIGHT ray and
+    // follows for a LEFT ray.
+    {
+        Polygon C({{0, 0, 0}, {4, -3, 1}, {8, 2, 2}, {8, 2, 3}, {8, 2, 4}});
+        assert(C.edge_is_null(2) && C.edge_is_null(3) &&
+               !C.edge_is_null(1));
+        SymbolicY sy = symbolic_y_of(C.vertex(3));
+        // Strict containment of sy in edge 1's symbolic span.
+        assert(symbolic_y_less(symbolic_y_of(C.vertex(1)), sy) &&
+               symbolic_y_less(sy, symbolic_y_of(C.vertex(2))));
+        // Null-run walls at v3: edges 2 and 3 (vertex contacts).
+        for (std::size_t null_e : {std::size_t{2}, std::size_t{3}}) {
+            for (Side ns : {LEFT, RIGHT}) {
+                for (Side es : {LEFT, RIGHT}) {
+                    // RIGHT ray: strict crossing (corrected left) first.
+                    assert(ray_contact_precedes(C, sy, RIGHT, 1, es,
+                                                null_e, ns));
+                    assert(!ray_contact_precedes(C, sy, RIGHT, null_e, ns,
+                                                 1, es));
+                    // LEFT ray: the cluster walls precede.
+                    assert(ray_contact_precedes(C, sy, LEFT, null_e, ns,
+                                                1, es));
+                    assert(!ray_contact_precedes(C, sy, LEFT, 1, es,
+                                                 null_e, ns));
+                }
+            }
+        }
+    }
 
-    // Region 1 has two plain arcs (a1 = arc 0, a4 = arc 2); oracle
-    // returns both at x=5 with controlled sides via arc_idx.  For
-    // shooting RIGHT toward an ascending-edge hit, struck_first_face =
-    // LEFT (the -x face).
-    //
-    // First oracle: arc 0 → LEFT, others → RIGHT.  Best stays at the
-    //   first hit (LEFT, struck_first_face=LEFT, no swap needed).
-    // Second oracle: arc 0 → RIGHT, others → LEFT.  Tie-break swaps to
-    //   the LEFT-side hit (matching struck_first_face=LEFT).
-    // Both must return side=LEFT — the [C91 §2.1 tex 72] disambiguation rule.
-    Point p{0.0, 2.0, 99};
+    // Configuration (2), vertical arrival: the real edge into the
+    // cluster is vertical (dx = 0) — its wall keeps x exactly and the
+    // null run hangs inside the double boundary's sliver at its end
+    // (thickness is the smallest infinitesimal): the real wall shields
+    // the run from BOTH directions.
+    {
+        Polygon C({{0, 0, 0}, {8, -3, 1}, {8, 2, 2}, {8, 2, 3}, {8, 2, 4}});
+        SymbolicY sy = symbolic_y_of(C.vertex(3));
+        assert(symbolic_y_less(symbolic_y_of(C.vertex(1)), sy) &&
+               symbolic_y_less(sy, symbolic_y_of(C.vertex(2))));
+        for (Side dir : {LEFT, RIGHT}) {
+            assert(ray_contact_precedes(C, sy, dir, 1, LEFT, 2, LEFT));
+            assert(!ray_contact_precedes(C, sy, dir, 2, LEFT, 1, LEFT));
+        }
+    }
 
-    TieBreakRayShooter oracle(LEFT, RIGHT);
-    RayHit h1 = local_shoot(p, RIGHT, 1, S1, C1, oracle);
-    assert(h1.hit);
-    assert(h1.x == 5.0);
-    assert(h1.side == LEFT &&
-           "[C91 §2.1 tex 72]: struck-first face for shooting RIGHT toward "
-           "an ascending-edge hit must be LEFT (the -x face)");
-
-    TieBreakRayShooter oracle_rev(RIGHT, LEFT);
-    RayHit h2 = local_shoot(p, RIGHT, 1, S1, C1, oracle_rev);
-    assert(h2.hit);
-    assert(h2.x == 5.0);
-    assert(h2.side == LEFT &&
-           "[C91 §2.1 tex 72]: tie-break must select the same face regardless "
-           "of which arc the oracle reports it on");
-
-    std::printf("  [PASS] local_shoot_tie_break\n");
+    std::printf("  [PASS] ray_contact_tie_break\n");
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -583,8 +655,13 @@ static void test_startup_d1_eq_d2_defaults_to_case1() {
     // sees a point of ∂C₂ with respect to C."  When hit_c1 and hit_c2
     // are at equal distance (degenerate under SoS), the implementation
     // defaults to Case 1 (c₀ ∈ ∂C₂).
-    auto C1 = make_C1();
-    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
+    // [C91 §2.4 tex 133]: C₁ and C₂ must be subchains of one input
+    // table (the startup d-tie branch builds the merged frame
+    // Polygon(C₁,C₂) for the [C91 §2 tex 47] wall-order resolution).
+    Polygon P({{0,0,0}, {1,2,1}, {2,4,2}, {3,1,3}, {4,3,4},
+               {5,5,5}, {6,1,6}});
+    Polygon C1 = P.subchain(0, 5);
+    Polygon C2 = P.subchain(4, 3);
     auto S1 = make_S1(C1);
 
     // Chordless S₂: the single closed arc ([C91 §2.4 tex 142/138]).
@@ -597,10 +674,14 @@ static void test_startup_d1_eq_d2_defaults_to_case1() {
     std::size_t ai0 = S2.add_arc(a);
     assert(S2.start_arc == ai0 && S2.end_arc == ai0);
 
-    // Both oracles return hits at the SAME x (5.0, forward of a₀'s
-    // eastward shot), so d1 == d2.
-    StartupOracle oracle1(&C1, 5.0);
-    StartupOracle oracle2(&C2, 5.0);
+    // Both oracles report contacts AT the junction point itself
+    // (x = 4, v4's position) — the one raw coincidence [C91 §3 tex
+    // 160] admits — labeled on the two junction edges.  At the
+    // non-extremum junction those labels name the SAME geometric
+    // face, so the [C91 §2 tex 47] wall order is equivalence and the
+    // tex-191 default ("c₀ sees a point of ∂C₂") decides.
+    StartupOracle oracle1(&C1, 4.0, /*prefer_edge=*/3);
+    StartupOracle oracle2(&C2, 4.0, /*prefer_edge=*/0);
 
     FusionState state;
     build_fusion_sequence(state, S1, C1);
@@ -725,12 +806,16 @@ static void test_build_fusion_sequence_skips_null_length_chords() {
 static void test_startup_vertex_to_vertex_tie_break() {
     // C₁: last edge v3(3,1) → v4(4,3) ascends → leaving_downward=true,
     // a₀_dir = RIGHT.
-    auto C1 = make_C1();  // {(0,0,0), (1,2,1), (2,4,2), (3,1,3), (4,3,4)}
+    // [C91 §2.4 tex 133]: subchains of ONE input table (the fuse walk
+    // builds the merged frame Polygon(C1, C2)).
+    Polygon Pfx({{0,0,0}, {1,2,1}, {2,4,2}, {3,1,3}, {4,3,4},
+                 {5,5,5}, {6,3,6}});
+    Polygon C1 = Pfx.subchain(0, 5);
     auto S1 = make_S1(C1);
 
     // C₂: start at junction (4,3,4), goes UP-RIGHT to (5,5,5), then
     // DOWN-RIGHT to end vertex (6,3,6).  Start and end share raw y=3.
-    Polygon C2({{4,3,4}, {5,5,5}, {6,3,6}});
+    Polygon C2 = Pfx.subchain(4, 3);
 
     // S₂ structure: the chord joins the RIGHT companions of C₂'s two
     // endpoints, cutting off the pocket between the chord and the
@@ -933,7 +1018,8 @@ struct ForwardOracle : RayShootingOracle {
     ForwardOracle(const Polygon* c, double d) : C(c), forward_dist(d) {}
     RayHit shoot(Point p, Side dir,
                  std::size_t /*arc_idx*/,
-                 const Subarc& target) const override {
+                 const Subarc& target,
+                 double /*source_x_offset*/ = SOURCE_OFFSET_NONE) const override {
         RayHit h;
         // Walk the subarc's legs in cycle order ([C91 §2.4 tex 142]:
         // wrap-spanning targets decompose per leg), each leg's edges in
@@ -987,9 +1073,13 @@ struct ForwardOracle : RayShootingOracle {
 //       require_hit=false (no spurious asserts).
 //   (3) Invariant asserts at the top of each outer iteration hold.
 static void test_fuse_main_loop_smoke() {
-    auto C1 = make_C1();
+    // [C91 §2.4 tex 133]: subchains of ONE input table (the fuse walk
+    // builds the merged frame Polygon(C1, C2)).
+    Polygon Pfx({{0,0,0}, {1,2,1}, {2,4,2}, {3,1,3}, {4,3,4},
+                 {5,5,5}, {6,1,6}});
+    Polygon C1 = Pfx.subchain(0, 5);
     auto S1 = make_S1(C1);
-    Polygon C2({{4,3,4}, {5,5,5}, {6,1,6}});
+    Polygon C2 = Pfx.subchain(4, 3);
 
     // Chordless S₂: the single closed arc ([C91 §2.4 tex 142/138]).
     Submap S2;
@@ -1071,9 +1161,13 @@ static Polygon make_peak_C2() {
 // chord, so the (ii) test iterates real candidates (none ultimately
 // fire for this distance setting; test 18b pins the positive case).
 static void test_fuse_main_loop_case_ii_smoke() {
-    auto C1 = make_C1();
+    // [C91 §2.4 tex 133]: subchains of ONE input table (the fuse walk
+    // builds the merged frame Polygon(C1, C2)).
+    Polygon Pfx({{0,0,0}, {1,2,1}, {2,4,2}, {3,1,3}, {4,3,4},
+                 {3,5,5}, {2,1,6}});
+    Polygon C1 = Pfx.subchain(0, 5);
     auto S1 = make_S1(C1);
-    Polygon C2 = make_peak_C2();
+    Polygon C2 = Pfx.subchain(4, 3);   // == make_peak_C2's geometry
     Submap S2 = make_peak_S2();
 
     // Forward oracles — distance-from-p so the main loop iterates without
@@ -1113,8 +1207,9 @@ static Submap make_chordless(const Polygon& poly) {
 static void test_rebuild_no_chords() {
     // Non-extremum junction, empty chord inventory: the fused submap is a
     // single region with one full arc per ∂C side, in normal form.
-    Polygon C1({{0,0,0}, {1,1,1}});
-    Polygon C2({{1,1,1}, {2,2,2}});
+    Polygon Pfx({{0,0,0}, {1,1,1}, {2,2,2}});
+    Polygon C1 = Pfx.subchain(0, 2);
+    Polygon C2 = Pfx.subchain(1, 2);
     Polygon C ({{0,0,0}, {1,1,1}, {2,2,2}});
     Submap S1 = make_chordless(C1);
     Submap S2 = make_chordless(C2);
@@ -1143,8 +1238,9 @@ static void test_rebuild_junction_extremum_inside_right() {
     // next to the RIGHT (x = +1), so the "inside of the turn" is the
     // RIGHT face of C's edge 1 — and the synthesized null-length chord
     // carries the junction vertex's own SoS tag ([C91 §2 tex 47]).
-    Polygon C1({{-1,0,0}, {0,1,1}});
-    Polygon C2({{0,1,1}, {1,0,2}});
+    Polygon Pfx({{-1,0,0}, {0,1,1}, {1,0,2}});
+    Polygon C1 = Pfx.subchain(0, 2);
+    Polygon C2 = Pfx.subchain(1, 2);
     Polygon C ({{-1,0,0}, {0,1,1}, {1,0,2}});
     Submap S1 = make_chordless(C1);
     Submap S2 = make_chordless(C2);
@@ -1174,8 +1270,9 @@ static void test_rebuild_junction_extremum_inside_right() {
 static void test_rebuild_junction_extremum_inside_left() {
     // Mirror of the previous test: previous branch on the RIGHT (x = +1),
     // next branch to the LEFT (x = -1) — inside is the LEFT face.
-    Polygon C1({{1,0,0}, {0,1,1}});
-    Polygon C2({{0,1,1}, {-1,0,2}});
+    Polygon Pfx({{1,0,0}, {0,1,1}, {-1,0,2}});
+    Polygon C1 = Pfx.subchain(0, 2);
+    Polygon C2 = Pfx.subchain(1, 2);
     Polygon C ({{1,0,0}, {0,1,1}, {-1,0,2}});
     Submap S1 = make_chordless(C1);
     Submap S2 = make_chordless(C2);
@@ -1206,8 +1303,9 @@ static void test_rebuild_discovered_chord_frames() {
     // mid-edge crossing on C₂'s edge 0 (= C's edge 2) — must translate
     // identically whether discovered by pass 1 (walker = C₁) or pass 2
     // (walker = C₂).
-    Polygon C1({{0,0,0}, {1,2,1}, {2,1,2}});
-    Polygon C2({{2,1,2}, {3,3,3}});
+    Polygon Pfx({{0,0,0}, {1,2,1}, {2,1,2}, {3,3,3}});
+    Polygon C1 = Pfx.subchain(0, 3);
+    Polygon C2 = Pfx.subchain(2, 2);
     Polygon C ({{0,0,0}, {1,2,1}, {2,1,2}, {3,3,3}});
     Submap S1 = make_chordless(C1);
     Submap S2 = make_chordless(C2);
@@ -1275,8 +1373,9 @@ static void test_rebuild_junction_null_in_input_fires() {
     // and C-endpoints are never y-extrema, so Sᵢ cannot contain a
     // null-length chord sourced at the junction vertex.
     assert(assert_fires([]{
-        Polygon C1({{0,0,0}, {1,1,1}});
-        Polygon C2({{1,1,1}, {2,2,2}});
+        Polygon Pfx({{0,0,0}, {1,1,1}, {2,2,2}});
+        Polygon C1 = Pfx.subchain(0, 2);
+        Polygon C2 = Pfx.subchain(1, 2);
         Polygon C ({{0,0,0}, {1,1,1}, {2,2,2}});
         Submap S1 = make_chordless(C1);
 
@@ -1321,9 +1420,13 @@ static void test_case_ii_hit_beyond_ab_disqualified() {
     // [C91 §3.1 tex 222]: such a hit "does not lie on ab" — the sightline
     // would pass through the other endpoint (a point of ∂C₂) — so the
     // candidate must be disqualified and no case (ii) chord recorded.
-    auto C1 = make_C1();
+    // [C91 §2.4 tex 133]: subchains of ONE input table (the fuse walk
+    // builds the merged frame Polygon(C1, C2)).
+    Polygon Pfx({{0,0,0}, {1,2,1}, {2,4,2}, {3,1,3}, {4,3,4},
+                 {3,5,5}, {2,1,6}});
+    Polygon C1 = Pfx.subchain(0, 5);
     auto S1 = make_S1(C1);
-    Polygon C2 = make_peak_C2();
+    Polygon C2 = Pfx.subchain(4, 3);   // == make_peak_C2's geometry
     Submap S2 = make_peak_S2();
 
     // The S₂ chord spans x ∈ [~2.5, 4] (length ~1.5).  ForwardOracle
@@ -1395,7 +1498,8 @@ struct GeomOracle : RayShootingOracle {
     }
 
     RayHit shoot(Point p, Side dir, std::size_t /*arc_idx*/,
-                 const Subarc& target) const override {
+                 const Subarc& target,
+                 double /*source_x_offset*/ = SOURCE_OFFSET_NONE) const override {
         SymbolicY sy{p.y, p.index};
         ArcLeg legs[3];
         std::size_t nl = subarc_legs(target, 0, Ci->num_vertices() - 1,
@@ -1455,9 +1559,12 @@ static void test_case_ii_fires() {
     // oriented, back-shot-confirmed — so case (ii) must FIRE
     // ([C91 §3.1 tex 202/206/222]) and record the chord q → p'
     // pairing an S₂ exit-chord endpoint with a MID-ARC walker point.
-    Polygon C1({{0,0,0}, {1,2,1}, {2,6,2}, {3,0.5,3}, {4,3,4}});
+    // [C91 §2.4 tex 133]: subchains of ONE input table.
+    Polygon Pfx({{0,0,0}, {1,2,1}, {2,6,2}, {3,0.5,3}, {4,3,4},
+                 {3,5,5}, {2,1,6}});
+    Polygon C1 = Pfx.subchain(0, 5);
     auto S1 = make_S1(C1);
-    Polygon C2 = make_peak_C2();
+    Polygon C2 = Pfx.subchain(4, 3);   // == make_peak_C2's geometry
 
     // S₂ carrying the geometrically consistent DIRECT junction chord
     // of V(C₂): the junction companion (e0, LEFT) at (4, 3) sees
@@ -1496,31 +1603,44 @@ static void test_case_ii_fires() {
     FusionState state;
     fuse_submaps(state, S1, C1, S2, C2, oracle1, oracle2);
 
-    // The case (ii) product: y = ab's {3, 4}; left slot = p' = C₁'s
-    // (edge 2, LEFT) at x ≈ 2.545; right slot = q = b = C₂'s
-    // (edge 0, LEFT) at x 4 (ascending x, [C91 §2.4(ii)]).  The other
-    // endpoint a's symmetric candidate is killed by the back-shot test
-    // (its sightline to (4, 3) on ∂C₁ is blocked by p' itself).
-    // Startup/companion
-    // records keep their walker endpoint on the junction edge 3 — a
-    // mid-arc walker endpoint is case (ii)'s signature.
+    // The case (ii) products: y = ab's {3, 4}.  Two true V(C) chords
+    // arise from ab's endpoints ([C91 §3.1 tex 206/222]):
+    //  · b = (4, 3) on C₂ (edge 0, LEFT) sees p' = C₁'s (edge 2,
+    //    LEFT) east face at x ≈ 2.545 (ascending-x slots put p'
+    //    left, [C91 §2.4(ii)]);
+    //  · a = (2.5, 3) on C₂ (edge 1, LEFT) shoots east and reaches
+    //    C₁'s (edge 2, RIGHT) west face at the same crossing — a
+    //    second case (ii) event once the walk enters the pocket
+    //    ([C91 §3.2 tex 246]: reports attribute by containment, the
+    //    companion wall does not block the true first contact).
+    // Startup/companion records keep their walker endpoint on the
+    // junction edge 3 — a mid-arc walker endpoint is case (ii)'s
+    // signature.
     bool case_ii_product = false;
+    bool case_ii_product_a = false;
     for (const auto& dc : state.chords) {
         if (!(dc.y.y == 3.0 && dc.y.tag == 4)) continue;   // ab's y
         if (dc.left_on_walker == dc.right_on_walker) continue;
         std::size_t walker_edge = dc.left_on_walker ? dc.left_edge
                                                     : dc.right_edge;
         if (walker_edge == 3) continue;         // companion record
-        assert(dc.left_on_walker && dc.left_edge == 2 &&
-               dc.left_side == LEFT &&
-               "[C91 §3.1 tex 206]: case (ii) chord's p' lies mid-arc "
-               "on C₁ edge 2 LEFT at (≈2.545, 3)");
-        assert(!dc.right_on_walker && dc.right_edge == 0 &&
-               dc.right_side == LEFT &&
-               "[C91 §3.1 tex 206]: case (ii) chord's q = the S₂ exit "
-               "chord endpoint b at (4, 3) on C₂ edge 0 LEFT");
-        case_ii_product = true;
+        if (dc.left_on_walker && dc.left_edge == 2 &&
+            dc.left_side == LEFT && !dc.right_on_walker &&
+            dc.right_edge == 0 && dc.right_side == LEFT) {
+            case_ii_product = true;
+        } else if (!dc.left_on_walker && dc.left_edge == 1 &&
+                   dc.left_side == LEFT && dc.right_on_walker &&
+                   dc.right_edge == 2 && dc.right_side == RIGHT) {
+            case_ii_product_a = true;
+        } else {
+            assert(false &&
+                   "[C91 §3.1 tex 206]: only the two true ab-endpoint "
+                   "chords may be recorded at ab's level");
+        }
     }
+    assert(case_ii_product_a &&
+           "[C91 §3.1 tex 206/222]: a's eastward chord to C₁ edge 2 "
+           "RIGHT must be recorded");
     assert(case_ii_product &&
            "[C91 §3.1 tex 202/206]: an on-ab, after-p, back-shot-"
            "confirmed candidate must fire case (ii) and record the "
@@ -1620,8 +1740,12 @@ static void test_fuse_main_loop_smoke_junction_at_start() {
     // ForwardOracle.  W (walked) has the junction (0,0,10) FIRST; the
     // target T ends at it.  Indices are consecutive per [C91 §2.4 tex 133]
     // (contiguous subchains of P).
-    Polygon T({{-2,5,8}, {-1,1,9}, {0,0,10}});
-    Polygon W({{0,0,10}, {1,2,11}, {2,4,12}, {3,1,13}, {4,3,14}});
+    // [C91 §2.4 tex 133]: subchains of ONE input table (the fuse
+    // walk builds the merged frame Polygon(C1, C2)).
+    Polygon Pfx({{-2,5,8}, {-1,1,9}, {0,0,10}, {1,2,11}, {2,4,12},
+                 {3,1,13}, {4,3,14}});
+    Polygon T = Pfx.subchain(0, 3);
+    Polygon W = Pfx.subchain(2, 5);
 
     // make_S1-shaped 2-region submap over W (chord at W's vertex 2,
     // whose SoS index is 12): both region arcs are single wrap
@@ -1684,8 +1808,9 @@ static void test_rebuild_dedup() {
     // structure admits each visible pair once — rebuild must dedup.
     // Same fixture as test_rebuild_discovered_chord_frames, but the
     // chord is fed through BOTH states.
-    Polygon C1({{0,0,0}, {1,2,1}, {2,1,2}});
-    Polygon C2({{2,1,2}, {3,3,3}});
+    Polygon Pfx({{0,0,0}, {1,2,1}, {2,1,2}, {3,3,3}});
+    Polygon C1 = Pfx.subchain(0, 3);
+    Polygon C2 = Pfx.subchain(2, 2);
     Polygon C ({{0,0,0}, {1,2,1}, {2,1,2}, {3,3,3}});
     Submap S1 = make_chordless(C1);
     Submap S2 = make_chordless(C2);
@@ -1786,7 +1911,7 @@ int main() {
     test_startup_case1();
     test_startup_case2();
     test_shooting_direction_all_cases();
-    test_local_shoot_tie_break();
+    test_ray_contact_tie_break();
     test_startup_d1_eq_d2_defaults_to_case1();
     test_build_fusion_sequence_skips_null_length_chords();
     test_startup_vertex_to_vertex_tie_break();

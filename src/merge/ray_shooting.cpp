@@ -7,6 +7,7 @@
 // symbolic coincidence of positions on ∂C.
 
 #include "ray_shooting.h"
+#include <cstdio>
 #include "fusion.h"          // shooting_direction ([C91 §2.1 tex 72])
 
 #include <algorithm>
@@ -114,21 +115,9 @@ bool arc_covers(const Submap& S, const Polygon& C, std::size_t ai,
 // ════════════════════════════════════════════════════════════════
 
 // x of the crossing of the perturbed horizontal line at sy with edge e,
-// if any.
+// if any (polygon.h::edge_crossing_x).
 bool crossing_x(const Polygon& C, std::size_t e, SymbolicY sy, double* x) {
-    const auto& ed = C.edge(e);
-    const Point& vs = C.vertex(ed.start_idx);
-    const Point& ve = C.vertex(ed.end_idx);
-    SymbolicY y0 = symbolic_y_of(vs);
-    SymbolicY y1 = symbolic_y_of(ve);
-    if (symbolic_y_equal(sy, y0)) { *x = vs.x; return true; }
-    if (symbolic_y_equal(sy, y1)) { *x = ve.x; return true; }
-    bool between = (symbolic_y_less(y0, sy) && symbolic_y_less(sy, y1)) ||
-                   (symbolic_y_less(y1, sy) && symbolic_y_less(sy, y0));
-    if (!between) return false;
-    double t = (sy.y - vs.y) / (ve.y - vs.y);
-    *x = vs.x + t * (ve.x - vs.x);
-    return true;
+    return edge_crossing_x(C, e, sy, x);
 }
 
 // [C91 §2.1 tex 72]: the ∂C side struck by a ray traveling in `dir` —
@@ -140,7 +129,8 @@ Side struck_side(const Polygon& C, std::size_t e, Side dir) {
 
 // A candidate contact in the wrap metric of [C91 §2.1 tex 70]:
 // direct contacts (d > 0) precede all through-infinity ones (d ≤ 0);
-// within a class the ray order is ascending d.
+// within a class the ray order is ascending d; raw-position ties break
+// per [C91 §2 tex 47] (polygon.h::ray_contact_precedes).
 struct Contact {
     bool hit = false;
     double x = 0.0;
@@ -148,13 +138,24 @@ struct Contact {
     Side side = LEFT;
     bool wrapped = false;
     double d = 0.0;
+    double src_offset = SOURCE_OFFSET_NONE;   // source's perturbed x-offset
 
-    void offer(double cx, std::size_t ce, Side cs, double cd) {
-        bool cw = (cd <= 0.0);
+    void offer(const Polygon& C, SymbolicY sy, Side dir,
+               double cx, std::size_t ce, Side cs, double cd) {
+        // [C91 §2 tex 47]: a raw-distance-0 contact shares the
+        // source's raw point; with the source wall's perturbed
+        // x-offset known, comparing the offsets decides
+        // strictly-forward (direct) vs met after a full wrap
+        // (polygon.h::perturbed_hit_forward).
+        bool cw = (cd < 0.0) ||
+                  (cd == 0.0 &&
+                   !(has_source_offset(src_offset) &&
+                     perturbed_hit_forward(C, sy, dir, src_offset, ce)));
         bool better;
         if (!hit) better = true;
         else if (cw != wrapped) better = !cw;
-        else better = cd < d;
+        else if (cd != d) better = cd < d;
+        else better = ray_contact_precedes(C, sy, dir, ce, cs, edge, side);
         if (better) {
             hit = true;
             x = cx; edge = ce; side = cs; wrapped = cw; d = cd;
@@ -164,11 +165,46 @@ struct Contact {
 
 void scan_edge_range(const Polygon& C, std::size_t lo, std::size_t hi,
                      Point p, SymbolicY sy, Side dir, Contact& best) {
-    for (std::size_t e = lo; e <= hi; ++e) {
+    // [C91 §3.4 tex 306]: "checking all the O(γ) edges of the region" —
+    // γ bounds NONNULL edges only ([C91 §2.2 tex 106]), so a null run
+    // (the padding cluster of [C91 §4 tex 316] is the only source) is
+    // stepped over in O(1).  A null edge's two endpoints carry
+    // consecutive integer SoS tags at one raw y, so no symbolic y falls
+    // STRICTLY between them ([C91 §2 tex 47]) — the perturbed line
+    // crosses a null run only at an exact vertex tag match, found by
+    // tag arithmetic (a curve's SoS indices are consecutive,
+    // [C91 §2.4 tex 133]).
+    std::size_t e = lo;
+    while (e <= hi) {
+        const std::size_t nn = C.next_nonnull_edge(e);
+        if (nn > e) {
+            // Null run [e, run_hi].
+            const std::size_t run_hi = std::min(hi, nn - 1);
+            const Point& va = C.vertex(e);
+            if (sy.y == va.y && sy.tag >= va.index &&
+                sy.tag <= C.vertex(run_hi + 1).index) {
+                const std::size_t vi = e + (sy.tag - va.index);
+                assert(symbolic_y_equal(sy,
+                                        symbolic_y_of(C.vertex(vi))) &&
+                       "[C91 §2.4 tex 133]: consecutive SoS indices");
+                const double x = C.vertex(vi).x;
+                const double d = (dir == RIGHT) ? (x - p.x) : (p.x - x);
+                if (vi > e)
+                    best.offer(C, sy, dir, x, vi - 1,
+                               struck_side(C, vi - 1, dir), d);
+                if (vi <= run_hi)
+                    best.offer(C, sy, dir, x, vi,
+                               struck_side(C, vi, dir), d);
+            }
+            e = run_hi + 1;
+            continue;
+        }
         double x;
-        if (!crossing_x(C, e, sy, &x)) continue;
-        double d = (dir == RIGHT) ? (x - p.x) : (p.x - x);
-        best.offer(x, e, struck_side(C, e, dir), d);
+        if (crossing_x(C, e, sy, &x)) {
+            double d = (dir == RIGHT) ? (x - p.x) : (p.x - x);
+            best.offer(C, sy, dir, x, e, struck_side(C, e, dir), d);
+        }
+        ++e;
     }
 }
 
@@ -186,84 +222,6 @@ void scan_region(const Submap& S, const Polygon& C,
             scan_edge_range(C, legs[i].lo_edge, legs[i].hi_edge,
                             p, sy, dir, best);
     }
-}
-
-// ════════════════════════════════════════════════════════════════
-//  Chord-side helpers
-// ════════════════════════════════════════════════════════════════
-
-// [C91 §2.2 tex 96]: does the region of `arc_idx` lie strictly ABOVE
-// the chord, judged locally at the chord endpoint (edge_at, side_at)?
-// (The polygon vertex adjacent to the chord along the arc's traversal
-// decides; SoS gives it a definite side.)
-bool arc_region_above_chord(const Submap& S, const Polygon& C,
-                            const Chord& ch, std::size_t edge_at,
-                            Side side_at, std::size_t arc_idx) {
-    const Arc& a = S.arc(arc_idx);
-    bool first_matches =
-        (a.first_edge == edge_at && a.first_side == side_at);
-    bool last_matches =
-        (a.last_edge == edge_at && a.last_side == side_at);
-    bool starts_at_chord;
-    if (first_matches && !last_matches) {
-        starts_at_chord = true;
-    } else if (!first_matches && last_matches) {
-        starts_at_chord = false;
-    } else {
-        assert(first_matches && last_matches &&
-               "adj arc must touch the chord endpoint via first or last");
-        starts_at_chord = symbolic_y_equal(
-            S.arc_start_symbolic_y(arc_idx, C), ch.symbolic_y());
-    }
-    std::size_t adj_v;
-    if (starts_at_chord) {
-        adj_v = (a.first_side == LEFT) ? C.edge(a.first_edge).end_idx
-                                       : C.edge(a.first_edge).start_idx;
-    } else {
-        adj_v = (a.last_side == LEFT) ? C.edge(a.last_edge).start_idx
-                                      : C.edge(a.last_edge).end_idx;
-    }
-    return symbolic_y_greater(symbolic_y_of(C.vertex(adj_v)),
-                              ch.symbolic_y());
-}
-
-// The two regions flanking a chord vertically (constant along the whole
-// chord: a chord of a submap separates exactly its two regions).
-void chord_vertical_regions(const Submap& S, const Polygon& C,
-                            std::size_t ci, std::size_t* below,
-                            std::size_t* above) {
-    const Chord& c = S.chord(ci);
-    const Chord::AdjArcs* adj = nullptr;
-    std::size_t edge_at = NONE;
-    Side side_at = LEFT;
-    if (c.left_adj.count == 2) {
-        adj = &c.left_adj; edge_at = c.left_edge; side_at = c.left_side;
-    } else if (c.right_adj.count == 2) {
-        adj = &c.right_adj; edge_at = c.right_edge; side_at = c.right_side;
-    }
-    if (adj) {
-        bool a0 = arc_region_above_chord(S, C, c, edge_at, side_at,
-                                         adj->arcs[0]);
-        bool a1 = arc_region_above_chord(S, C, c, edge_at, side_at,
-                                         adj->arcs[1]);
-        assert(a0 != a1 &&
-               "[C91 §2.2 tex 96]: the two adj arcs at a mid-edge chord "
-               "endpoint lie on opposite sides of the chord");
-        std::size_t r0 = S.arc(adj->arcs[0]).region_node;
-        std::size_t r1 = S.arc(adj->arcs[1]).region_node;
-        *above = a0 ? r0 : r1;
-        *below = a0 ? r1 : r0;
-        return;
-    }
-    // Both endpoints are polygon vertices: one adj arc per endpoint.
-    bool left_above = arc_region_above_chord(S, C, c, c.left_edge,
-                                             c.left_side,
-                                             c.left_adj.arcs[0]);
-    std::size_t r_arc = S.arc(c.left_adj.arcs[0]).region_node;
-    std::size_t r_other = (c.region[0] == r_arc) ? c.region[1]
-                                                 : c.region[0];
-    *above = left_above ? r_arc : r_other;
-    *below = left_above ? r_other : r_arc;
 }
 
 // [s2-adjacency-convention]: the arc STARTING (after) / ENDING (before)
@@ -413,7 +371,7 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
         std::size_t leg;         // cycle-ordinal of the leg within the arc
         std::size_t region;
     };
-    std::vector<Interval> ivl, ivr;
+    std::vector<Interval> left_iv, right_iv;
     for (std::size_t ai = 0; ai < S.num_arcs(); ++ai) {
         Leg legs[3];
         std::size_t n = arc_to_legs(S, C, ai, legs);
@@ -422,7 +380,7 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
                 continue;                       // zero length: contracted
             Interval iv{legs[i].lo, legs[i].hi, ai, i,
                         S.arc(ai).region_node};
-            (legs[i].side == LEFT ? ivl : ivr).push_back(iv);
+            (legs[i].side == LEFT ? left_iv : right_iv).push_back(iv);
         }
     }
     auto by_lo = [&](const Interval& a, const Interval& b) {
@@ -430,8 +388,8 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
         if (o != 0) return o < 0;
         return pos_order(C, a.hi, b.hi) < 0;
     };
-    std::sort(ivl.begin(), ivl.end(), by_lo);
-    std::sort(ivr.begin(), ivr.end(), by_lo);
+    std::sort(left_iv.begin(), left_iv.end(), by_lo);
+    std::sort(right_iv.begin(), right_iv.end(), by_lo);
 
     // Retain the interval lists for the query's double identification
     // ([C91 §3.4 tex 306–308]).
@@ -443,8 +401,8 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
             dst.push_back(BoundaryInterval{iv.lo.edge, iv.hi.edge,
                                            iv.lo.y, iv.hi.y, iv.region});
     };
-    retain(ivl, left_ivals_);
-    retain(ivr, right_ivals_);
+    retain(left_iv, left_intervals_);
+    retain(right_iv, right_intervals_);
 
     // Overlap sweep; every positive overlap is one abutment edge.
     // Record it per (arc, leg) for the rotation build — a wrap-spanning
@@ -456,9 +414,9 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
         S.num_arcs());
     {
         std::size_t i = 0, j = 0;
-        while (i < ivl.size() && j < ivr.size()) {
-            const Interval& a = ivl[i];
-            const Interval& b = ivr[j];
+        while (i < left_iv.size() && j < right_iv.size()) {
+            const Interval& a = left_iv[i];
+            const Interval& b = right_iv[j];
             const Pos& lo = (pos_order(C, a.lo, b.lo) >= 0) ? a.lo : b.lo;
             const Pos& hi = (pos_order(C, a.hi, b.hi) <= 0) ? a.hi : b.hi;
             if (pos_order(C, lo, hi) < 0) {
@@ -674,12 +632,7 @@ void RayShootingStructure::build_vertical_line() {
             const Point& u = C.vertex(vt - 1);
             const Point& v = C.vertex(vt);
             const Point& w = C.vertex(vt + 1);
-            const double t_prev = (u.x - v.x) * (v.y - w.y);
-            const double t_next = (w.x - v.x) * (v.y - u.y);
-            assert(t_prev != t_next &&
-                   "[C91 §2 tex 47]: distinct branch slopes at a vertex "
-                   "of a simple curve");
-            const bool prev_left = t_prev < t_next;
+            const bool prev_left = extremum_prev_branch_left(u, v, w);
             // e_in = vt−1 → vt ascends into the max; its −x face is
             // LEFT.  The wedge (inside) lies toward the next branch:
             // inside = LEFT iff the next branch is left of the previous
@@ -717,7 +670,7 @@ void RayShootingStructure::build_vertical_line() {
     std::vector<std::size_t> at_region(S_->num_nodes(), 0);
     for (std::size_t ci : wrapped) {
         Cross c{ci, NONE, NONE};
-        chord_vertical_regions(S, C, ci, &c.below, &c.above);
+        S.chord_regions_below_above(ci, C, &c.below, &c.above);
         cx.push_back(c);
         ++at_region[c.below];
         ++at_region[c.above];
@@ -772,7 +725,7 @@ void RayShootingStructure::regions_at_boundary(
         std::size_t edge, Side side, SymbolicY y,
         std::vector<std::size_t>& out) const {
     const Polygon& C = *C_;
-    const auto& list = (side == LEFT) ? left_ivals_ : right_ivals_;
+    const auto& list = (side == LEFT) ? left_intervals_ : right_intervals_;
     assert(!list.empty());
     Pos pos{edge, y};
 
@@ -819,8 +772,8 @@ void RayShootingStructure::regions_at_boundary(
            "[C91 §2.4 tex 144]: every ∂C contact identifies a region");
 }
 
-RayHit RayShootingStructure::shoot_toward_boundary(Point p,
-                                                   Side dir) const {
+RayHit RayShootingStructure::shoot_toward_boundary(
+        Point p, Side dir, double source_x_offset) const {
     const Submap& S = *S_;
     const Polygon& C = *C_;
     SymbolicY sy{p.y, p.index};
@@ -841,6 +794,7 @@ RayHit RayShootingStructure::shoot_toward_boundary(Point p,
         // [C91 §3.4 tex 297]: "If μ = 1, then ray-shooting can be done
         // trivially in O(m) time."
         Contact best;
+        best.src_offset = source_x_offset;
         scan_edge_range(C, 0, C.num_edges() - 1, p, sy, dir, best);
         return to_rayhit(best);
     }
@@ -865,6 +819,7 @@ RayHit RayShootingStructure::shoot_toward_boundary(Point p,
     // 1. [C91 §3.4 tex 306]: "Our first task is to shoot within each
     // region that is dual to a node of D*."
     Contact dstar_best;
+    dstar_best.src_offset = source_x_offset;
     for (std::size_t f : dstar_faces_)
         scan_region(S, C, arcs_of_region_[region_of_face_[f]], p, sy,
                     dir, dstar_best);
@@ -930,7 +885,7 @@ RayHit RayShootingStructure::shoot_toward_boundary(Point p,
     // the ray-shooting query, by first finding D_i, which takes
     // constant time since we know R, and then naively checking all the
     // regions dual to nodes in D_i, which takes O(γ μ^{2/3}) time."
-    Contact best = dstar_best;
+    Contact best = dstar_best;   // src_offset carries over
     for (std::size_t sub : subsets) {
         const auto& members = subset_faces_[sub];
 #ifndef NDEBUG
@@ -985,18 +940,19 @@ bool subarc_covers(const Submap& S, const Polygon& C, const Subarc& t,
 
 RayHit SubmapRayShooter::shoot(Point p, Side direction,
                                std::size_t arc_idx,
-                               const Subarc& target) const {
+                               const Subarc& target,
+                               double source_x_offset) const {
     // [C91 §3.0(i) tex 166]: the arc pointer identifies α; the report
     // concerns α' ⊆ α only.
     assert(arc_idx < S_->num_arcs() && !S_->arc(arc_idx).dead);
     assert_subarc_clockwise(target);
 
     // Single first-contact of C, post-filtered to α' — the obstacle-C
-    // semantics documented in the class comment (ray_shooting.h) and
-    // TODO.md item 4; the [C91 §4.1 tex 341] per-piece structures
+    // semantics documented in the class comment (ray_shooting.h);
+    // the [C91 §4.1 tex 341] per-piece structures
     // realize the tex-169 "no obstacle except α'" contract.  The hit
     // rides the ray's perturbed level ([C91 §2 tex 47]).
-    RayHit h = impl_.shoot_toward_boundary(p, direction);
+    RayHit h = impl_.shoot_toward_boundary(p, direction, source_x_offset);
     if (!h.hit) return RayHit{};
     if (!subarc_covers(*S_, *C_, target, h.edge, h.side,
                        SymbolicY{p.y, p.index}))

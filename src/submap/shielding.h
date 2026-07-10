@@ -1,96 +1,59 @@
 #pragma once
 
-// [C91 §2.5 Lemma 2.4]: Shielding classification.
+// [C91 §2.5 Lemma 2.4]: piece structure of the curve A under a chord.
 //
 // Setup: closed disk D with diametrical chord ab.  Points a, c, b are
-// clockwise on ∂D.  H₁ = cw arc a→b (contains c), H₂ = cw arc b→a.
-// Curve A runs c→d inside D.  T = cw arc d→c.  B₁ = closure(T ∩ H₁),
-// B₂ = closure(T ∩ H₂).
+// clockwise on ∂D.  Curve A runs c→d inside D.  The intersections
+// a' (first point of ab∩A from a) and b' (last) subdivide A into
+// "a total of one, two, or three connected curves" ([C91 §2.5
+// tex 153]), each shielded from one of B₁/B₂.
 //
-// Intersections a' (first of ab∩A from a) and b' (last) subdivide A into
-// 1–3 pieces, each shielded from some B_j.  Classification depends only
-// on which of a', b' exist and whether they coincide.
+// This header supplies only the PIECE COUNT.  WHICH B each piece is
+// shielded from is configuration-dependent — [C91 §2.5 tex 156]:
+// "Which one can be determined by simple examination of the relative
+// order of the points a, b, c, d, a', b' around the boundary of R" —
+// and is computed at the point of use from the actual geometry
+// (conformality.cpp::descend_step anchors the side parity on the
+// chord itself; a fixed fig-2.8.1-style table is wrong whenever the
+// configuration differs from the figure, e.g. when c coincides
+// with a).
 
 #include <cassert>
 #include <cstddef>
 
 namespace chazelle {
 
-// B₁ = c-side of ∂D ∩ cw d→c arc.  B₂ = the other side.
-enum class BoundarySide : int { B1 = 1, B2 = 2 };
-
-// [C91 §2.5 Lemma 2.4] result.  Pieces in order along A from c to d.
-struct ShieldingResult {
-    static constexpr std::size_t MAX_PIECES = 3;
-    BoundarySide shielded_from[MAX_PIECES] = {};
-    std::size_t num_pieces = 0;
-};
-
-// [C91 §2.5 Lemma 2.4]: Classify shielding for curve A.
+// [C91 §2.5 Lemma 2.4 tex 153]: the number of pieces a' and b'
+// subdivide A into.
 //
-// @param a_prime  true if a' exists (cw d→c arc passes through a).
-// @param b_prime  true if b' exists (cw d→c arc passes through b).
-// @param a_prime_eq_b_prime  true if a' = b' (single touch, no crossing);
-//                            only read when both exist.
+// @param a_prime  true if a' exists (ab ∩ A is nonempty).
+// @param b_prime  true if b' exists.
+// @param a_prime_eq_b_prime  true if a' = b' (single touch, no
+//                            crossing); only read when both exist.
 //
-// Preconditions (per [C91 §2.5 tex 156] lemma setup):
-//   - (a_prime=false, b_prime=true) is impossible — cw d→c arc cannot
-//     reach b without passing a (a, c, b clockwise, c ∈ H₁).
-//   - Both B₁ AND B₂ are nonempty.  Under that, the 1-piece return of
-//     "shielded from B₂" is unambiguous (A stays c-side = B₁-side).
-//     Callers must enforce this before invoking.
-inline ShieldingResult classify_shielding(bool a_prime,
-                                           bool b_prime,
-                                           bool a_prime_eq_b_prime
-                                               = false) noexcept {
-    // [C91 §2.5]: "the third case ... was eliminated earlier, since it
-    // corresponds to a situation where one of the B_i is empty."
+// Preconditions (per the lemma's setup, [C91 §2.5 tex 150–156]):
+//   - (a_prime=false, b_prime=true) is impossible — a' is the FIRST
+//     and b' the LAST point of ab∩A, so they exist together.
+//   - Both B₁ AND B₂ are nonempty.  Callers must enforce this before
+//     invoking.
+inline std::size_t shielding_piece_count(bool a_prime, bool b_prime,
+                                         bool a_prime_eq_b_prime
+                                             = false) noexcept {
     assert(!(b_prime && !a_prime) &&
            "[C91 §2.5]: b' cannot exist without a'");
-
-    ShieldingResult r;
-
-    if (!a_prime && !b_prime) {
-        // [C91 §2.5]: "else the lemma is trivially correct."  A doesn't cross
-        // ab, so it stays entirely on the c-side (B₁-side), shielded
-        // from B₂.
-        r.num_pieces = 1;
-        r.shielded_from[0] = BoundarySide::B2;
-    }
-    else if (a_prime && !b_prime) {
-        // A crosses ab once.  d is on H₂ (opposite side from c).
-        // [c, a']: still near c (B₁-side) → shielded from B₂.
-        // [a', d]: crossed to B₂-side → shielded from B₁.
-        r.num_pieces = 2;
-        r.shielded_from[0] = BoundarySide::B2;
-        r.shielded_from[1] = BoundarySide::B1;
-    }
-    else if (a_prime && b_prime && a_prime_eq_b_prime) {
-        // Both intersections at the same point (a' = b' — A touches ab
-        // without fully crossing).  d on H₁ (same side as c).  Both
-        // pieces stay on the B₁-side, shielded from B₂.
-        r.num_pieces = 2;
-        r.shielded_from[0] = BoundarySide::B2;
-        r.shielded_from[1] = BoundarySide::B2;
-    }
-    else {
-        // A crosses ab twice (a' ≠ b').  d on H₁ (same side as c).
-        // [c, a']:  B₁-side                → shielded from B₂.
-        // [a', b']: crossed to B₂-side     → shielded from B₁.
-        // [b', d]:  crossed back to B₁-side → shielded from B₂.
-        assert(a_prime && b_prime && !a_prime_eq_b_prime);
-        r.num_pieces = 3;
-        r.shielded_from[0] = BoundarySide::B2;
-        r.shielded_from[1] = BoundarySide::B1;
-        r.shielded_from[2] = BoundarySide::B2;
-    }
-
+    std::size_t n;
+    if (!a_prime && !b_prime)
+        n = 1;                          // A avoids ab entirely
+    else if (a_prime && !b_prime)
+        n = 2;                          // one crossing: [c,a'], [a',d]
+    else if (a_prime_eq_b_prime)
+        n = 2;                          // touch: [c,a'], [a',d]
+    else
+        n = 3;                          // [c,a'], [a',b'], [b',d]
     // [C91 §2.5 Lemma 2.4 tex 153]: "subdivide A into a total of one,
     // two, or three connected curves."
-    assert(r.num_pieces >= 1 && r.num_pieces <= 3 &&
-           "[C91 §2.5 Lemma 2.4]: A must subdivide into 1, 2, or 3 pieces");
-
-    return r;
+    assert(n >= 1 && n <= 3);
+    return n;
 }
 
 } // namespace chazelle
