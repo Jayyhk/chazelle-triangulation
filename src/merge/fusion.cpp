@@ -463,18 +463,6 @@ std::size_t fusion_startup(FusionState& state,
         hit_c2 = local_shoot(a0_point, a0_dir, a0_region_s2,
                              S2, C2, oracle2, /*require_hit=*/true,
                              perturbed_x_offset(C1, a0.y, a0.edge));
-#ifdef CHAZELLE_TRACE_FUSION
-    if (!junction_inside_pair)
-        std::fprintf(stderr,
-            "[startup] a0=(%zu,%c,x=%.6g)@%g@%zu dir=%c region2=%zu "
-            "c1=(%zu,%c,x=%.6g,w=%d) c2=(%zu,%c,x=%.6g,w=%d)\n",
-            a0.edge, a0.side == LEFT ? 'L' : 'R', a0_point.x, a0.y.y,
-            a0.y.tag, a0_dir == LEFT ? 'L' : 'R', a0_region_s2,
-            hit_c1.edge, hit_c1.side == LEFT ? 'L' : 'R', hit_c1.x,
-            (int)hit_c1.wrapped, hit_c2.edge,
-            hit_c2.side == LEFT ? 'L' : 'R', hit_c2.x,
-            (int)hit_c2.wrapped);
-#endif
 
     // [C91 §3.1 tex 185]: c₀ = the closer of hit_c1 and hit_c2.  Both are
     // guaranteed to hit (Lemma 2.1).  In the tex 191 inside-pair case
@@ -850,12 +838,6 @@ void fuse_submaps(FusionState& state,
     const std::size_t off_target = state.junction_at_end
                                        ? C1.num_edges() : 0;
 
-#ifdef CHAZELLE_TRACE_FUSION
-    std::fprintf(stderr, "[fuse] walk C1 off=%zu len=%zu -> C2 off=%zu len=%zu at_end=%d k0=%zu seq=%zu\n",
-                 C1.table_offset(), C1.num_vertices(), C2.table_offset(),
-                 C2.num_vertices(), (int)state.junction_at_end, k,
-                 state.sequence.size());
-#endif
     while (true) {
         // [C91 §3.1 tex 199]: p == a_{m+1} ⟹ terminate (no A_k defined).
         if (k >= state.sequence.size()) return;
@@ -948,16 +930,6 @@ void fuse_submaps(FusionState& state,
                                        /*require_hit=*/false,
                                        perturbed_x_offset(
                                            C1, aj_v.y, aj_v.edge));
-#ifdef CHAZELLE_TRACE_FUSION
-            std::fprintf(stderr,
-                         "[case-i] j=%zu from=(%zu,%c,x=%.6g) dir=%c "
-                         "s_hit=%d (%zu,%c,x=%.6g w=%d arc=%zd)\n",
-                         j, aj_v.edge, aj_v.side == LEFT ? 'L' : 'R',
-                         aj_point.x, dir == LEFT ? 'L' : 'R',
-                         (int)s_hit.hit, s_hit.edge,
-                         s_hit.side == LEFT ? 'L' : 'R', s_hit.x,
-                         (int)s_hit.wrapped, (ptrdiff_t)s_hit.hit_arc_idx);
-#endif
             if (!s_hit.hit) return {false, {}};
 
             // [C91 §3.1 tex 220]: "Whether a_j lies in R can be directly
@@ -1402,27 +1374,7 @@ void fuse_submaps(FusionState& state,
                         RayHit hit = oracle1.shoot(
                             q_point, shoot_dir, aj_arc, aj_sub,
                             perturbed_x_offset(C2, chord_ab_y, q_edge));
-#ifdef CHAZELLE_TRACE_FUSION
-                        std::fprintf(stderr,
-                            "[case-ii] ci=%zu q=(%zu,%c,x=%.6g)@%g@%zu "
-                            "dir=%c hit=%d (%zu,%c,x=%.6g,w=%d)\n",
-                            ci, q_edge, q_side == LEFT ? 'L' : 'R',
-                            q_point.x, chord_ab_y.y, chord_ab_y.tag,
-                            shoot_dir == LEFT ? 'L' : 'R',
-                            (int)hit.hit, hit.edge,
-                            hit.side == LEFT ? 'L' : 'R', hit.x,
-                            (int)hit.wrapped);
-#endif
                         if (!hit.hit) continue;
-#ifdef CHAZELLE_TRACE_FUSION
-                        auto cii = [&](const char* stage) {
-                            std::fprintf(stderr,
-                                         "[case-ii]   reject at %s\n",
-                                         stage);
-                        };
-#else
-                        auto cii = [&](const char*) {};
-#endif
 
                         // [C91 §2.1 tex 70]: hits are ordered in the
                         // lexicographic (wrapped, distance) ray metric;
@@ -1479,7 +1431,6 @@ void fuse_submaps(FusionState& state,
                                 (q_to_hit > q_to_other ||
                                  (q_to_hit == q_to_other &&
                                   beyond_other()))) {
-                                cii("on-ab-wrap");
                                 continue;
                             }
                         } else {
@@ -1487,7 +1438,6 @@ void fuse_submaps(FusionState& state,
                             if (hit.wrapped || q_to_hit > q_to_other ||
                                 (q_to_hit == q_to_other &&
                                  beyond_other())) {
-                                cii("on-ab-direct");
                                 continue;
                             }
                         }
@@ -1518,7 +1468,6 @@ void fuse_submaps(FusionState& state,
                                                    chord_ab_y,
                                                    S1.start_vertex,
                                                    S1.end_vertex)) {
-                            cii("orientation");
                             continue;
                         }
 
@@ -1527,7 +1476,6 @@ void fuse_submaps(FusionState& state,
                         // chord_ab's SymbolicY (RayHit carries only raw y).
                         auto hit_cw = cw_position(chord_ab_y, hit.edge, hit.side);
                         if (!cw_less_from_a0(p_cw, hit_cw)) {
-                            cii("follows-p");
                             continue;
                         }
 
@@ -1610,7 +1558,7 @@ void fuse_submaps(FusionState& state,
                                     Cm, chord_ab_y, s_back_dir,
                                     off_walker + t_hit.edge, t_hit.side,
                                     off_target + q_edge, q_side);
-                            if (!q_first) { cii("back-shot"); continue; }
+                            if (!q_first) continue;
                         }
 
                         // [C91 §3.1 tex 206]: pick LAST p' cw from p.
@@ -1631,22 +1579,10 @@ void fuse_submaps(FusionState& state,
             // remaining a_k..a_{m+1} see ∂C₁ (informational — no chords
             // recorded, only S₁'s existing chords carry over in rebuild).
             if (j == state.sequence.size()) {
-#ifdef CHAZELLE_TRACE_FUSION
-                std::fprintf(stderr, "[fuse]  j=%zu (iii) terminate\n", j);
-#endif
                 return;
             }
 
             state.current_stop = j;
-#ifdef CHAZELLE_TRACE_FUSION
-            if (j < state.sequence.size())
-                std::fprintf(stderr, "[fuse]   probe j=%zu stop=(%zu,%s,y=%g@%zu comp=%d ch=%zd) R=%zu\n",
-                             j, state.sequence[j].edge,
-                             state.sequence[j].side==LEFT?"L":"R",
-                             state.sequence[j].y.y, state.sequence[j].y.tag,
-                             (int)state.sequence[j].is_companion,
-                             (ptrdiff_t)state.sequence[j].chord_idx, R);
-#endif
 
             // [C91 §3.1 tex 191/199/224]: a stop at the junction's
             // INSIDE-duplicate position — the tour-end companion, or a
@@ -1661,11 +1597,6 @@ void fuse_submaps(FusionState& state,
             // terminates (tex 199).
             if (stop_is_junction_inside(state.sequence[j])) {
                 const FusionVertex& aj_v = state.sequence[j];
-#ifdef CHAZELLE_TRACE_FUSION
-                std::fprintf(stderr, "[fuse]  j=%zu inside-dup stop (%zu,%s) chord=%zd\n",
-                             j, aj_v.edge, aj_v.side==LEFT?"L":"R",
-                             (ptrdiff_t)aj_v.chord_idx);
-#endif
                 if (aj_v.chord_idx != NONE) {
                     assert(aj_v.chord_idx <
                            state.invalidated_walker_chords.size());
@@ -1685,12 +1616,6 @@ void fuse_submaps(FusionState& state,
             if (auto r = case_i_test(j); r.fires) {
                 const FusionVertex& aj_v = state.sequence[j];
                 Point aj_point = fv_point(aj_v);
-#ifdef CHAZELLE_TRACE_FUSION
-                std::fprintf(stderr, "[fuse]  j=%zu case(i) stop=(%zu,%s,y=%g@%zu) hit=(%zu,%s,x=%g)\n",
-                             j, aj_v.edge, aj_v.side==LEFT?"L":"R", aj_v.y.y,
-                             aj_v.y.tag, r.s_hit.edge,
-                             r.s_hit.side==LEFT?"L":"R", r.s_hit.x);
-#endif
 
                 // a_j on the walked curve; s_hit on the target (walker-frame flags).
                 if (aj_point.x < r.s_hit.x)
@@ -1749,12 +1674,6 @@ void fuse_submaps(FusionState& state,
                                                    aj_v.side, aj_v.y)
                             ? below_r
                             : above_r;
-#ifdef CHAZELLE_TRACE_FUSION
-                    std::fprintf(stderr,
-                                 "[fuse]   invariant-B tie: p on S2 "
-                                 "chord %zu -> R=%zu\n", ci,
-                                 state.s2_region);
-#endif
                     break;
                 }
                 k = j + 1;
@@ -1764,12 +1683,6 @@ void fuse_submaps(FusionState& state,
             // current = R's neighbor across chord ab; k = j.
             if (auto r = case_ii_test(j); r.fires) {
                 const Chord& chord_ab = S2.chord(r.chord_idx);
-#ifdef CHAZELLE_TRACE_FUSION
-                std::fprintf(stderr, "[fuse]  j=%zu case(ii) chord=%zu p'=(%zu,%s,x=%g)\n",
-                             j, r.chord_idx, r.p_prime_hit.edge,
-                             r.p_prime_hit.side==LEFT?"L":"R",
-                             r.p_prime_hit.x);
-#endif
                 std::size_t q_edge = r.q_is_left ? chord_ab.left_edge
                                                   : chord_ab.right_edge;
                 Side q_side = r.q_is_left ? chord_ab.left_side
@@ -2297,16 +2210,6 @@ void build_submap_from_chords(Submap& out_S, const Polygon& C,
                   h.edge, p.right_edge_c)))) &&
               (h.edge + 1 == p.right_edge_c ||
                p.right_edge_c + 1 == h.edge)));
-        if (!ok) {
-            std::fprintf(stderr,
-                         "BAD CHORD y=%g@%zu L=(%zu,%s,x=%g) "
-                         "R=(%zu,%s,x=%g) first-contact=(%zu,%s,x=%g)\n",
-                         p.y.y, p.y.tag, p.left_edge_c,
-                         p.left_side == LEFT ? "L" : "R", xl,
-                         p.right_edge_c,
-                         p.right_side == LEFT ? "L" : "R", xr,
-                         h.edge, h.side == LEFT ? "L" : "R", h.x);
-        }
         assert(ok &&
                "[C91 §2.2 tex 90]: every inventory chord must join a "
                "mutually visible pair with respect to C");

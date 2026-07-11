@@ -6,7 +6,6 @@
 #include "../submap/shielding.h"
 
 #include <algorithm>
-#include <cstdio>
 
 namespace chazelle {
 
@@ -524,14 +523,6 @@ CandidateShot try_candidate_vertex(std::size_t edge_c, Side side, SymbolicY y,
     out.success = hit.hit_arc_idx == A2 &&
         !duplicates_region_chord(S, region, y, edge_c, side,
                                  hit.edge, hit.side);
-#ifdef CHAZELLE_TRACE_FUSION
-    std::fprintf(stderr,
-                 "[cand] (%zu,%s,y=%g@%zu) -> hit=(%zu,%s,x=%g arc=%zd) "
-                 "A2=%zu ok=%d\n",
-                 edge_c, side == LEFT ? "L" : "R", y.y, y.tag, hit.edge,
-                 hit.side == LEFT ? "L" : "R", hit.x,
-                 (ptrdiff_t)hit.hit_arc_idx, A2, (int)out.success);
-#endif
     return out;
 }
 
@@ -1047,18 +1038,6 @@ VisiblePoint descend_step(const PieceSearchContext& ctx,
     bool keep_piece1 = !reject_piece1;
     bool keep_probe_side = (keep_piece1 == probe_in_piece1);
     bool go_left = (keep_probe_side == probe_child_is_left);
-#ifdef CHAZELLE_TRACE_FUSION
-    std::fprintf(stderr,
-                 "[descend] ab y=%g@%zu L=(%zu,%s) R=(%zu,%s) wraps=%d "
-                 "a=%s a_in=%d b_in=%d a'=%d b'=%d rej1=%d probe=%zu "
-                 "p1=%d\n",
-                 y_ab.y, y_ab.tag, ab.left_edge,
-                 ab.left_side == LEFT ? "L" : "R", ab.right_edge,
-                 ab.right_side == LEFT ? "L" : "R", (int)ab_wraps,
-                 left_is_a ? "left" : "right", (int)a_in, (int)b_in,
-                 (int)a_prime_exists, (int)b_prime_exists,
-                 (int)reject_piece1, probe_arc, (int)probe_in_piece1);
-#endif
     *next_node = go_left ? node.left_child : node.right_child;
     assert(*next_node != NONE &&
            "[C91 §2.3]: internal TD node has two children");
@@ -1387,17 +1366,6 @@ void restore_conformality(Submap& S, const Polygon& C,
                         shooting_direction(vp.p_edge, vp.p_side, C),
                         /*source_edge=*/vp.p_edge);
                     [[maybe_unused]] bool ok = h.hit && h.x == vp.q_x;
-                    if (!ok)
-                        std::fprintf(stderr,
-                                     "BAD 3.2 CHORD y=%g@%zu p=(%zu,%s,"
-                                     "x=%g) q=(%zu,%s,x=%g) truth=(%zu,"
-                                     "%s,x=%g)\n",
-                                     vp.y.y, vp.y.tag, vp.p_edge,
-                                     vp.p_side == LEFT ? "L" : "R",
-                                     vp.p_x, vp.q_edge,
-                                     vp.q_side == LEFT ? "L" : "R",
-                                     vp.q_x, h.edge,
-                                     h.side == LEFT ? "L" : "R", h.x);
                     assert(ok &&
                            "[C91 §3.2 tex 264]: Lemma 3.2's point must "
                            "actually see its partner w.r.t. C");
@@ -1438,48 +1406,6 @@ void restore_conformality(Submap& S, const Polygon& C,
                 found = true;
             }
         }
-#ifdef CHAZELLE_TRACE_FUSION
-        if (!found) {
-            // Diagnostic: brute-force the Lemma 3.3 guarantee.
-            for (std::size_t i = 0; i < k; ++i) {
-                const Arc& ga = S.arc(cycle.arcs[i].arc);
-                ArcLeg lg[3];
-                std::size_t nl = ga.legs(S.start_vertex, S.end_vertex, lg);
-                for (std::size_t g = 0; g < nl; ++g)
-                    for (std::size_t e = lg[g].lo; e <= lg[g].hi; ++e)
-                        for (std::size_t vv = e; vv <= e + 1; ++vv) {
-                            SymbolicY vy = symbolic_y_of(C.vertex(vv));
-                            if (!fused_arc_contains(S, C,
-                                    cycle.arcs[i].arc, e, lg[g].side, vy))
-                                continue;
-                            if (is_inside_companion(C, e, lg[g].side, vv))
-                                continue;
-                            Point p{edge_x_at_y(C, e, vy), vy.y, vy.tag};
-                            RayHit h = naive_first_contact(
-                                C, p, vy,
-                                shooting_direction(e, lg[g].side, C),
-                                /*source_edge=*/e);
-                            if (!h.hit) continue;
-                            for (std::size_t j = 0; j < k; ++j) {
-                                if (j == i || j == (i + 1) % k ||
-                                    j == (i + k - 1) % k)
-                                    continue;
-                                if (fused_arc_contains(S, C,
-                                        cycle.arcs[j].arc, h.edge,
-                                        h.side, vy))
-                                    std::fprintf(stderr,
-                                        "[3.3] candidate arc#%zu (%zu,%s,y=%g"
-                                        "@%zu) sees arc#%zu at (%zu,%s,"
-                                        "x=%g)\n",
-                                        i, e,
-                                        lg[g].side == LEFT ? "L" : "R",
-                                        vy.y, vy.tag, j, h.edge,
-                                        h.side == LEFT ? "L" : "R", h.x);
-                            }
-                        }
-            }
-        }
-#endif
         // [C91 §3.2 Lemma 3.3]: k > 4 guarantees a nonconsecutive pair
         // with a vertex of ∂C on one seeing the other; Lemma 3.2 finds
         // it.  (Zero-length arcs cannot carry the guarantee — their

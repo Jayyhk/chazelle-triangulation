@@ -253,21 +253,8 @@ static void test_ray_shooting_vs_naive(bool dup_ys) {
                                                  c.vertex(v))) &&
                             !c.is_y_extremum(v);
                     }
-                    const bool ok = a.x == b.x && same_label &&
-                                    a.side == b.side &&
-                                    a.wrapped == b.wrapped;
-                    if (!ok)
-                        std::fprintf(stderr,
-                            "MISMATCH p=(%.6g,%.6g@%zu) dir=%c src=%zu "
-                            "struct=(%zu,%c,x=%.6g,w=%d) "
-                            "naive=(%zu,%c,x=%.6g,w=%d)\n",
-                            p.x, sy.y, sy.tag, dir == LEFT ? 'L' : 'R',
-                            src_edge, a.edge,
-                            a.side == LEFT ? 'L' : 'R', a.x,
-                            (int)a.wrapped, b.edge,
-                            b.side == LEFT ? 'L' : 'R', b.x,
-                            (int)b.wrapped);
-                    assert(ok &&
+                    assert(a.x == b.x && same_label &&
+                           a.side == b.side && a.wrapped == b.wrapped &&
                            "[C91 §3.4 Lemma 3.6]: structure and naive "
                            "shooter must report the same first contact");
                 }
