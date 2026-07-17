@@ -54,13 +54,13 @@ exactly.
     `tests/s3.3-tests.cpp::test_degree_drop_recheck` pins the
     counterexample shape permanently.
 
-- **[C91 §3.2 tex 248]'s "which we ignore" for boundary subarcs** —
+- **[C91 §3.2 tex 246]'s "which we ignore" for boundary subarcs** —
   the paper says of the ≤ 2 single-edge subarcs attached to A₁'s
   endpoints: "(which we ignore)".  Read as "never search them", that
   aside is provably wrong: when A₁ spans two partially-covered edges,
   the arc-cutter's decomposition consists ONLY of boundary pieces, and
   Lemma 3.3's guaranteed vertex ([C91 §3.2 tex 256–264]) lives there —
-  skipping them would strand the tex-267 chord-addition loop on a
+  skipping them would strand the tex-264 chord-addition loop on a
   region it can never fix, contradicting Lemma 3.4.  The
   implementation follows the reading under which the paper's own
   lemmas hold: the parenthetical scopes the sentence it sits in (the
@@ -72,32 +72,32 @@ exactly.
   When the aside contradicts the theorem, the theorem wins.  Pinned by
   tests/s3.2-tests.cpp test 6(a).
 
-- **[C91 §4.1 tex 350]'s piece sizes under padding** — tex 350 says
+- **[C91 §4.1 tex 341]'s piece sizes under padding** — tex 341 says
   each vertex-to-vertex piece of the arc-cutter's decomposition has
-  "at most 2^{⌈βλ⌉} edges", and tex 352 keeps every cover chain "in
-  grades at most ⌈βλ⌉".  Read against [C91 §4 tex 316]'s null-length
+  "at most 2^{⌈βλ⌉} edges", and keeps every cover chain "in
+  grades at most ⌈βλ⌉" (same line).  Read against [C91 §4 tex 316]'s null-length
   padding and [C91 §2.2 tex 106] ("weights count only edges of
   nonzero length"), the edge counts are NONNULL counts: a piece with
   ≤ 2^{⌈βλ⌉} nonnull edges may span arbitrarily many null padding
   edges, so its dyadic cover admits ALL-NULL chains of any processed
   grade < λ.  This is forced, not merely convenient: the premise
-  itself ("any arc α ... consists of at most γ edges", tex 350) is
+  itself ("any arc α ... consists of at most γ edges", tex 341) is
   DERIVED from γ-granularity, whose weight metric counts nonnull
   edges only — under the paper's own padding the literal all-edges
   reading is unsatisfiable — and covering a null run with
   grade ≤ ⌈βλ⌉ chains would need up to 2^{λ−⌈βλ⌉} of them,
-  destroying tex 353's g(γ) = O(λ).  The h-bound survives by the
+  destroying tex 341's g(γ) = O(λ).  The h-bound survives by the
   paper's own default clause ([C91 §2.3 tex 121]: "if (i) holds but
   the submap has no exit chord, it is still said to be γ-granular"):
   an all-null chain's canonical submap is chordless with total
   weight 0, hence γ-granular for EVERY γ, and its single-leaf tree
   decomposition keeps it searchable by Lemma 3.2's descent.  Every
   chain containing a nonnull edge stays in grade ≤ ⌈βλ⌉ exactly as
-  tex 352 states.  Implemented in visibility/up_phase.cpp
+  tex 341 states.  Implemented in visibility/up_phase.cpp
   (piece_cover).
 
 - **All-null dyadic parts attach by extension, not merge** — Lemma
-  4.1 (tex 347–349) partitions a portion v_a..v_b into ≤ 2λ chains
+  4.1 (tex 336, proof 339–341) partitions a portion v_a..v_b into ≤ 2λ chains
   and "merges them two-by-two".  A suffix part consisting ONLY of
   null padding edges ([C91 §4 tex 316]) contributes no visibility
   information usable by a canonical submap: the full maps DIFFER
@@ -120,7 +120,7 @@ exactly.
   old boundary when it becomes a y-extremum of the extended curve,
   then refresh edge counts and the tree decomposition.  Cost:
   O(submap size) per extension — the same order as Lemma 4.1's own
-  granularity-reset step O(2^{λ(1−β)}) (tex 349), so the lemma's
+  granularity-reset step O(2^{λ(1−β)}) (tex 339), so the lemma's
   time bound is unaffected.  No merge ever sees an all-null input
   or a junction at a padding vertex (all-null parts form a suffix
   of the dyadic part sequence, so merge junctions sit at boundaries
@@ -140,8 +140,10 @@ exactly.
   election), leaving stale wrap chords un-revalidated (tex 224).
   The implementation applies the invariant-B election in the case (i)
   action exactly as the startup does (tex 191; fusion.cpp, the
-  "invariant-B tie" block).  When the summary action contradicts the
+  "invariant-B tie" block); the endpoint match is POSITIONAL
+  (crossing vertex + side, not exact edge label — [C91 §3.0(i)
+  tex 169]: a point at a shared crossing vertex is contained in both
+  incident edges, so the recorded label may be the neighbor edge's).  When the summary action contradicts the
   loop invariant, the invariant wins.  Pinned by
   tests/s4.1-tests.cpp::test_deep_grades_invariant_b (a 248-vertex
   curve whose [208,224] merge hits the configuration).
-
