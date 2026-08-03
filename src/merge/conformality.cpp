@@ -1336,6 +1336,28 @@ void restore_conformality(Submap& S, const Polygon& C,
         assert(!S.node(r).dead && "[C91 §3.2]: regions are never removed here");
 
         FusedRegionCycle cycle = fused_region_cycle(S, C, r, region_arcs[r]);
+
+#ifndef NDEBUG
+        // [C91 §3.2 tex 238]: "this leaves only the possibility of
+        // having at most one run of each type, and hence a total of at
+        // most two runs."  Splitting a region preserves the bound (a
+        // contiguous sub-interval of a ≤ 2-block cyclic sequence,
+        // re-closed by the new chord, has ≤ 2 blocks), so it holds for
+        // every region this loop processes.
+        {
+            std::size_t runs = 0;
+            for (std::size_t li = 0; li < cycle.count; ++li) {
+                std::size_t prev = (li + cycle.count - 1) % cycle.count;
+                if (cycle.count == 1 ||
+                    provenance[cycle.arcs[li].arc].on_c1 !=
+                        provenance[cycle.arcs[prev].arc].on_c1)
+                    ++runs;
+            }
+            assert(runs <= 2 &&
+                   "[C91 §3.2 tex 238]: a fused region's arcs form at "
+                   "most two runs, one per operand");
+        }
+#endif
         if (cycle.count <= 4) continue;
 
         // [C91 §3.2 tex 264]: "apply Lemma 3.2 to every pair of

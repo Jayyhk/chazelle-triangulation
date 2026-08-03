@@ -1658,11 +1658,34 @@ void fuse_submaps(FusionState& state,
                     if (ch.dead || ch.is_null_length) continue;
                     if (!symbolic_y_equal(ch.symbolic_y(), aj_v.y))
                         continue;
+                    // [C91 §3.0(i) tex 169]: a point at a shared
+                    // crossing vertex is contained in both incident
+                    // edges, so the hit's recorded label may be the
+                    // neighbor edge's — the endpoint match is
+                    // POSITIONAL (crossing vertex + side), not exact
+                    // edge label.  At a non-extremum crossing vertex
+                    // the same-side labels of the two incident edges
+                    // name ONE ∂C₂ companion point ([C91 §2.1
+                    // tex 72]); an extremum's same-side labels are a
+                    // duplicate PAIR of distinct points, so extrema
+                    // are excluded.
+                    auto endpoint_matches = [&](std::size_t ce,
+                                                Side cs) {
+                        if (cs != r.s_hit.side) return false;
+                        if (ce == r.s_hit.edge) return true;
+                        const std::size_t lo_e =
+                            std::min(ce, r.s_hit.edge);
+                        const std::size_t hi_e =
+                            std::max(ce, r.s_hit.edge);
+                        if (lo_e + 1 != hi_e) return false;
+                        const std::size_t sv = hi_e;  // shared vertex
+                        return symbolic_y_of(C2.vertex(sv)).tag ==
+                                   aj_v.y.tag &&
+                               !C2.is_y_extremum(sv);
+                    };
                     const bool at_endpoint =
-                        (ch.left_edge == r.s_hit.edge &&
-                         ch.left_side == r.s_hit.side) ||
-                        (ch.right_edge == r.s_hit.edge &&
-                         ch.right_side == r.s_hit.side);
+                        endpoint_matches(ch.left_edge, ch.left_side) ||
+                        endpoint_matches(ch.right_edge, ch.right_side);
                     if (!at_endpoint) continue;
                     std::size_t below_r = NONE, above_r = NONE;
                     S2.chord_regions_below_above(ci, C2, &below_r,

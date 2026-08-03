@@ -1329,9 +1329,11 @@ void lt_connected(const EmbeddedPlanarGraph& g,
     for (std::size_t v = 1; v < s.g.n; ++v)
         if (side[v] == 2) ++cyc_real;
     assert(cyc_real + 1 >= cs.cycle_count);  // apex on cycle or not
-    assert(cyc_real <= 2 * (l2 - l0) - 1 &&
+    assert(cyc_real <= 2 * (l2 - l0 - 1) &&
            "[LT79 lem:radius tex 206–208]: cycle length ≤ 2r + 1 with "
-           "r = l2 − l0 − 1");
+           "r = l2 − l0 − 1; the root is on the cycle (≤ 2r non-root "
+           "vertices) or off it (the paths meet below the root, ≤ 2r − 1 "
+           "total), so the non-apex count is at most 2r either way");
 
     for (std::size_t v : order) {
         int b = band_of(v);

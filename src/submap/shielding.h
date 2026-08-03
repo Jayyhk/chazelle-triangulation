@@ -32,8 +32,19 @@ namespace chazelle {
 //                            crossing); only read when both exist.
 //
 // Preconditions (per the lemma's setup, [C91 §2.5 tex 150–156]):
-//   - (a_prime=false, b_prime=true) is impossible — a' is the FIRST
-//     and b' the LAST point of ab∩A, so they exist together.
+//   - (a_prime=false, b_prime=true) is impossible.  [C91 §2.5
+//     tex 153] defines a' (resp. b') only when a (resp. b) lies in
+//     B₁ ∪ B₂, and under the lemma's own labeling ([C91 §2.5
+//     tex 150]: a, c, b clockwise on ∂D, with B₁ ∪ B₂ on the arc
+//     running clockwise from d to c) every placement of d yields
+//     b ∈ B₁ ∪ B₂ ⟹ a ∈ B₁ ∪ B₂: clockwise from b the order is
+//     b, a, c, so an arc that contains b and ends at c passes a.
+//     A one-sided configuration therefore always presents as
+//     only-a' ([C91 §3.2 tex 252]'s Fig. 2.8.2 case), never as
+//     only-b'.  When both a, b ∈ B₁ ∪ B₂, a' is the first and b'
+//     the last point of ab ∩ A, so they exist together.  Callers
+//     must apply the tex-150 labeling (conformality.cpp anchors a
+//     as the endpoint reached first walking ∂ᾱ clockwise from c).
 //   - Both B₁ AND B₂ are nonempty.  Callers must enforce this before
 //     invoking.
 inline std::size_t shielding_piece_count(bool a_prime, bool b_prime,

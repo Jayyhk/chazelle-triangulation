@@ -458,21 +458,32 @@ static std::vector<std::size_t> region_arcs_of(const Submap& S,
 }
 
 // Brute-force geometric validation: the chord's endpoints are mutually
-// visible with respect to C — no edge of C crosses its open interior.
+// visible with respect to C.  [C91 §2.1 tex 74]: p and q see each
+// other when ONE of the two (relatively open) segments joining them
+// lies completely outside C — the direct segment for an ordinary
+// chord, or its through-infinity complement for a wrapping one
+// ([C91 §2.1 tex 70]), so the crossing-free check must run against
+// the segment the chord actually occupies.
 static void assert_chord_geometrically_valid(const Polygon& C,
                                              const Chord& c) {
     SymbolicY y = c.symbolic_y();
     double x1 = edge_x_at_y(C, c.left_edge, y);
     double x2 = edge_x_at_y(C, c.right_edge, y);
-    if (x1 == x2) return;   // zero-length (duplicate-pair) chord
+    const bool wraps = chord_runs_through_infinity(C, c);
+    if (x1 == x2 && !wraps) return;   // zero-length (duplicate-pair) chord
     double lo = std::min(x1, x2);
     double hi = std::max(x1, x2);
     for (std::size_t e = 0; e < C.num_edges(); ++e) {
         double x;
         if (!GeomRayShooter::crossing_x(C, e, y, &x)) continue;
-        assert(!(x > lo && x < hi) &&
-               "[C91 §2.1 tex 70]: an added chord's open interior must "
-               "not cross C (mutual visibility)");
+        if (wraps)
+            assert(!(x < lo || x > hi) &&
+                   "[C91 §2.1 tex 74]: a wrapping chord's through-infinity "
+                   "segment must not cross C (mutual visibility)");
+        else
+            assert(!(x > lo && x < hi) &&
+                   "[C91 §2.1 tex 74]: a direct chord's open interior must "
+                   "not cross C (mutual visibility)");
     }
 }
 
