@@ -1,0 +1,9 @@
+{
+    "format": {
+        "line_width": 100,
+        "tab_size": 4
+    },
+    "lint": {
+        "disabled_codes": ["C0111"]
+    }
+}
