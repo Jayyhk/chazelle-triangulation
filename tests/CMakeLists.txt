@@ -73,3 +73,19 @@ add_test(
         "${CMAKE_COMMAND}" "-DCHAZELLE_EXECUTABLE=$<TARGET_FILE:chazelle>"
         "-DCLI_TEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/cli-tests" -P
         "${CMAKE_CURRENT_SOURCE_DIR}/cli-tests.cmake")
+
+add_executable(animation-trace-tests animation-trace-tests.cpp)
+target_link_libraries(animation-trace-tests PRIVATE chazelle-core-checked chazelle-animation-checked
+                                                   chazelle-warnings)
+set_property(TARGET animation-trace-tests PROPERTY RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+add_test(NAME animation-trace-tests
+         COMMAND animation-trace-tests "${CMAKE_CURRENT_BINARY_DIR}/animation-traces")
+set_tests_properties(animation-trace-tests PROPERTIES FIXTURES_SETUP animation-traces)
+
+find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME animation-data-tests
+             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/animation-data-tests.py"
+                     "${CMAKE_CURRENT_BINARY_DIR}/animation-traces")
+    set_tests_properties(animation-data-tests PROPERTIES FIXTURES_REQUIRED animation-traces)
+endif()

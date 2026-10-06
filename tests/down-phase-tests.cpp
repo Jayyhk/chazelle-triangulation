@@ -1,8 +1,8 @@
-#include "merge/granularity.h"
-#include "submap/chord_inventory.h"
+#include "algorithm/merge/granularity.h"
+#include "algorithm/submap/chord_inventory.h"
+#include "algorithm/visibility/down_phase.h"
 #include "support/assertions.h"
 #include "support/random.h"
-#include "visibility/down_phase.h"
 
 #include <algorithm>
 #include <cassert>

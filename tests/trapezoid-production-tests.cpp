@@ -1,5 +1,5 @@
+#include "algorithm/triangulation/trapezoids.h"
 #include "support/triangulation_production_checks.h"
-#include "triangulation/trapezoids.h"
 
 #include <algorithm>
 #include <cstdio>

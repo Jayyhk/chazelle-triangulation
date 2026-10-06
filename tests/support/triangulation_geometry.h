@@ -1,6 +1,6 @@
 #pragma once
 
-#include "polygon/point.h"
+#include "algorithm/polygon/point.h"
 
 namespace chazelle::test {
 

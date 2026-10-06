@@ -1,7 +1,7 @@
+#include "algorithm/triangulation/trapezoids.h"
+#include "algorithm/visibility/naive_visibility.h"
+#include "algorithm/visibility/up_phase.h"
 #include "support/triangulation_checks.h"
-#include "triangulation/trapezoids.h"
-#include "visibility/naive_visibility.h"
-#include "visibility/up_phase.h"
 
 #include <algorithm>
 #include <cassert>

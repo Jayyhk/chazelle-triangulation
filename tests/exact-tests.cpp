@@ -1,8 +1,8 @@
-#include "polygon/polygon.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/visibility/chain.h"
+#include "algorithm/visibility/naive_visibility.h"
+#include "algorithm/visibility/up_phase.h"
 #include "support/arc_ray_shooter.h"
-#include "visibility/chain.h"
-#include "visibility/naive_visibility.h"
-#include "visibility/up_phase.h"
 
 #include <cassert>
 #include <cmath>

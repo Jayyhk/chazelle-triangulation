@@ -1,9 +1,9 @@
-#include "merge/granularity.h"
-#include "submap/chord_inventory.h"
+#include "algorithm/merge/granularity.h"
+#include "algorithm/submap/chord_inventory.h"
+#include "algorithm/visibility/bounded_regions.h"
+#include "algorithm/visibility/naive_visibility.h"
+#include "algorithm/visibility/up_phase.h"
 #include "support/random.h"
-#include "visibility/bounded_regions.h"
-#include "visibility/naive_visibility.h"
-#include "visibility/up_phase.h"
 
 #include <algorithm>
 #include <cassert>

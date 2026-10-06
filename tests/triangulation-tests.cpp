@@ -1,7 +1,7 @@
+#include "algorithm/visibility/naive_visibility.h"
 #include "support/assertions.h"
 #include "support/triangulation_checks.h"
 #include "support/unimonotone_fixture.h"
-#include "visibility/naive_visibility.h"
 
 #include <algorithm>
 #include <cassert>

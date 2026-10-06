@@ -1,7 +1,7 @@
-#include "merge/conformality.h"
-#include "merge/granularity.h"
-#include "polygon/polygon.h"
-#include "submap/submap.h"
+#include "algorithm/merge/conformality.h"
+#include "algorithm/merge/granularity.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/submap/submap.h"
 #include "support/arc_ray_shooter.h"
 #include "support/assertions.h"
 

@@ -1,5 +1,5 @@
-#include "merge/merge.h"
-#include "merge/ray_shooting.h"
+#include "algorithm/merge/merge.h"
+#include "algorithm/merge/ray_shooting.h"
 #include "support/arc_ray_shooter.h"
 #include "support/assertions.h"
 

@@ -1,5 +1,5 @@
-#include "polygon/perturbation.h"
-#include "polygon/point.h"
+#include "algorithm/polygon/perturbation.h"
+#include "algorithm/polygon/point.h"
 
 #include <algorithm>
 #include <cassert>

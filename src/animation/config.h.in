@@ -1,0 +1,4 @@
+#pragma once
+
+#define CHAZELLE_ANIMATION_PYTHON R"(@CHAZELLE_ANIMATION_PYTHON@)"
+#define CHAZELLE_ANIMATION_SCRIPT R"(@PROJECT_SOURCE_DIR@/src/animation/render.py)"

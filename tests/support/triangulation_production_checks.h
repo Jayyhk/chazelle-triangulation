@@ -1,6 +1,6 @@
 #pragma once
 
-#include "triangulation/triangulation.h"
+#include "algorithm/triangulation/triangulation.h"
 
 #include <algorithm>
 #include <array>

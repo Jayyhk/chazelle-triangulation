@@ -1,6 +1,6 @@
 #pragma once
 
-#include "polygon/polygon.h"
+#include "algorithm/polygon/polygon.h"
 
 #include <algorithm>
 #include <cassert>
@@ -8,7 +8,7 @@
 
 namespace chazelle::test {
 
-inline std::vector<std::vector<Point>> polygon_fixtures() {
+template <class Vertex = Point> inline std::vector<std::vector<Vertex>> polygon_fixtures() {
     return {
         {{0, 0, 0}, {4, 0, 1}, {2, 3, 2}},
         {{0, 0, 0}, {4, 0, 1}, {4, 4, 2}, {0, 4, 3}},
@@ -27,8 +27,9 @@ inline std::vector<std::vector<Point>> polygon_fixtures() {
         {{0, 0, 0}, {6, 0, 1}, {6, 1, 2}, {5, 1, 3}, {5, 2, 4}, {4, 2, 5}, {4, 3, 6}, {0, 3, 7}}};
 }
 
-inline std::vector<Point> boundary_order(std::vector<Point> vertices, bool reverse,
-                                         std::size_t first, std::size_t first_tag = 41) {
+template <class Vertex>
+inline std::vector<Vertex> boundary_order(std::vector<Vertex> vertices, bool reverse,
+                                          std::size_t first, std::size_t first_tag = 41) {
     assert(first < vertices.size() && vertices.size() < SOS_NONE - first_tag);
     if (reverse)
         std::reverse(vertices.begin(), vertices.end());

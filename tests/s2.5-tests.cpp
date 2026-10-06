@@ -1,4 +1,4 @@
-#include "submap/shielding.h"
+#include "algorithm/submap/shielding.h"
 
 #include <cassert>
 #include <cstdio>

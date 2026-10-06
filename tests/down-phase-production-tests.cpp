@@ -1,6 +1,6 @@
-#include "submap/chord_inventory.h"
+#include "algorithm/submap/chord_inventory.h"
+#include "algorithm/visibility/down_phase.h"
 #include "support/random.h"
-#include "visibility/down_phase.h"
 
 #include <algorithm>
 #include <cstdio>

@@ -1,5 +1,5 @@
-#include "polygon/polygon.h"
-#include "submap/submap.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/submap/submap.h"
 #include "support/assertions.h"
 
 #include <cassert>

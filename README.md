@@ -38,7 +38,9 @@ collinear vertices are supported.
 **Output:** n−2 on the first line, followed by one line per triangle giving
 three zero-based indices into the input vertex list, in clockwise order.
 
-Add `--visualize` to the same command to save a picture of the triangulation:
+## Visualize
+
+Add `--visualize` to save a picture of the triangulation:
 
 ```bash
 echo "n
@@ -48,9 +50,33 @@ x1 y1
 x_{n-1} y_{n-1}" | ./build/chazelle --visualize
 ```
 
-Images are saved in `images/triangulation-YYYY-MM-DD.svg`, using the local date.
-The directory is created automatically. An optional filename, such as
-`--visualize example.svg`, produces `images/example-YYYY-MM-DD.svg`.
+Images are saved in `media/images/triangulation-YYYY-MM-DD.svg`.
+Use `--visualize example.svg` to choose a filename.
+
+## Animate
+
+Install Manim with Python 3.11 or newer:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r src/animation/requirements.txt
+```
+
+See [Manim's installation instructions](https://docs.manim.community/en/stable/installation.html)
+for native prerequisites.
+
+Add `--animate` to render the algorithm:
+
+```bash
+echo "n
+x0 y0
+x1 y1
+...
+x_{n-1} y_{n-1}" | ./build/chazelle --animate
+```
+
+Videos are saved in `media/animations/algorithm-YYYY-MM-DD.mp4`.
+Use `--animate example.mp4` to choose a filename.
 
 ## References
 

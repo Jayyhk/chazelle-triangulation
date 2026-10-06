@@ -1,10 +1,10 @@
-#include "merge/oracle.h"
-#include "polygon/polygon.h"
-#include "submap/submap.h"
+#include "algorithm/merge/oracle.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/submap/submap.h"
+#include "algorithm/visibility/chain.h"
+#include "algorithm/visibility/naive_visibility.h"
+#include "algorithm/visibility/up_phase.h"
 #include "support/random.h"
-#include "visibility/chain.h"
-#include "visibility/naive_visibility.h"
-#include "visibility/up_phase.h"
 
 #include <algorithm>
 #include <cassert>

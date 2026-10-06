@@ -1,6 +1,6 @@
 #pragma once
 
-#include "triangulation/trapezoids.h"
+#include "algorithm/triangulation/trapezoids.h"
 
 #include <cstddef>
 #include <vector>

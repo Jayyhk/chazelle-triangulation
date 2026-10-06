@@ -1,7 +1,7 @@
-#include "merge/fusion.h"
-#include "polygon/polygon.h"
-#include "submap/chord_inventory.h"
-#include "submap/submap.h"
+#include "algorithm/merge/fusion.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/submap/chord_inventory.h"
+#include "algorithm/submap/submap.h"
 #include "support/assertions.h"
 
 #include <cassert>

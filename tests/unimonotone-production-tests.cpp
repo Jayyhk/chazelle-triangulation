@@ -1,5 +1,5 @@
+#include "algorithm/triangulation/unimonotone.h"
 #include "support/unimonotone_fixture.h"
-#include "triangulation/unimonotone.h"
 
 #include <algorithm>
 #include <array>

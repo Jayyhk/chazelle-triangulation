@@ -1,7 +1,7 @@
-#include "merge/ray_shooting.h"
-#include "polygon/polygon.h"
-#include "visibility/naive_visibility.h"
-#include "visibility/up_phase.h"
+#include "algorithm/merge/ray_shooting.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/visibility/naive_visibility.h"
+#include "algorithm/visibility/up_phase.h"
 
 #include <algorithm>
 #include <cassert>

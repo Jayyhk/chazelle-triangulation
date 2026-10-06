@@ -1,6 +1,6 @@
 #pragma once
 
-#include "merge/oracle.h"
+#include "algorithm/merge/oracle.h"
 
 inline chazelle::Subarc test_full_subarc(const chazelle::Polygon& curve, std::size_t first,
                                          chazelle::Side side, std::size_t last) {

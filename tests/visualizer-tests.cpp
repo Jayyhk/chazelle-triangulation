@@ -1,5 +1,5 @@
+#include "algorithm/visualizer/triangulation_svg.h"
 #include "support/triangulation_production_checks.h"
-#include "visualizer/triangulation_svg.h"
 
 #include <cstdio>
 #include <sstream>

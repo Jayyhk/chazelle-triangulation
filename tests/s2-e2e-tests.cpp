@@ -1,7 +1,7 @@
-#include "polygon/perturbation.h"
-#include "polygon/polygon.h"
-#include "submap/submap.h"
-#include "submap/tree_decomposition.h"
+#include "algorithm/polygon/perturbation.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/submap/submap.h"
+#include "algorithm/submap/tree_decomposition.h"
 
 #include <algorithm>
 #include <cassert>

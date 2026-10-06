@@ -1,6 +1,6 @@
-#include "polygon/polygon.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/visibility/chain.h"
 #include "support/assertions.h"
-#include "visibility/chain.h"
 
 #include <algorithm>
 #include <cassert>

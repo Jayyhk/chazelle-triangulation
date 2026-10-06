@@ -1,4 +1,4 @@
-#include "separator/planar_separator.h"
+#include "algorithm/separator/planar_separator.h"
 #include "support/random.h"
 
 #include <algorithm>

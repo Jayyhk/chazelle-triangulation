@@ -1,7 +1,7 @@
+#include "algorithm/triangulation/unimonotone.h"
+#include "algorithm/visibility/naive_visibility.h"
 #include "support/assertions.h"
 #include "support/unimonotone_fixture.h"
-#include "triangulation/unimonotone.h"
-#include "visibility/naive_visibility.h"
 
 #include <algorithm>
 #include <cassert>

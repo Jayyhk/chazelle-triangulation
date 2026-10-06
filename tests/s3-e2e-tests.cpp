@@ -1,12 +1,12 @@
-#include "merge/fusion.h"
-#include "merge/granularity.h"
-#include "merge/merge.h"
-#include "merge/ray_shooting.h"
-#include "polygon/polygon.h"
-#include "submap/submap.h"
+#include "algorithm/merge/fusion.h"
+#include "algorithm/merge/granularity.h"
+#include "algorithm/merge/merge.h"
+#include "algorithm/merge/ray_shooting.h"
+#include "algorithm/polygon/polygon.h"
+#include "algorithm/submap/submap.h"
+#include "algorithm/visibility/naive_visibility.h"
+#include "algorithm/visibility/up_phase.h"
 #include "support/random.h"
-#include "visibility/naive_visibility.h"
-#include "visibility/up_phase.h"
 
 #include <cassert>
 #include <cstdint>

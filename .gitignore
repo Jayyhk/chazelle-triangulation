@@ -1,8 +1,11 @@
 build/
 build-*/
 cmake-build-*/
-/images/
+/media/
+.venv/
+__pycache__/
 .cache/
+.ruff_cache/
 
 *.o
 *.obj
@@ -10,7 +13,9 @@ cmake-build-*/
 *.so
 *.dylib
 
-.vscode/
+.vscode/*
+!.vscode/c_cpp_properties.json
+!.vscode/settings.json
 .idea/
 *.swp
 *.swo
