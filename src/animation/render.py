@@ -183,6 +183,9 @@ class TriangulationScene(Scene):
         self.merge_event = None
         self.chain = None
         self.fusion_chords = {}
+        self.fusion_drawings = {}
+        self.fusion_order = ()
+        self.fusion_results = VGroup()
         self.nodes = {}
         self.edges = {}
         self.chord_shapes = {}
@@ -496,6 +499,9 @@ class TriangulationScene(Scene):
             self.colors[current.identity] = dict(previous.colors)
             previous.submap = model
             return
+        if len(self.fusion_results):
+            self.geometry.remove(self.fusion_results)
+            self.add(self.fusion_results)
         self.clear(self.geometry, self.graph, self.walk_arcs, self.discovered, duration=0.15)
         self.discovered, self.walk_arcs = VGroup(), VGroup()
         self.discovered_identities = set()
@@ -540,13 +546,17 @@ class TriangulationScene(Scene):
         self.discard(target.geometry)
         self.discard(target.graph)
         self.add(target.geometry, target.graph)
+        self.clear(self.fusion_results, duration=0.2)
+        self.fusion_results = VGroup()
+        self.fusion_drawings = {}
+        self.fusion_order = ()
 
     def copy_map(self, event, current):
         if len(self.geometry) or len(self.graph):
-            self.wait(0.6)
+            self.wait(0.15)
         self.colors[current.identity] = dict(self.colors[event["source"]])
-        self.show_curve(current.curve, duration=0.7)
-        self.clear(self.geometry, self.graph, duration=0.7)
+        self.clear(self.geometry, self.graph, duration=0.4)
+        self.show_curve(current.curve, duration=0.4)
         drawing = self.drawing(current)
         self.active_drawing = drawing
         self.nodes, self.edges = drawing.nodes, drawing.edges
@@ -560,7 +570,7 @@ class TriangulationScene(Scene):
             self.transition(
                 TransformFromCopy(source, moving),
                 TransformFromCopy(source_graph, moving_graph),
-                duration=1.15,
+                duration=0.8,
             )
             self.discard(moving)
             self.discard(moving_graph)
@@ -573,20 +583,38 @@ class TriangulationScene(Scene):
             self.transition(
                 TransformFromCopy(source_drawing.geometry, moving_geometry),
                 TransformFromCopy(source_drawing.graph, moving_graph),
-                duration=1.15,
+                duration=0.8,
             )
             self.discard(moving_geometry)
             self.discard(moving_graph)
             self.add(self.geometry, self.graph)
-        self.wait(0.75)
+        self.wait(0.3)
 
     def merge_inputs(self, event):
-        self.wait(0.65)
-        self.clear(self.geometry, self.graph, duration=0.8)
+        self.wait(0.2)
+        order = (event["first"], event["second"])
+        if self.fusion_drawings:
+            assert order == self.fusion_order[::-1], (
+                "[C91 section 3.1] The second fusion pass reverses the two input submaps."
+            )
+            moves = []
+            for index, identity in enumerate(order):
+                drawing = self.fusion_drawings[identity]
+                displacement = 2.5 * (self.fusion_order.index(identity) - index)
+                moves.append(drawing.graph.animate.shift((0, displacement, 0)))
+                drawing.positions = {
+                    region: (x, y + displacement, z)
+                    for region, (x, y, z) in drawing.positions.items()
+                }
+            self.transition(*moves, duration=0.65)
+            self.fusion_order = order
+            self.wait(0.15)
+            return
+        self.clear(self.geometry, self.graph, duration=0.4)
         shapes = VGroup()
         trees = VGroup()
         self.fusion_chords = {}
-        for index, identity in enumerate((event["first"], event["second"])):
+        for index, identity in enumerate(order):
             current = self.operations.maps[identity]
             submap = current.submap(self.trace.curves)
             drawing = Drawing(
@@ -599,17 +627,20 @@ class TriangulationScene(Scene):
             for chord_id, chord in drawing.chords.items():
                 chord.set_color(ORANGE if index else GREEN)
                 self.fusion_chords[(identity, chord_id)] = (chord, drawing.edges[chord_id])
+            self.fusion_drawings[identity] = drawing
             shapes.add(drawing.geometry)
             trees.add(drawing.graph)
+        shapes.add(self.fusion_results)
+        self.fusion_order = order
         self.geometry, self.graph = shapes, trees
         self.active_drawing = None
-        self.show_curve(self.merge_event["curve"], duration=0.7)
-        self.transition(FadeIn(shapes), FadeIn(trees), duration=1.3)
-        self.wait(0.85)
+        self.show_curve(self.merge_event["curve"], duration=0.4)
+        self.transition(FadeIn(shapes), FadeIn(trees), duration=0.9)
+        self.wait(0.3)
 
     def fusion_chord(self, event):
         chord = draw_chord(self.viewport, event, HIGHLIGHT).set_z_index(4)
-        self.geometry.add(chord)
+        self.fusion_results.add(chord)
         self.play(Create(chord), run_time=0.25)
 
     def fusion_remove(self, event):

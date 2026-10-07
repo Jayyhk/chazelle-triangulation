@@ -685,6 +685,10 @@ class VisualReplay:
         elif event["name"] == "triangulate":
             self.scene.overlay.fade(1 - 0.12 / 0.35)
             self.piece_outlines.fade(0.75)
+            if self.cursor is not None:
+                self.scene.clear(self.cursor, duration=0.15)
+            self.cursor = None
+            self.current_vertex = None
 
     def trapezoid(self, event):
         self.scene.output_event(event)

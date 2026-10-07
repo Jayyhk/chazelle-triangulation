@@ -59,6 +59,8 @@ class ReplayPlan:
                 kind == "checkpoint" and event["name"] in {"down_phase", "bounded_regions"}
             ):
                 group, limit = event["seq"], 4
+            elif kind == "checkpoint" and event["name"] == "fusion":
+                group, limit = event["seq"], 2
             elif kind == "search_begin":
                 queries.append(event["seq"])
             elif kind == "search_end":
@@ -87,6 +89,8 @@ class ReplayPlan:
                 lambda event: event["hit"] and event["wrapped"],
                 lambda event: not event["hit"],
             ):
+                if len(chosen) == limit:
+                    break
                 match = next((event for event in candidates if predicate(event)), None)
                 if match is not None:
                     chosen.append(match["seq"])
