@@ -5,9 +5,11 @@
 #include "submap/submap.h"
 
 #include <array>
+#include <initializer_list>
 #include <iosfwd>
 #include <span>
 #include <string_view>
+#include <utility>
 
 namespace chazelle::animation {
 
@@ -20,12 +22,34 @@ public:
 
     static AnimationTrace* current() noexcept;
 
+    class QueryRecording {
+    public:
+        explicit QueryRecording(bool enabled);
+        ~QueryRecording();
+        QueryRecording(const QueryRecording&) = delete;
+        QueryRecording& operator=(const QueryRecording&) = delete;
+
+    private:
+        AnimationTrace* trace_;
+        bool previous_;
+    };
+
+    using Fields = std::initializer_list<std::pair<std::string_view, std::size_t>>;
+    std::size_t record(std::string_view kind, Fields fields = {});
+    std::size_t indices(std::string_view kind, Fields fields, std::string_view key,
+                        std::span<const std::size_t> values, std::string_view second_key = {},
+                        std::span<const std::size_t> second_values = {});
+    std::size_t point(std::string_view kind, const Polygon& curve, const Point& point,
+                      Fields fields = {});
+    void search_crossing(std::size_t structure, const Polygon& curve, const Chord& chord,
+                         std::size_t index, std::size_t below, std::size_t above);
+
     void checkpoint(std::string_view name, std::size_t parameter = NONE);
     void boundary(const Polygon& curve);
     void chain(std::size_t grade, std::size_t index, const Polygon& curve);
     void submap(std::string_view name, const Polygon& curve, const Submap& submap,
                 std::size_t granularity);
-    void chord(std::string_view kind, const Polygon& curve, const Chord& chord);
+    void chord(std::string_view kind, const Polygon& curve, const Chord& chord, Fields fields = {});
     void merge(const Polygon& first, const Polygon& second, std::size_t granularity);
     std::size_t curve(const Polygon& curve);
     std::size_t map_id(const Submap& submap) const;
@@ -70,6 +94,7 @@ public:
 private:
     void begin(std::string_view kind);
     void end();
+    void fields(Fields fields);
     void chord_geometry(const Polygon& curve, const Chord& chord);
     void chord_incidence(const Submap& submap, const Chord& chord);
     void arc_geometry(const Polygon& curve, const Arc& arc, SymbolicY start, SymbolicY finish);
@@ -79,6 +104,7 @@ private:
     AnimationTrace* previous_;
     std::size_t events_ = 0;
     bool finished_ = false;
+    bool queries_enabled_ = true;
     std::size_t session_;
 };
 

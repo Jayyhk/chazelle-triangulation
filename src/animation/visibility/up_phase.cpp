@@ -284,7 +284,12 @@ RayHit UpPhaseRayShooter::shoot(Point origin, Side direction, [[maybe_unused]] s
     assert_subarc_clockwise(target);
     const SymbolicY ray_y{origin.y, origin.index};
     const std::size_t input_table_offset = input_curve_->table_offset();
-
+    auto* trace = AnimationTrace::current();
+    const auto query = trace ? trace->point("search_begin", *input_curve_, origin,
+                                            {{"structure", NONE},
+                                             {"owner", trace->map_id(*input_submap_)},
+                                             {"direction", static_cast<std::size_t>(direction)}})
+                             : NONE;
     std::vector<SubarcPiece> pieces = decompose_subarc(*input_curve_, target, merge_grade_);
 
     RayHit nearest_hit;
@@ -314,6 +319,11 @@ RayHit UpPhaseRayShooter::shoot(Point origin, Side direction, [[maybe_unused]] s
     };
 
     for (const SubarcPiece& piece : pieces) {
+        if (trace)
+            trace->record("search_piece", {{"query", query},
+                                           {"first", piece.subarc.first_edge},
+                                           {"last", piece.subarc.last_edge},
+                                           {"endpoint", piece.is_endpoint_piece}});
         if (piece.is_endpoint_piece) {
             RayHit hit = shoot_toward_single_edge_subarc(*input_curve_, piece.subarc, origin,
                                                          direction, source_x_offset);
@@ -332,10 +342,13 @@ RayHit UpPhaseRayShooter::shoot(Point origin, Side direction, [[maybe_unused]] s
         }
     }
 
-    if (!nearest_hit.hit)
-        return RayHit{};
-
-    align_hit_edge_with_subarc(target, *input_curve_, nearest_hit, ray_y);
+    if (nearest_hit.hit)
+        align_hit_edge_with_subarc(target, *input_curve_, nearest_hit, ray_y);
+    if (trace) {
+        const auto result = trace->event_count();
+        trace->ray(*input_curve_, origin, direction, nearest_hit);
+        trace->record("search_end", {{"query", query}, {"result", result}});
+    }
     return nearest_hit;
 }
 

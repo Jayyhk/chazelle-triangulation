@@ -116,6 +116,8 @@ UnimonotoneDecomposition decompose_unimonotone(std::span<const Point> points,
         while (!vertices[current].done) {
             vertices[current].done = true;
             ++result.work.vertex_visits;
+            if (auto* trace = AnimationTrace::current())
+                trace->record("partition_vertex", {{"vertex", current}});
             const VertexTrapezoids& entry = trapezoids.vertex_trapezoids[current];
             std::size_t diagonal = NONE;
             while (vertices[current].remaining_trapezoids > 0) {
@@ -125,7 +127,13 @@ UnimonotoneDecomposition decompose_unimonotone(std::span<const Point> points,
                 const std::size_t bottom = trapezoids.trapezoids[index].bottom_vertex;
                 const std::size_t original_previous = current == 0 ? count - 1 : current - 1;
                 const std::size_t original_next = (current + 1) % count;
-                if (bottom != original_previous && bottom != original_next) {
+                const bool needs_diagonal = bottom != original_previous && bottom != original_next;
+                if (auto* trace = AnimationTrace::current())
+                    trace->record("trapezoid_test", {{"vertex", current},
+                                                     {"trapezoid", index},
+                                                     {"bottom", bottom},
+                                                     {"split", needs_diagonal}});
+                if (needs_diagonal) {
                     assert(bottom != vertices[current].next &&
                            bottom != vertices[current].previous &&
                            "[FM84 tex 328-339]: a class-B diagonal has not already been inserted");
@@ -155,6 +163,9 @@ UnimonotoneDecomposition decompose_unimonotone(std::span<const Point> points,
             break;
         const Split split = splits.back();
         splits.pop_back();
+        if (auto* trace = AnimationTrace::current())
+            trace->record("partition_return",
+                          {{"top", split.top}, {"bottom", split.bottom}, {"depth", splits.size()}});
         vertices[split.top].done = false;
         vertices[split.bottom].done = false;
         vertices[split.top].next = split.saved_next;

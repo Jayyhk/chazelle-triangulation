@@ -1,5 +1,6 @@
 #include "planar_separator.h"
 #include "../polygon/exact.h"
+#include "../trace.h"
 
 #include <algorithm>
 
@@ -1252,7 +1253,8 @@ std::vector<SepPart> planar_separator(const EmbeddedPlanarGraph& g) {
     return part;
 }
 
-SeparatorDecomposition build_separator_decomposition(const EmbeddedPlanarGraph& g) {
+SeparatorDecomposition build_separator_decomposition(const EmbeddedPlanarGraph& g,
+                                                     std::size_t trace_structure) {
     const std::size_t mu = g.num_vertices();
     SeparatorDecomposition out;
     out.subset.assign(mu, NONE);
@@ -1283,12 +1285,24 @@ SeparatorDecomposition build_separator_decomposition(const EmbeddedPlanarGraph& 
         if (sz == 0)
             continue;
         if (is_leaf(sz)) {
+            if (auto* trace = AnimationTrace::current(); trace && trace_structure != NONE)
+                trace->indices("separator_leaf",
+                               {{"structure", trace_structure}, {"subset", out.num_subsets}},
+                               "faces", it.ids);
             for (std::size_t v = 0; v < sz; ++v)
                 out.subset[it.ids[v]] = out.num_subsets;
             ++out.num_subsets;
             continue;
         }
         std::vector<SepPart> part = planar_separator(it.graph);
+        if (auto* trace = AnimationTrace::current(); trace && trace_structure != NONE) {
+            std::vector<std::size_t> parts;
+            parts.reserve(part.size());
+            for (auto value : part)
+                parts.push_back(static_cast<std::size_t>(value));
+            trace->indices("separator_partition", {{"structure", trace_structure}}, "faces", it.ids,
+                           "parts", parts);
+        }
         std::vector<std::size_t> a_nodes, b_nodes;
         for (std::size_t v = 0; v < sz; ++v) {
             if (part[v] == SepPart::D) {

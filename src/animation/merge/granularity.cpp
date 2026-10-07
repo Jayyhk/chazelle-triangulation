@@ -1,4 +1,5 @@
 #include "granularity.h"
+#include "../trace.h"
 
 #include <algorithm>
 #include <cassert>
@@ -61,10 +62,24 @@ void enforce_granularity(Submap& submap, const Polygon& curve, std::size_t granu
         pending_chords.pop_back();
         if (submap.chord(chord_index).dead)
             continue;
-        if (!has_endpoint_below_degree_three(submap, chord_index))
+        const bool eligible = has_endpoint_below_degree_three(submap, chord_index);
+        const std::size_t merged_weight = eligible ? contraction_weight(chord_index) : NONE;
+        if (auto* trace = AnimationTrace::current()) {
+            const auto& chord = submap.chord(chord_index);
+            trace->record("granularity_test",
+                          {{"owner", trace->map_id(submap)},
+                           {"chord", chord_index},
+                           {"first", chord.region[0]},
+                           {"second", chord.region[1]},
+                           {"first_degree", submap.node(chord.region[0]).degree()},
+                           {"second_degree", submap.node(chord.region[1]).degree()},
+                           {"eligible", eligible},
+                           {"weight", merged_weight},
+                           {"limit", granularity},
+                           {"accepted", eligible && merged_weight <= granularity}});
+        }
+        if (!eligible)
             continue;
-
-        const std::size_t merged_weight = contraction_weight(chord_index);
         if (merged_weight > granularity)
             continue;
 

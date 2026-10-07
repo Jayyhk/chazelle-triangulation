@@ -1,5 +1,6 @@
 #include "ray_shooting.h"
 #include "../submap/boundary_geometry.h"
+#include "../trace.h"
 
 #include <algorithm>
 #include <array>
@@ -89,7 +90,8 @@ struct NearestRayHit {
     SourceOffset source_x_offset = SOURCE_OFFSET_NONE;
 
     void offer(const Polygon& curve, const SymbolicY& sy, Side dir, const Exact& candidate_x,
-               std::size_t candidate_edge, Side candidate_side, const Exact& candidate_distance) {
+               std::size_t candidate_edge, Side candidate_side, const Exact& candidate_distance,
+               std::size_t query) {
         bool candidate_wraps =
             (candidate_distance < 0.0) ||
             (candidate_distance == 0.0 &&
@@ -104,6 +106,12 @@ struct NearestRayHit {
         else
             better =
                 ray_contact_precedes(curve, sy, dir, candidate_edge, candidate_side, edge, side);
+        if (auto* trace = AnimationTrace::current(); trace && query != NONE)
+            trace->point("search_candidate", curve, {candidate_x, sy.y, sy.tag},
+                         {{"query", query},
+                          {"edge", candidate_edge},
+                          {"accepted", better},
+                          {"wrapped", candidate_wraps}});
         if (better) {
             hit = true;
             x = candidate_x;
@@ -117,9 +125,11 @@ struct NearestRayHit {
 
 void scan_edge_range(const Polygon& curve, std::size_t lo, std::size_t hi, const Point& p,
                      const SymbolicY& sy, Side dir, NearestRayHit& best,
-                     const BoundarySideInterval* clip = nullptr) {
+                     const BoundarySideInterval* clip = nullptr, std::size_t query = NONE) {
     std::size_t e = lo;
     while (e <= hi) {
+        if (auto* trace = AnimationTrace::current(); trace && query != NONE)
+            trace->record("search_edge", {{"query", query}, {"edge", e}});
         const std::size_t nn = curve.next_nonnull_edge(e);
         if (nn > e) {
             const std::size_t run_hi = std::min(hi, nn - 1);
@@ -136,7 +146,7 @@ void scan_edge_range(const Polygon& curve, std::size_t lo, std::size_t hi, const
                         (compare_boundary_positions(curve, clip->lower_position, contact) <= 0 &&
                          compare_boundary_positions(curve, contact, clip->upper_position) <= 0))
                         best.offer(curve, sy, dir, x, candidate_edge,
-                                   struck_side(curve, candidate_edge, dir), signed_distance);
+                                   struck_side(curve, candidate_edge, dir), signed_distance, query);
                 };
                 if (vi > e)
                     offer_if_inside(vi - 1);
@@ -152,20 +162,23 @@ void scan_edge_range(const Polygon& curve, std::size_t lo, std::size_t hi, const
                        compare_boundary_positions(curve, contact, clip->upper_position) <= 0)) &&
             edge_crossing_x(curve, e, sy, &x)) {
             Exact signed_distance = (dir == RIGHT) ? (x - p.x) : (p.x - x);
-            best.offer(curve, sy, dir, x, e, struck_side(curve, e, dir), signed_distance);
+            best.offer(curve, sy, dir, x, e, struck_side(curve, e, dir), signed_distance, query);
         }
         ++e;
     }
 }
 
 void scan_region(const Submap& submap, const Polygon& curve, const std::vector<std::size_t>& arcs,
-                 const Point& p, const SymbolicY& sy, Side dir, NearestRayHit& best) {
+                 const Point& p, const SymbolicY& sy, Side dir, NearestRayHit& best,
+                 std::size_t query) {
     for (std::size_t ai : arcs) {
+        if (auto* trace = AnimationTrace::current())
+            trace->record("search_arc", {{"query", query}, {"arc", ai}});
         BoundarySideInterval ranges[3];
         std::size_t n = decompose_arc_boundary(submap, curve, ai, ranges);
         for (std::size_t i = 0; i < n; ++i)
             scan_edge_range(curve, ranges[i].lo_edge, ranges[i].hi_edge, p, sy, dir, best,
-                            &ranges[i]);
+                            &ranges[i], query);
     }
 }
 
@@ -209,10 +222,28 @@ RayShootingStructure::RayShootingStructure(const Submap& submap, const Polygon& 
            "[C91 §3.4 tex 286]: S must be γ-granular — the naive "
            "region scans rely on O(γ) edges per region (tex 306)");
 
+    if (auto* trace = AnimationTrace::current())
+        animation_structure_ = trace->record("search_structure", {{"owner", trace->map_id(submap)},
+                                                                  {"curve", trace->curve(curve)},
+                                                                  {"granularity", granularity}});
     build_faces();
+    if (auto* trace = AnimationTrace::current())
+        trace->indices("search_faces", {{"structure", animation_structure_}}, "regions",
+                       region_of_face_);
     if (face_count_ > 1) {
         build_dual_graph_and_decomposition();
         build_vertical_line();
+    }
+    if (auto* trace = AnimationTrace::current()) {
+        for (std::size_t index = 0; index < vertical_line_crossings_.size(); ++index) {
+            const auto& crossing = vertical_line_crossings_[index];
+            trace->search_crossing(animation_structure_, curve, submap.chord(crossing.chord), index,
+                                   crossing.region_below, crossing.region_above);
+        }
+        trace->indices(
+            "search_ready",
+            {{"structure", animation_structure_}, {"infinity_region", region_at_infinity_}},
+            "subsets", separator_decomposition_.subset);
     }
 }
 
@@ -262,6 +293,7 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
     struct DualEdge {
         std::size_t fa, fb;
         bool dead = false;
+        std::size_t first_arc = NONE, second_arc = NONE, chord = NONE;
     };
     std::vector<DualEdge> edges;
 
@@ -319,7 +351,7 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
                        "positive-length boundary implies nonempty regions");
                 if (fa != fb) {
                     std::size_t id = edges.size();
-                    edges.push_back({fa, fb, false});
+                    edges.push_back({fa, fb, false, a.arc, b.arc, NONE});
                     interval_events[a.arc][a.interval].push_back(id);
                     interval_events[b.arc][b.interval].push_back(id);
                 }
@@ -342,7 +374,7 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
         assert(fa != NONE && fb != NONE && "a positive-length chord bounds two nonempty regions");
         assert(fa != fb && "[C91 §2.2]: a chord separates two regions");
         chord_edge[ci] = edges.size();
-        edges.push_back({fa, fb, false});
+        edges.push_back({fa, fb, false, NONE, NONE, ci});
     }
 
     std::vector<std::vector<std::size_t>> rot(face_count_);
@@ -454,7 +486,18 @@ void RayShootingStructure::build_dual_graph_and_decomposition() {
         assert(q.size() == face_count_ && "[C91 §3.4 tex 295]: the dual graph G is connected");
     }
 
-    separator_decomposition_ = build_separator_decomposition(G);
+    if (auto* trace = AnimationTrace::current()) {
+        for (const auto& edge : edges) {
+            if (!edge.dead)
+                trace->record("search_graph_edge", {{"structure", animation_structure_},
+                                                    {"first", edge.fa},
+                                                    {"second", edge.fb},
+                                                    {"first_arc", edge.first_arc},
+                                                    {"second_arc", edge.second_arc},
+                                                    {"chord", edge.chord}});
+        }
+    }
+    separator_decomposition_ = build_separator_decomposition(G, animation_structure_);
 
     subset_faces_.assign(separator_decomposition_.num_subsets, {});
     for (std::size_t f = 0; f < face_count_; ++f) {
@@ -558,7 +601,8 @@ void RayShootingStructure::build_vertical_line() {
 }
 
 void RayShootingStructure::regions_at_boundary(std::size_t edge, Side side, const SymbolicY& y,
-                                               std::vector<std::size_t>& out) const {
+                                               std::vector<std::size_t>& out,
+                                               std::size_t query) const {
     const Polygon& curve = *curve_;
     const auto& list = (side == LEFT) ? left_intervals_ : right_intervals_;
     assert(!list.empty());
@@ -568,7 +612,15 @@ void RayShootingStructure::regions_at_boundary(std::size_t edge, Side side, cons
     while (lo < hi) {
         std::size_t mid = (lo + hi) / 2;
         BoundaryPosition mlo{list[mid].lo_edge, list[mid].lo_y};
-        if (compare_boundary_positions(curve, mlo, pos) <= 0)
+        const bool follows = compare_boundary_positions(curve, mlo, pos) <= 0;
+        if (auto* trace = AnimationTrace::current())
+            trace->record("boundary_search", {{"query", query},
+                                              {"region", list[mid].region},
+                                              {"lo", lo},
+                                              {"hi", hi},
+                                              {"mid", mid},
+                                              {"follows", follows}});
+        if (follows)
             lo = mid + 1;
         else
             hi = mid;
@@ -584,6 +636,8 @@ void RayShootingStructure::regions_at_boundary(std::size_t edge, Side side, cons
             if (x == r)
                 return;
         out.push_back(r);
+        if (auto* trace = AnimationTrace::current())
+            trace->record("boundary_identify", {{"query", query}, {"region", r}});
     };
 
     for (std::size_t i = lo; i-- > 0 && contains(i);)
@@ -596,24 +650,40 @@ RayHit RayShootingStructure::shoot_toward_boundary(const Point& p, Side dir,
     const Submap& submap = *submap_;
     const Polygon& curve = *curve_;
     SymbolicY sy{p.y, p.index};
+    auto* trace = AnimationTrace::current();
+    const std::size_t query = trace ? trace->point("search_begin", curve, p,
+                                                   {{"structure", animation_structure_},
+                                                    {"direction", static_cast<std::size_t>(dir)}})
+                                    : NONE;
 
     auto to_rayhit = [&](const NearestRayHit& c) {
         RayHit h;
-        if (!c.hit)
+        if (!c.hit) {
+            if (trace) {
+                const auto result = trace->event_count();
+                trace->ray(curve, p, dir, h);
+                trace->record("search_end", {{"query", query}, {"result", result}});
+            }
             return h;
+        }
         h.hit = true;
         h.x = c.x;
         h.y = p.y;
         h.edge = c.edge;
         h.side = c.side;
         h.wrapped = c.wrapped;
+        if (trace) {
+            const auto result = trace->event_count();
+            trace->ray(curve, p, dir, h);
+            trace->record("search_end", {{"query", query}, {"result", result}});
+        }
         return h;
     };
 
     if (face_count_ <= 1) {
         NearestRayHit best;
         best.source_x_offset = source_x_offset;
-        scan_edge_range(curve, 0, curve.num_edges() - 1, p, sy, dir, best);
+        scan_edge_range(curve, 0, curve.num_edges() - 1, p, sy, dir, best, nullptr, query);
         return to_rayhit(best);
     }
 
@@ -629,16 +699,22 @@ RayHit RayShootingStructure::shoot_toward_boundary(const Point& p, Side dir,
             if (s == sub)
                 return;
         subsets.push_back(sub);
+        if (trace)
+            trace->record("search_subset", {{"query", query}, {"subset", sub}, {"region", region}});
     };
 
     NearestRayHit dstar_best;
     dstar_best.source_x_offset = source_x_offset;
-    for (std::size_t f : separator_faces_)
-        scan_region(submap, curve, arcs_of_region_[region_of_face_[f]], p, sy, dir, dstar_best);
+    for (std::size_t f : separator_faces_) {
+        if (trace)
+            trace->record("search_scan", {{"query", query}, {"face", f}, {"separator", 1}});
+        scan_region(submap, curve, arcs_of_region_[region_of_face_[f]], p, sy, dir, dstar_best,
+                    query);
+    }
 
     if (dstar_best.hit) {
         std::vector<std::size_t> near;
-        regions_at_boundary(dstar_best.edge, dstar_best.side, sy, near);
+        regions_at_boundary(dstar_best.edge, dstar_best.side, sy, near, query);
         bool all_dstar = true;
         for (std::size_t r : near) {
             std::size_t f = face_of_region_[r];
@@ -658,7 +734,12 @@ RayHit RayShootingStructure::shoot_toward_boundary(const Point& p, Side dir,
             std::size_t lo = 0, hi = vertical_line_crossings_.size();
             while (lo < hi) {
                 std::size_t mid = (lo + hi) / 2;
-                if (symbolic_y_less(sy, vertical_line_crossings_[mid].y))
+                const bool below = symbolic_y_less(sy, vertical_line_crossings_[mid].y);
+                if (trace)
+                    trace->record(
+                        "vertical_search",
+                        {{"query", query}, {"lo", lo}, {"hi", hi}, {"mid", mid}, {"below", below}});
+                if (below)
                     hi = mid;
                 else
                     lo = mid + 1;
@@ -687,8 +768,12 @@ RayHit RayShootingStructure::shoot_toward_boundary(const Point& p, Side dir,
         assert((u128)members.size() * members.size() * members.size() <=
                (u128)face_count_ * face_count_);
 #endif
-        for (std::size_t f : members)
-            scan_region(submap, curve, arcs_of_region_[region_of_face_[f]], p, sy, dir, best);
+        for (std::size_t f : members) {
+            if (trace)
+                trace->record("search_scan", {{"query", query}, {"face", f}, {"separator", 0}});
+            scan_region(submap, curve, arcs_of_region_[region_of_face_[f]], p, sy, dir, best,
+                        query);
+        }
     }
 
     if (!best.hit) {

@@ -67,6 +67,7 @@ struct SeparatorDecomposition {
     std::size_t dstar_size = 0;
 };
 
-SeparatorDecomposition build_separator_decomposition(const EmbeddedPlanarGraph& g);
+SeparatorDecomposition build_separator_decomposition(const EmbeddedPlanarGraph& g,
+                                                     std::size_t trace_structure = NONE);
 
 }

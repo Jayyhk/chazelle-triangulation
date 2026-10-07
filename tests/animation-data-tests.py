@@ -1,3 +1,4 @@
+import ast
 import json
 import math
 import sys
@@ -8,6 +9,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "animation"))
 from operations import Operations
 from regions import region_projections
+from replay_plan import ReplayPlan, same_submap
+from replay_steps import ReplaySteps
 from trace_data import (
     Curve,
     ExactCoordinate,
@@ -457,6 +460,165 @@ class TraceTests(unittest.TestCase):
         changed = dict(chord)
         changed["left_side"] = 1 - chord["left_side"]
         self.assertNotEqual(chord_identity(chord), chord_identity(changed))
+
+    def test_searches_and_final_conversion_follow_execution(self):
+        for name in ("fixture-12.json", "grade-65.json"):
+            with self.subTest(name=name):
+                trace = Trace(DIRECTORY / name)
+                replay = ReplaySteps(trace)
+                self.assertTrue(replay.structures and replay.trees and replay.queries)
+                self.assertEqual(
+                    len(replay.pieces), sum(event["kind"] == "piece" for event in trace.events)
+                )
+
+    def test_replay_event_handlers_are_not_masked(self):
+        source = Path(__file__).resolve().parents[1] / "src" / "animation" / "replay.py"
+        replay = next(
+            node for node in ast.parse(source.read_text()).body if isinstance(node, ast.ClassDef)
+        )
+        handlers = {node.name for node in replay.body if isinstance(node, ast.FunctionDef)}
+        fields = {
+            node.attr
+            for node in ast.walk(replay)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        }
+        self.assertFalse(handlers & fields, "Recorded events must reach their replay handlers.")
+
+    def test_short_replay_preserves_changes_and_final_conversion(self):
+        for name in ("fixture-12.json", "grade-65.json"):
+            with self.subTest(name=name):
+                trace = Trace(DIRECTORY / name)
+                plan = ReplayPlan(trace)
+                operations = Operations(trace)
+                preserved = {
+                    "build_end",
+                    "merge_inputs",
+                    "fusion_chord",
+                    "fusion_remove",
+                    "insert_chord",
+                    "remove_chord",
+                    "reindex",
+                    "reindex_arcs",
+                    "refinement_begin",
+                    "refinement_extract",
+                    "refinement_end",
+                    "trapezoid",
+                    "diagonal",
+                    "piece",
+                    "convexity_test",
+                    "triangle",
+                    "vertex_remove",
+                    "triangle_cursor",
+                }
+                for event in trace.events:
+                    current = operations.apply(event)
+                    if event["kind"] in preserved:
+                        self.assertTrue(plan.shows(event), event["kind"])
+                    if event["kind"] == "build_end":
+                        regions = {event["root"]}
+                        for entry in plan.build_entries[event["map"]]:
+                            self.assertIn(entry["parent"], regions)
+                            self.assertNotIn(entry["region"], regions)
+                            regions.add(entry["region"])
+                        self.assertEqual(regions, current.regions)
+                self.assertEqual(operations.verified, len(trace.submaps))
+
+    def test_chain_hierarchy_connects_exact_recorded_intervals(self):
+        for name in ("fixture-12.json", "grade-65.json"):
+            with self.subTest(name=name):
+                trace = Trace(DIRECTORY / name)
+                plan = ReplayPlan(trace)
+                completed = set()
+                incoming = dict.fromkeys(plan.chains, 0)
+                for snapshot, parent in plan.chain_snapshots.items():
+                    self.assertEqual(trace.events[snapshot]["curve"], plan.chains[parent]["curve"])
+                    children = plan.chain_children[parent]
+                    self.assertEqual(len(children), 2 if parent[0] else 0)
+                    if children:
+                        first, second = (plan.chains[child] for child in children)
+                        chain = plan.chains[parent]
+                        self.assertEqual(chain["first"], first["first"])
+                        self.assertEqual(first["last"], second["first"])
+                        self.assertEqual(second["last"], chain["last"])
+                    for child in children:
+                        self.assertIn(child, completed)
+                        incoming[child] += 1
+                    completed.add(parent)
+                root = (max(grade for grade, _ in plan.chains), 0)
+                self.assertEqual({chain for chain, count in incoming.items() if not count}, {root})
+                self.assertTrue(
+                    all(count == 1 for chain, count in incoming.items() if chain != root)
+                )
+
+    def test_chain_hierarchy_rejects_noncontiguous_children(self):
+        from copy import copy, deepcopy
+
+        trace = copy(Trace(DIRECTORY / "fixture-12.json"))
+        trace.events = deepcopy(trace.events)
+        event = next(
+            event
+            for event in trace.events
+            if event["kind"] == "chain" and event["grade"] == 0 and event["index"] == 1
+        )
+        event["first"] += 1
+        event["last"] += 1
+        with self.assertRaises(AssertionError):
+            ReplayPlan(trace)
+
+    def test_short_replay_omits_nested_searches_and_unused_trees(self):
+        trace = Trace(DIRECTORY / "grade-65.json")
+        plan = ReplayPlan(trace)
+        queries = []
+        used_trees = {event["tree"] for event in trace.events if event["kind"] == "centroid_visit"}
+        for event in trace.events:
+            kind = event["kind"]
+            if kind == "search_begin":
+                queries.append(event["seq"])
+            elif kind == "search_end":
+                self.assertEqual(queries.pop(), event["query"])
+            elif kind == "ray" and plan.shows(event):
+                self.assertLessEqual(len(queries), 1)
+            elif kind == "centroid_begin":
+                self.assertEqual(plan.shows(event), event["seq"] in used_trees)
+            if kind.startswith(("search_", "separator_")):
+                self.assertFalse(plan.shows(event))
+        self.assertFalse(queries)
+        self.assertTrue(plan.rays)
+        self.assertLess(len(plan.rays), sum(event["kind"] == "ray" for event in trace.events) / 10)
+
+    def test_repeated_build_detection_preserves_chord_geometry(self):
+        from copy import deepcopy
+
+        trace = Trace(DIRECTORY / "fixture-12.json")
+        submap = next(iter(trace.submaps.values()))
+        copied = deepcopy(submap)
+        for record in copied.chords + copied.arcs:
+            record["map"] = 123456
+            record["seq"] = 123456
+        self.assertTrue(same_submap(submap, copied))
+        copied.chords[0]["left_side"] ^= 1
+        self.assertFalse(same_submap(submap, copied))
+
+    def test_replay_rejects_fabricated_decisions(self):
+        from copy import copy, deepcopy
+
+        trace = Trace(DIRECTORY / "fixture-12.json")
+        for kind, field, value in (
+            ("convexity_test", "convex", 0),
+            ("triangle_cursor", "vertex", len(trace.vertices)),
+            ("search_end", "query", len(trace.events)),
+            ("centroid_node", "size", 0),
+        ):
+            with self.subTest(kind=kind):
+                changed = copy(trace)
+                changed.events = deepcopy(trace.events)
+                event = next(event for event in changed.events if event["kind"] == kind)
+                event[field] = 1 - event[field] if kind == "convexity_test" else value
+                with self.assertRaises((AssertionError, KeyError, ValueError)):
+                    ReplaySteps(changed)
 
     def test_reject_incomplete_trace(self):
         path = next(DIRECTORY.glob("fixture-*.json"))

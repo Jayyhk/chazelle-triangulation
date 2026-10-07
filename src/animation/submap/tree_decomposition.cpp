@@ -1,4 +1,5 @@
 #include "tree_decomposition.h"
+#include "../trace.h"
 #include "submap.h"
 
 #include <algorithm>
@@ -307,7 +308,7 @@ private:
     std::size_t decompose(std::size_t root, std::size_t parent) {
         const std::size_t count = order_.size(root);
         const std::size_t index = nodes.size();
-        nodes.push_back({.parent = parent});
+        nodes.push_back({.component_size = count, .parent = parent});
         if (count == 1) {
             nodes[index].region_idx = order_.region(root);
             return index;
@@ -350,6 +351,8 @@ private:
         const std::size_t outside = order_.join(before, after);
         removed_[chosen] = true;
         nodes[index].chord_idx = chosen;
+        nodes[index].centroid_region = region;
+        nodes[index].branch_size = largest_branch;
         const bool first_is_inside = child == chord.region[0];
         const std::size_t left = decompose(first_is_inside ? inside : outside, index);
         const std::size_t right = decompose(first_is_inside ? outside : inside, index);
@@ -372,6 +375,24 @@ void TreeDecomposition::build(const Submap& submap) {
     DecompositionBuilder builder(submap);
     root_ = builder.build();
     nodes_ = std::move(builder.nodes);
+    if (auto* trace = AnimationTrace::current()) {
+        animation_tree_ =
+            trace->record("centroid_begin", {{"owner", trace->map_id(submap)}, {"root", root_}});
+        for (std::size_t index = 0; index < nodes_.size(); ++index) {
+            const auto& node = nodes_[index];
+            trace->record("centroid_node", {{"tree", animation_tree_},
+                                            {"index", index},
+                                            {"chord", node.chord_idx},
+                                            {"region", node.region_idx},
+                                            {"centroid", node.centroid_region},
+                                            {"size", node.component_size},
+                                            {"branch", node.branch_size},
+                                            {"parent", node.parent},
+                                            {"left", node.left_child},
+                                            {"right", node.right_child}});
+        }
+        trace->record("centroid_end", {{"tree", animation_tree_}});
+    }
     assert(nodes_.size() == 2 * submap.num_chords() + 1 &&
            "[C91 §2.3]: each chord is an internal node and each region is a leaf");
 }

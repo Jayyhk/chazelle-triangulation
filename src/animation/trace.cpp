@@ -57,11 +57,17 @@ void write_indices(std::ostream& output, std::span<const std::size_t> indices) {
 AnimationTrace::AnimationTrace(std::ostream& output, std::span<const Point> vertices)
     : output_(output), vertices_(vertices), previous_(active_trace), session_(++next_session) {
     assert(session_ != 0);
-    output_ << "{\"schema\":5,\"vertices\":[";
+    output_ << "{\"schema\":6,\"vertices\":[";
     for (std::size_t i = 0; i < vertices.size(); ++i) {
         if (i != 0)
             output_ << ',';
         write_point(output_, vertices[i]);
+    }
+    output_ << "],\"vertex_tags\":[";
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        if (i != 0)
+            output_ << ',';
+        output_ << vertices[i].index;
     }
     output_ << "],\"events\":[";
     active_trace = this;
@@ -74,6 +80,17 @@ AnimationTrace* AnimationTrace::current() noexcept {
     return active_trace;
 }
 
+AnimationTrace::QueryRecording::QueryRecording(bool enabled)
+    : trace_(AnimationTrace::current()), previous_(trace_ && trace_->queries_enabled_) {
+    if (trace_)
+        trace_->queries_enabled_ = previous_ && enabled;
+}
+
+AnimationTrace::QueryRecording::~QueryRecording() {
+    if (trace_)
+        trace_->queries_enabled_ = previous_;
+}
+
 void AnimationTrace::begin(std::string_view kind) {
     assert(!finished_);
     if (events_ != 0)
@@ -83,6 +100,63 @@ void AnimationTrace::begin(std::string_view kind) {
 
 void AnimationTrace::end() {
     output_ << '}';
+}
+
+void AnimationTrace::fields(Fields values) {
+    for (const auto& [key, value] : values)
+        output_ << ",\"" << key << "\":" << value;
+}
+
+std::size_t AnimationTrace::record(std::string_view kind, Fields values) {
+    if (!queries_enabled_ && ((kind.starts_with("search_") && kind != "search_structure" &&
+                               kind != "search_graph_edge") ||
+                              kind == "vertical_search" || kind.starts_with("boundary_")))
+        return NONE;
+    const auto identity = events_;
+    begin(kind);
+    fields(values);
+    end();
+    return identity;
+}
+
+std::size_t AnimationTrace::indices(std::string_view kind, Fields values, std::string_view key,
+                                    std::span<const std::size_t> indices,
+                                    std::string_view second_key,
+                                    std::span<const std::size_t> second_indices) {
+    const auto identity = events_;
+    begin(kind);
+    fields(values);
+    output_ << ",\"" << key << "\":";
+    write_indices(output_, indices);
+    if (!second_key.empty()) {
+        output_ << ",\"" << second_key << "\":";
+        write_indices(output_, second_indices);
+    }
+    end();
+    return identity;
+}
+
+std::size_t AnimationTrace::point(std::string_view kind, const Polygon& polygon,
+                                  const Point& position, Fields values) {
+    if (!queries_enabled_ && kind.starts_with("search_"))
+        return NONE;
+    const auto curve_index = curve(polygon);
+    const auto identity = events_;
+    begin(kind);
+    fields(values);
+    output_ << ",\"curve\":" << curve_index << ",\"point\":";
+    write_point(output_, position);
+    end();
+    return identity;
+}
+
+void AnimationTrace::search_crossing(std::size_t structure, const Polygon& polygon,
+                                     const Chord& chord, std::size_t index, std::size_t below,
+                                     std::size_t above) {
+    begin("search_crossing");
+    fields({{"structure", structure}, {"index", index}, {"below", below}, {"above", above}});
+    chord_geometry(polygon, chord);
+    end();
 }
 
 void AnimationTrace::checkpoint(std::string_view name, std::size_t parameter) {
@@ -190,6 +264,8 @@ void AnimationTrace::merge_inputs(const Submap& first, const Submap& second) {
 
 void AnimationTrace::ray(const Polygon& polygon, const Point& origin, Side direction,
                          const RayHit& hit, std::size_t region) {
+    if (!queries_enabled_)
+        return;
     const auto curve_index = curve(polygon);
     begin("ray");
     output_ << ",\"curve\":" << curve_index << ",\"origin\":";
@@ -442,9 +518,11 @@ void AnimationTrace::chord_incidence(const Submap& submap, const Chord& chord) {
     output_ << ",\"left_region\":" << region;
 }
 
-void AnimationTrace::chord(std::string_view kind, const Polygon& curve, const Chord& chord) {
+void AnimationTrace::chord(std::string_view kind, const Polygon& curve, const Chord& chord,
+                           Fields values) {
     const std::size_t curve_index = this->curve(curve);
     begin(kind);
+    fields(values);
     output_ << ",\"curve\":" << curve_index;
     chord_geometry(curve, chord);
     end();
@@ -569,7 +647,7 @@ void AnimationTrace::triangle(const std::array<std::size_t, 3>& vertices) {
 
 void AnimationTrace::finish() {
     assert(!finished_);
-    output_ << "]}\n";
+    output_ << "],\"event_count\":" << events_ << "}\n";
     output_.flush();
     if (!output_)
         throw std::runtime_error("Failed to write the animation trace.");

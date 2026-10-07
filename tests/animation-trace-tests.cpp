@@ -53,12 +53,20 @@ void check_trace(const std::vector<Point>& points,
     const auto events = occurrences(json, "{\"seq\":");
     test::require_triangulation(occurrences(json, "\"kind\":\"triangle\"") == points.size() - 2,
                                 "Every emitted triangle is recorded exactly once");
+    test::require_triangulation(
+        occurrences(json, "\"kind\":\"convexity_test\"") == recorded.work.convexity_tests &&
+            occurrences(json, "\"kind\":\"vertex_remove\"") == recorded.work.removed_vertices &&
+            occurrences(json, "\"kind\":\"triangle_cursor\"") == recorded.work.convexity_tests,
+        "The replay records every real convexity test, deletion, and cursor step");
+    test::require_triangulation(occurrences(json, "\"kind\":\"search_begin\"") ==
+                                    occurrences(json, "\"kind\":\"search_end\""),
+                                "Every nested ray search has its own completed execution");
     test::require_triangulation(occurrences(json, "\"kind\":\"boundary\"") == 1,
                                 "The padded boundary is recorded once");
     std::ofstream file(path);
     file << json;
     test::require_triangulation(static_cast<bool>(file), "The test trace was saved");
-    test::require_triangulation(events <= 2048 * points.size(),
+    test::require_triangulation(events <= 8192 * points.size(),
                                 "The fixture's trace fits a linear event envelope");
 }
 
@@ -108,6 +116,21 @@ void check_sessions() {
     }
     test::require_triangulation(AnimationTrace::current() == &outer,
                                 "The enclosing trace is restored");
+    {
+        AnimationTrace::QueryRecording disabled(false);
+        outer.record("search_scan");
+        {
+            AnimationTrace::QueryRecording nested(true);
+            outer.record("boundary_search");
+        }
+        test::require_triangulation(outer.event_count() == events,
+                                    "Verification searches remain suppressed through nested calls");
+        outer.record("search_structure");
+        test::require_triangulation(outer.event_count() == events + 1,
+                                    "Preprocessed structures remain available to later searches");
+    }
+    test::require_triangulation(outer.record("search_scan") == events + 1,
+                                "The algorithm's query recording resumes after verification");
     outer.finish();
     std::ostringstream failed;
     AnimationTrace trace(failed, points);

@@ -92,19 +92,38 @@ Triangulation triangulate_unimonotone(std::span<const Point> points,
         [[maybe_unused]] const std::size_t first_triangle = result.triangles.size();
         std::size_t remaining = count;
         std::size_t current = links[start].next;
+        auto* trace = AnimationTrace::current();
+        const auto piece_identity =
+            trace ? trace->indices("triangle_piece_begin",
+                                   {{"start", vertices[start]}, {"end", vertices[end]}}, "vertices",
+                                   vertices)
+                  : NONE;
         while (remaining >= 3) {
             assert(current != start && current != end &&
                    "[FM84 Algorithm 3 analysis tex 453-459]: preserve both extrema");
             const std::size_t previous = links[current].previous;
             const std::size_t next = links[current].next;
             ++result.work.convexity_tests;
-            if (convex(points[vertices[previous]], points[vertices[current]],
-                       points[vertices[next]])) {
+            const bool is_convex = convex(points[vertices[previous]], points[vertices[current]],
+                                          points[vertices[next]]);
+            if (trace)
+                trace->record("convexity_test", {{"piece", piece_identity},
+                                                 {"previous", vertices[previous]},
+                                                 {"current", vertices[current]},
+                                                 {"next", vertices[next]},
+                                                 {"convex", is_convex}});
+            if (is_convex) {
                 append_triangle({{vertices[previous], vertices[current], vertices[next]}}, result);
                 links[previous].next = next;
                 links[next].previous = previous;
                 --remaining;
                 ++result.work.removed_vertices;
+                if (trace)
+                    trace->record("vertex_remove", {{"piece", piece_identity},
+                                                    {"vertex", vertices[current]},
+                                                    {"previous", vertices[previous]},
+                                                    {"next", vertices[next]},
+                                                    {"remaining", remaining}});
                 if (previous == start) {
                     current = next;
                 } else {
@@ -115,7 +134,13 @@ Triangulation triangulate_unimonotone(std::span<const Point> points,
                 current = next;
                 ++result.work.forward_steps;
             }
+            if (trace)
+                trace->record("triangle_cursor", {{"piece", piece_identity},
+                                                  {"vertex", vertices[current]},
+                                                  {"backward", is_convex && previous != start}});
         }
+        if (trace)
+            trace->record("triangle_piece_end", {{"piece", piece_identity}});
         assert(links[start].next == end && links[end].next == start &&
                result.triangles.size() - first_triangle == count - 2 &&
                "[FM84 Algorithm 3]: m-2 triangles leave the two extrema");

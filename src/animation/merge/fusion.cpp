@@ -52,6 +52,7 @@ static bool leaving_clockwise_downward(const Polygon& curve, std::size_t edge, S
 RayHit local_shoot(const Point& p, Side direction, std::size_t region, const Submap& submap,
                    const Polygon& curve, const RayShootingOracle& oracle, bool require_hit,
                    const SourceOffset& source_x_offset, bool record) {
+    const AnimationTrace::QueryRecording recording(record);
     RegionArcs arcs = collect_region_arcs(submap, region);
 
     RayHit best;

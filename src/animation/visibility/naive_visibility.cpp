@@ -10,7 +10,7 @@
 namespace chazelle::animation {
 
 RayHit naive_first_contact(const Polygon& curve, const Point& p, const SymbolicY& sy, Side dir,
-                           std::size_t source_edge) {
+                           std::size_t source_edge, std::size_t trace_query) {
     const SourceOffset source_x_offset =
         (source_edge == NONE) ? SourceOffset{}
                               : SourceOffset{perturbed_x_offset(curve, sy, source_edge)};
@@ -18,6 +18,8 @@ RayHit naive_first_contact(const Polygon& curve, const Point& p, const SymbolicY
     best.hit = false;
     Exact nearest_distance = 0.0;
     for (std::size_t e = 0; e < curve.num_edges(); ++e) {
+        if (auto* trace = AnimationTrace::current(); trace && trace_query != NONE)
+            trace->record("search_edge", {{"query", trace_query}, {"edge", e}});
         Exact x;
         if (!edge_crossing_x(curve, e, sy, &x))
             continue;
@@ -41,6 +43,10 @@ RayHit naive_first_contact(const Polygon& curve, const Point& p, const SymbolicY
             better = d < nearest_distance;
         else
             better = ray_contact_precedes(curve, sy, dir, e, struck, best.edge, best.side);
+        if (auto* trace = AnimationTrace::current(); trace && trace_query != NONE)
+            trace->point(
+                "search_candidate", curve, {x, sy.y, sy.tag},
+                {{"query", trace_query}, {"edge", e}, {"accepted", better}, {"wrapped", wrapped}});
         if (better) {
             best.hit = true;
             best.x = x;
@@ -83,9 +89,18 @@ std::vector<PendingChord> full_visibility_chords(const Polygon& curve) {
         const SymbolicY vy = symbolic_y_of(curve.vertex(vidx));
         const Side dir = shooting_direction(edge, side, curve);
         Point p{curve.vertex(vidx).x, vy.y, vy.tag};
-        RayHit h = naive_first_contact(curve, p, vy, dir, edge);
-        if (auto* trace = AnimationTrace::current())
+        auto* trace = AnimationTrace::current();
+        const auto query =
+            trace
+                ? trace->point("search_begin", curve, p,
+                               {{"structure", NONE}, {"direction", static_cast<std::size_t>(dir)}})
+                : NONE;
+        RayHit h = naive_first_contact(curve, p, vy, dir, edge, query);
+        if (trace) {
+            const auto result = trace->event_count();
             trace->ray(curve, p, dir, h);
+            trace->record("search_end", {{"query", query}, {"result", result}});
+        }
 
         assert(h.hit && "[C91 §2.1 tex 70]: a chord ray always hits C again");
         PendingChord visibility_chord;

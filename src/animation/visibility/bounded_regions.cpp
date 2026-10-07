@@ -91,11 +91,19 @@ RayHit first_region_contact(const Polygon& curve, const Submap& submap, const Re
                             RegionCompletionWork& work) {
     const Point& origin = curve.vertex(vertex);
     const SymbolicY y = symbolic_y_of(origin);
+    auto* trace = AnimationTrace::current();
+    const auto query = trace ? trace->point("search_begin", curve, origin,
+                                            {{"structure", NONE},
+                                             {"owner", trace->map_id(submap)},
+                                             {"direction", static_cast<std::size_t>(direction)}})
+                             : NONE;
     const SourceOffset offset = perturbed_x_offset(curve, y, source_edge);
     RayHit best;
     Exact best_distance = 0;
     auto consider = [&](std::size_t arc, std::size_t edge) {
         ++work.ray_edge_tests;
+        if (trace)
+            trace->record("search_edge", {{"query", query}, {"edge", edge}, {"arc", arc}});
         Exact x;
         if (!edge_crossing_x(curve, edge, y, &x))
             return;
@@ -115,6 +123,10 @@ RayHit first_region_contact(const Polygon& curve, const Submap& submap, const Re
                  : ray_contact_precedes(curve, y, direction, edge, struck, best.edge, best.side))) {
             best = {true, x, y.y, edge, struck, wrapped, arc};
             best_distance = distance;
+            if (trace)
+                trace->point(
+                    "search_candidate", curve, {x, y.y, y.tag},
+                    {{"query", query}, {"edge", edge}, {"accepted", 1}, {"wrapped", wrapped}});
         }
     };
     for (const std::size_t arc : arcs) {
@@ -135,8 +147,11 @@ RayHit first_region_contact(const Polygon& curve, const Submap& submap, const Re
     }
     assert(best.hit &&
            "[C91 §4.2 tex 367, §2.1 tex 70]: a missing chord stays in its region and meets C");
-    if (auto* trace = AnimationTrace::current())
+    if (trace) {
+        const auto result = trace->event_count();
         trace->ray(curve, origin, direction, best);
+        trace->record("search_end", {{"query", query}, {"result", result}});
+    }
     return best;
 }
 

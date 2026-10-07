@@ -298,12 +298,17 @@ class Trace:
     def __init__(self, path: Path):
         with path.open(encoding="utf-8") as source:
             data = json.load(source)
-        if data.get("schema") != 5:
+        if data.get("schema") != 6:
             raise ValueError(
                 "Unsupported animation trace schema; record a fresh trace with --trace."
             )
         self.vertices = [finite_point(point) for point in data["vertices"]]
+        self.vertex_tags = data["vertex_tags"]
+        if len(self.vertex_tags) != len(self.vertices):
+            raise ValueError("Every original vertex needs its exact symbolic tag.")
         self.events = data["events"]
+        if data["event_count"] != len(self.events):
+            raise ValueError("The trace must contain every event from the completed run.")
         self.curves = {}
         tables = {}
         for event in self.events:

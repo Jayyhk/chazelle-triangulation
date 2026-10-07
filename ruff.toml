@@ -7,4 +7,4 @@ extend-exclude = ["lean"]
 select = ["E4", "E7", "E9", "F", "I", "B", "C4", "RUF"]
 
 [lint.isort]
-known-first-party = ["operations", "regions", "trace_data"]
+known-first-party = ["operations", "regions", "replay", "replay_plan", "replay_steps", "trace_data"]

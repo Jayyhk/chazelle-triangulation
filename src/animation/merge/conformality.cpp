@@ -205,6 +205,12 @@ RayHit local_shoot_fused(Point p, const SymbolicY& p_y, Side direction,
     const std::size_t n1e = ctx.first_curve->num_edges();
 
     p.index = p_y.tag;
+    auto* trace = AnimationTrace::current();
+    const auto query = trace ? trace->point("search_begin", curve, p,
+                                            {{"structure", NONE},
+                                             {"owner", trace->map_id(submap)},
+                                             {"direction", static_cast<std::size_t>(direction)}})
+                             : NONE;
 
     RayHit best;
     best.hit = false;
@@ -228,6 +234,8 @@ RayHit local_shoot_fused(Point p, const SymbolicY& p_y, Side direction,
             target.last_y = submap.arc_end_symbolic_y(ai, curve);
             assert_subarc_clockwise(target);
 
+            if (trace)
+                trace->record("search_arc", {{"query", query}, {"arc", ai}});
             RayHit hit = oracle.shoot(p, direction, pr.input_arc, target, source_x_offset);
             if (!hit.hit)
                 continue;
@@ -303,8 +311,11 @@ RayHit local_shoot_fused(Point p, const SymbolicY& p_y, Side direction,
                "[C91 §2.2 Lemma 2.1]: an in-region shot's first contact "
                "lies ON the region's boundary arcs");
     }
-    if (auto* trace = AnimationTrace::current())
+    if (trace) {
+        const auto result = trace->event_count();
         trace->ray(curve, p, direction, best);
+        trace->record("search_end", {{"query", query}, {"result", result}});
+    }
     return best;
 }
 
@@ -452,6 +463,9 @@ VisiblePoint descend_step(const PieceSearchContext& ctx, const TreeDecomposition
         assert(lens != NONE && "[C91 §2.3 tex 105]: a null-length chord bounds the empty "
                                "region hugging the apex turn on its corner side");
 
+        if (auto* trace = AnimationTrace::current())
+            trace->record("centroid_empty_region",
+                          {{"tree", td.trace_identity()}, {"node", node_idx}, {"region", lens}});
         *next_node = (lens == ab.region[0]) ? node.right_child : node.left_child;
         assert(*next_node != NONE && "[C91 §2.3]: internal TD node has two children");
         return VisiblePoint{};
@@ -720,6 +734,15 @@ VisiblePoint descend_step(const PieceSearchContext& ctx, const TreeDecomposition
     bool keep_piece1 = !reject_piece1;
     bool keep_probe_side = (keep_piece1 == probe_in_piece1);
     bool go_left = (keep_probe_side == probe_child_is_left);
+    if (auto* trace = AnimationTrace::current())
+        trace->record("centroid_reject", {{"tree", td.trace_identity()},
+                                          {"node", node_idx},
+                                          {"first_empty", piece1_empty},
+                                          {"second_empty", piece2_empty},
+                                          {"reject_first", reject_piece1},
+                                          {"probe_region", probe_region},
+                                          {"probe_arc", probe_arc},
+                                          {"go_left", go_left}});
     *next_node = go_left ? node.left_child : node.right_child;
     assert(*next_node != NONE && "[C91 §2.3]: internal TD node has two children");
     return fail;
@@ -735,14 +758,23 @@ VisiblePoint search_piece(const PieceSearchContext& ctx) {
 
     std::size_t node_idx = td.root();
     while (td.node(node_idx).is_internal()) {
+        if (auto* trace = AnimationTrace::current())
+            trace->record("centroid_visit", {{"tree", td.trace_identity()}, {"node", node_idx}});
         std::size_t next = NONE;
         VisiblePoint vp = descend_step(ctx, td, node_idx, &next);
+        if (auto* trace = AnimationTrace::current())
+            trace->record("centroid_branch", {{"tree", td.trace_identity()},
+                                              {"node", node_idx},
+                                              {"next", next},
+                                              {"found", vp.found}});
         if (vp.found)
             return vp;
         node_idx = next;
     }
 
     std::size_t leaf_region = td.node(node_idx).region_idx;
+    if (auto* trace = AnimationTrace::current())
+        trace->record("centroid_visit", {{"tree", td.trace_identity()}, {"node", node_idx}});
     RegionArcs arcs = collect_region_arcs(Sa, leaf_region);
     for (std::size_t k = 0; k < arcs.count; ++k) {
         const Arc& ra = Sa.arc(arcs.arcs[k]);
@@ -978,6 +1010,12 @@ static void restore_regions(Submap& submap, const Polygon& curve,
                                 "most two runs, one per operand");
         }
 #endif
+        if (auto* trace = AnimationTrace::current())
+            trace->record("conformality_test", {{"owner", trace->map_id(submap)},
+                                                {"region", r},
+                                                {"arcs", cycle.count},
+                                                {"limit", 4},
+                                                {"accepted", cycle.count <= 4}});
         if (cycle.count <= 4)
             continue;
 
@@ -992,9 +1030,17 @@ static void restore_regions(Submap& submap, const Polygon& curve,
                 if (cycle.arcs[j].is_zero_length)
                     continue;
 
+                if (auto* trace = AnimationTrace::current())
+                    trace->record("arc_pair", {{"owner", trace->map_id(submap)},
+                                               {"region", r},
+                                               {"first", cycle.arcs[i].arc},
+                                               {"second", cycle.arcs[j].arc}});
                 VisiblePoint vp =
                     find_visible_point(submap, curve, r, cycle.arcs[i].arc, cycle.arcs[j].arc,
                                        cycle, arc_sources, oracles);
+                if (auto* trace = AnimationTrace::current())
+                    trace->record("arc_pair_result",
+                                  {{"owner", trace->map_id(submap)}, {"found", vp.found}});
                 if (!vp.found)
                     continue;
 

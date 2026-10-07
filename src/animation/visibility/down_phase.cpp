@@ -361,12 +361,40 @@ Submap refine(const UpPhase& up_phase, const Polygon& curve, const Submap& subma
         bool smaller = true;
         for (std::size_t arc : arcs)
             smaller = smaller && submap.arc(arc).edge_count <= granularity;
+        if (auto* trace = AnimationTrace::current()) {
+            std::vector<std::size_t> arc_ids, weights;
+            for (const std::size_t arc : arcs) {
+                arc_ids.push_back(arc);
+                weights.push_back(submap.arc(arc).edge_count);
+            }
+            trace->indices("refinement_need",
+                           {{"owner", trace->map_id(submap)},
+                            {"region", region},
+                            {"limit", granularity},
+                            {"needed", !smaller}},
+                           "arcs", arc_ids, "weights", weights);
+        }
         if (smaller)
             continue;
+        auto* trace = AnimationTrace::current();
+        const auto refinement =
+            trace ? trace->record("refinement_begin", {{"owner", trace->map_id(submap)},
+                                                       {"region", region},
+                                                       {"curve", trace->curve(curve)},
+                                                       {"grade", next_grade},
+                                                       {"limit", granularity}})
+                  : NONE;
         if (!geometry)
             geometry = std::make_unique<RegionBoundaryGeometry>(up_phase, curve);
         const RegionBoundary boundary = geometry->boundary(curve, submap, region);
+        if (trace)
+            trace->record("refinement_boundary",
+                          {{"refinement", refinement}, {"curve", trace->curve(boundary.curve)}});
         const auto canonical = canonical_region_boundary(*geometry, boundary, next_grade);
+        if (trace)
+            trace->record("refinement_map", {{"refinement", refinement},
+                                             {"auxiliary", trace->map_id(canonical.submap)},
+                                             {"curve", trace->curve(canonical.curve)}});
         ++boundary_count;
         std::vector<std::size_t> boundary_vertices{0, curve.num_vertices() - 1};
         for (std::size_t chord : submap.node(region).incident_chords) {
@@ -383,16 +411,25 @@ Submap refine(const UpPhase& up_phase, const Polygon& curve, const Submap& subma
             const Chord& chord = canonical.submap.chord(i);
             auto first = boundary.original_location(chord.left_edge, chord.left_side);
             auto second = boundary.original_location(chord.right_edge, chord.right_side);
-            if (first.arc == NONE || second.arc == NONE)
+            auto discard = [&](std::size_t reason) {
+                if (trace)
+                    trace->chord("refinement_discard", canonical.curve, chord,
+                                 {{"refinement", refinement}, {"chord", i}, {"reason", reason}});
+            };
+            if (first.arc == NONE || second.arc == NONE) {
+                discard(0);
                 continue;
+            }
             const SymbolicY level = boundary.original_level(chord.y_tag, up_phase.graded().curve());
             const std::size_t vertex = curve.local_index_of_tag(level.tag);
             if (vertex != NONE && symbolic_y_equal(level, symbolic_y_of(curve.vertex(vertex))) &&
                 std::find(boundary_vertices.begin(), boundary_vertices.end(), vertex) !=
                     boundary_vertices.end()) {
                 if (first.edge == vertex || first.edge + 1 == vertex || second.edge == vertex ||
-                    second.edge + 1 == vertex)
+                    second.edge + 1 == vertex) {
+                    discard(1);
                     continue;
+                }
                 const Exact first_x = edge_x_at_y(curve, first.edge, level);
                 const Exact second_x = edge_x_at_y(curve, second.edge, level);
                 const Exact vertex_x = curve.vertex(vertex).x;
@@ -409,8 +446,10 @@ Submap refine(const UpPhase& up_phase, const Polygon& curve, const Submap& subma
                                                    : first_x < vertex_x || vertex_x < second_x)
                                         : (forward ? second_x < vertex_x && vertex_x < first_x
                                                    : vertex_x < first_x || second_x < vertex_x);
-                if (blocks)
+                if (blocks) {
+                    discard(2);
                     continue;
+                }
             }
             const bool null = vertex != NONE &&
                               symbolic_y_equal(level, symbolic_y_of(curve.vertex(vertex))) &&
@@ -418,16 +457,37 @@ Submap refine(const UpPhase& up_phase, const Polygon& curve, const Submap& subma
                               (second.edge == vertex || second.edge + 1 == vertex) &&
                               is_inside_companion(curve, first.edge, first.side, vertex) &&
                               is_inside_companion(curve, second.edge, second.side, vertex);
-            if (first.edge == second.edge && first.side == second.side && !null)
+            if (first.edge == second.edge && first.side == second.side && !null) {
+                discard(3);
                 continue;
+            }
             PendingChord extracted{level, first.edge, first.side, second.edge, second.side, null};
             if (null) {
                 extracted.left_edge_c = extracted.right_edge_c = vertex;
                 extracted.left_side = extracted.right_side =
                     is_inside_companion(curve, vertex, LEFT, vertex) ? LEFT : RIGHT;
             }
+            if (trace) {
+                PendingChord recorded = extracted;
+                canonicalize_chord(recorded, curve);
+                Chord mapped;
+                mapped.y = recorded.y.y;
+                mapped.y_tag = recorded.y.tag;
+                mapped.left_edge = recorded.left_edge_c;
+                mapped.right_edge = recorded.right_edge_c;
+                mapped.left_side = recorded.left_side;
+                mapped.right_side = recorded.right_side;
+                mapped.is_null_length = recorded.is_null_length;
+                trace->chord("refinement_extract", curve, mapped,
+                             {{"refinement", refinement},
+                              {"chord", i},
+                              {"first_arc", first.arc},
+                              {"second_arc", second.arc}});
+            }
             inventory.add(std::move(extracted), first.arc, second.arc, false);
         }
+        if (trace)
+            trace->record("refinement_end", {{"refinement", refinement}});
     }
     Submap result = inventory.build();
     UpPhaseRayShooter rays(up_phase, result, curve, grade);

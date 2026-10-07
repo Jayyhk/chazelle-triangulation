@@ -1,5 +1,6 @@
 #include "region_oracles.h"
 #include "../merge/granularity.h"
+#include "../trace.h"
 
 #include <algorithm>
 #include <cassert>
@@ -170,9 +171,19 @@ RayHit RegionBoundaryOracles::shoot(Point origin, Side direction, [[maybe_unused
                                     const Subarc& target, SourceOffset offset) const {
     const Polygon& curve = *input_curve_;
     const SymbolicY level = symbolic_y_of(origin);
+    auto* trace = AnimationTrace::current();
+    const auto query = trace ? trace->point("search_begin", curve, origin,
+                                            {{"structure", NONE},
+                                             {"direction", static_cast<std::size_t>(direction)}})
+                             : NONE;
     RayHit best;
     Exact best_distance;
     for (const Piece& piece : partition(target)) {
+        if (trace)
+            trace->record("search_piece", {{"query", query},
+                                           {"first", piece.subarc.first_edge},
+                                           {"last", piece.subarc.last_edge},
+                                           {"endpoint", piece.chain == nullptr}});
         RayHit hit;
         if (piece.chain) {
             if (!piece.chain->rays)
@@ -224,6 +235,11 @@ RayHit RegionBoundaryOracles::shoot(Point origin, Side direction, [[maybe_unused
                                       curve.num_vertices() - 1))
                 best.edge = adjacent;
         }
+    }
+    if (trace) {
+        const auto result = trace->event_count();
+        trace->ray(curve, origin, direction, best);
+        trace->record("search_end", {{"query", query}, {"result", result}});
     }
     return best;
 }

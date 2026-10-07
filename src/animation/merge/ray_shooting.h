@@ -55,6 +55,7 @@ private:
     const Submap* submap_;
     const Polygon* curve_;
     std::size_t granularity_;
+    std::size_t animation_structure_ = NONE;
 
     std::size_t face_count_ = 0;
     std::vector<std::size_t> face_of_region_;
@@ -76,7 +77,7 @@ private:
     std::vector<BoundaryInterval> left_intervals_, right_intervals_;
 
     void regions_at_boundary(std::size_t edge, Side side, const SymbolicY& y,
-                             std::vector<std::size_t>& out) const;
+                             std::vector<std::size_t>& out, std::size_t query = NONE) const;
 
     void build_faces();
     void build_dual_graph_and_decomposition();

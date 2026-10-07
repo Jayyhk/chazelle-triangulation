@@ -20,6 +20,7 @@ from manim import (
     RoundedRectangle,
     Scene,
     Transform,
+    TransformFromCopy,
     VGroup,
     VMobject,
     config,
@@ -28,6 +29,8 @@ from manim import (
 
 from operations import Operations
 from regions import region_projections
+from replay import VisualReplay
+from replay_plan import ReplayPlan, same_submap
 from trace_data import Trace, Viewport, append_segments, chord_identity, finite_point
 
 BACKGROUND = "#101823"
@@ -144,6 +147,7 @@ class Drawing:
 class TriangulationScene(Scene):
     def __init__(self, trace, **kwargs):
         self.trace = trace
+        self.plan = ReplayPlan(trace)
         self.operations = Operations(trace)
         self.built = {}
         self.chains_per_grade = {}
@@ -156,11 +160,12 @@ class TriangulationScene(Scene):
                 grade = event["grade"]
                 self.chains_per_grade[grade] = self.chains_per_grade.get(grade, 0) + 1
         assert verification.verified == len(trace.submaps)
-        self.grade_spacing = min(0.29, 1.45 / max(self.chains_per_grade))
+        self.grade_spacing = min(0.46, 1.45 / max(self.chains_per_grade))
         self.viewport = Viewport(
             trace.vertices, width=8.6, height=4.9, center=(-2.05, 0.65), padding=0.08
         )
         self.points = [self.viewport.point(point) for point in trace.vertices]
+        self.active_drawing = None
         self.geometry = VGroup()
         self.graph = VGroup()
         self.active_curve = VGroup()
@@ -169,6 +174,7 @@ class TriangulationScene(Scene):
         self.ring = None
         self.colors = {}
         self.map_thumbnail = {}
+        self.chain_thumbnail = {}
         self.shelf = VGroup()
         self.walk_arcs = VGroup()
         self.faces = {}
@@ -185,6 +191,14 @@ class TriangulationScene(Scene):
         self.discovered_identities = set()
         super().__init__(**kwargs)
 
+    def play(self, *animations, **kwargs):
+        if "run_time" in kwargs:
+            kwargs["run_time"] = max(2 / config.frame_rate, kwargs["run_time"] * 0.75)
+        return super().play(*animations, **kwargs)
+
+    def transition(self, *animations, duration=1):
+        return super().play(*animations, run_time=duration)
+
     def discard(self, group):
         self.remove(*group.get_family())
 
@@ -200,7 +214,7 @@ class TriangulationScene(Scene):
         curve = self.trace.curves[identity]
         return paths(curve.paths(viewport), tint, 2.8)
 
-    def show_curve(self, identity):
+    def show_curve(self, identity, duration=0.15):
         if self.query_curve == identity:
             return
         self.clear(self.discovered, duration=0.12)
@@ -209,12 +223,12 @@ class TriangulationScene(Scene):
         self.discovered_identities = set()
         target = self.curve_path(identity).set_z_index(2)
         if len(self.active_curve):
-            self.play(FadeOut(self.active_curve), FadeIn(target), run_time=0.15)
+            self.play(FadeOut(self.active_curve), FadeIn(target), run_time=duration)
             self.discard(self.active_curve)
             self.active_curve = VGroup(target)
         else:
             self.active_curve = VGroup(target)
-            self.play(Create(target), run_time=0.2)
+            self.play(Create(target), run_time=max(0.2, duration))
         self.query_curve = identity
 
     def map_colors(self, current):
@@ -226,10 +240,13 @@ class TriangulationScene(Scene):
             colors.setdefault(region, color(identity + region))
         return colors
 
-    def query(self, event):
-        self.show_curve(event["curve"])
+    def query(self, event, source=None, change_curve=True):
+        if change_curve:
+            self.show_curve(event["curve"])
         origin = self.viewport.symbolic_point(event["origin"])
-        source = Dot(origin, radius=0.06, color=HIGHLIGHT).set_z_index(6)
+        existing_source = source is not None
+        if source is None:
+            source = Dot(origin, radius=0.06, color=HIGHLIGHT).set_z_index(6)
         direction = -1 if event["direction"] == 0 else 1
         contact = (
             self.viewport.symbolic_point(event["contact"])
@@ -258,7 +275,8 @@ class TriangulationScene(Scene):
                 )
             )
             intervals = [(origin, boundary), (opposite, contact)]
-        self.play(FadeIn(source), run_time=0.12)
+        if not existing_source:
+            self.play(FadeIn(source), run_time=0.12)
         drawn = VGroup()
         for index, (first, second) in enumerate(intervals):
             if index:
@@ -453,6 +471,8 @@ class TriangulationScene(Scene):
         self.discard(self.geometry)
         self.geometry = target.geometry
         self.chord_shapes = target.chords
+        target.nodes, target.edges, target.graph = self.nodes, self.edges, self.graph
+        self.active_drawing = target
         if self.ring is not None:
             self.remove(self.ring)
             self.ring = None
@@ -469,25 +489,100 @@ class TriangulationScene(Scene):
         self.discovered = VGroup()
         self.discovered_identities = set()
 
-    def copy_map(self, event, current):
-        self.colors[current.identity] = dict(self.colors[event["source"]])
+    def summarize_build(self, event, current):
+        model = current.submap(self.trace.curves)
+        previous = self.active_drawing
+        if previous is not None and same_submap(previous.submap, model):
+            self.colors[current.identity] = dict(previous.colors)
+            previous.submap = model
+            return
+        self.clear(self.geometry, self.graph, self.walk_arcs, self.discovered, duration=0.15)
+        self.discovered, self.walk_arcs = VGroup(), VGroup()
+        self.discovered_identities = set()
         self.show_curve(current.curve)
-        self.clear(self.geometry, self.graph)
+        target = self.drawing(current)
+        root = event["root"]
+        by_entry = {
+            (chord_identity(chord), tuple(sorted(chord["regions"]))): chord["id"]
+            for chord in target.submap.chords
+        }
+        assert len(by_entry) == len(target.submap.chords)
+
+        def reveal(region, chord=None):
+            marker = target.markers[region]
+            shapes = VGroup(
+                target.faces.get(region, VGroup()),
+                *(target.arcs[arc["id"]] for arc in target.submap.region_arcs[region]),
+            )
+            animations = [
+                FadeIn(marker),
+                FadeIn(shapes),
+                TransformFromCopy(marker, target.nodes[region]),
+            ]
+            if chord is not None:
+                animations.extend((Create(target.chords[chord]), Create(target.edges[chord])))
+            self.play(*animations, run_time=0.4)
+
+        reveal(root)
+        regions, chords = {root}, set()
+        for entry in self.plan.build_entries[current.identity]:
+            assert entry["parent"] in regions and entry["region"] not in regions
+            chord = by_entry[
+                (chord_identity(entry), tuple(sorted((entry["parent"], entry["region"]))))
+            ]
+            reveal(entry["region"], chord)
+            regions.add(entry["region"])
+            chords.add(chord)
+        assert regions == set(target.nodes) and chords == set(target.edges)
+        self.geometry, self.graph = target.geometry, target.graph
+        self.nodes, self.edges, self.chord_shapes = target.nodes, target.edges, target.chords
+        self.active_drawing = target
+        self.discard(target.geometry)
+        self.discard(target.graph)
+        self.add(target.geometry, target.graph)
+
+    def copy_map(self, event, current):
+        if len(self.geometry) or len(self.graph):
+            self.wait(0.6)
+        self.colors[current.identity] = dict(self.colors[event["source"]])
+        self.show_curve(current.curve, duration=0.7)
+        self.clear(self.geometry, self.graph, duration=0.7)
         drawing = self.drawing(current)
+        self.active_drawing = drawing
         self.nodes, self.edges = drawing.nodes, drawing.edges
         self.chord_shapes = drawing.chords
         self.geometry, self.graph = drawing.geometry, drawing.graph
         source = self.map_thumbnail.get(event["source"])
         if source is not None:
-            selected = source.copy().set_color(HIGHLIGHT).set_z_index(4)
-            self.play(FadeIn(selected), FadeIn(self.geometry), FadeIn(self.graph), run_time=0.4)
-            self.remove(selected)
+            moving, moving_graph = self.geometry.copy(), self.graph.copy()
+            source_map = self.operations.maps[event["source"]]
+            source_graph = self.drawing(source_map).graph.scale(0.1).move_to(source)
+            self.transition(
+                TransformFromCopy(source, moving),
+                TransformFromCopy(source_graph, moving_graph),
+                duration=1.15,
+            )
+            self.discard(moving)
+            self.discard(moving_graph)
+            self.add(self.geometry, self.graph)
             self.map_thumbnail[current.identity] = source
         else:
-            self.play(FadeIn(self.geometry), FadeIn(self.graph), run_time=0.3)
+            source_map = self.operations.maps[event["source"]]
+            source_drawing = self.drawing(source_map)
+            moving_geometry, moving_graph = self.geometry.copy(), self.graph.copy()
+            self.transition(
+                TransformFromCopy(source_drawing.geometry, moving_geometry),
+                TransformFromCopy(source_drawing.graph, moving_graph),
+                duration=1.15,
+            )
+            self.discard(moving_geometry)
+            self.discard(moving_graph)
+            self.add(self.geometry, self.graph)
+        self.wait(0.75)
 
     def merge_inputs(self, event):
-        self.clear(self.geometry, self.graph)
+        self.wait(0.65)
+        self.clear(self.geometry, self.graph, duration=0.8)
         shapes = VGroup()
         trees = VGroup()
         self.fusion_chords = {}
@@ -507,8 +602,10 @@ class TriangulationScene(Scene):
             shapes.add(drawing.geometry)
             trees.add(drawing.graph)
         self.geometry, self.graph = shapes, trees
-        self.show_curve(self.merge_event["curve"])
-        self.play(FadeIn(shapes), FadeIn(trees), run_time=0.4)
+        self.active_drawing = None
+        self.show_curve(self.merge_event["curve"], duration=0.7)
+        self.transition(FadeIn(shapes), FadeIn(trees), duration=1.3)
+        self.wait(0.85)
 
     def fusion_chord(self, event):
         chord = draw_chord(self.viewport, event, HIGHLIGHT).set_z_index(4)
@@ -527,52 +624,11 @@ class TriangulationScene(Scene):
             run_time=0.15,
         )
 
-    def contract(self, event, current):
-        removed = draw_chord(self.viewport, event, RED).set_z_index(5)
-        keep, dead = event["regions"]
-        edge = self.edges.pop(event["id"])
-        node = self.nodes.pop(dead)
-        chord = self.chord_shapes.pop(event["id"])
-        self.play(Create(removed), edge.animate.set_color(RED).set_stroke(width=3), run_time=0.18)
-        self.play(
-            node.animate.move_to(self.nodes[keep]),
-            FadeOut(edge),
-            FadeOut(chord),
-            FadeOut(removed),
-            run_time=0.3,
-        )
-        self.graph.remove(node, edge)
-        self.geometry.remove(chord)
-        self.remove(node, edge)
-        self.discard(chord)
-        self.discard(removed)
-
-    def split(self, event, current):
-        tint = self.map_colors(current)
-        parent, region = event["regions"]
-        point = self.nodes[parent].get_center() + np.array([0.65, -0.45, 0])
-        point[0] = np.clip(point[0], 3.15, 6.4)
-        point[1] = np.clip(point[1], -1.75, 2.9)
-        node = Dot(point, radius=self.nodes[parent].width / 2, color=tint[region])
-        edge = Line(self.nodes[parent].get_center(), point, color=MUTED, stroke_width=1.5)
-        chord = draw_chord(self.viewport, event, GREEN).set_z_index(4)
-        self.geometry.add(chord)
-        self.play(Create(chord), run_time=0.3)
-        moving = chord.copy()
-        self.add(moving)
-        self.play(Transform(moving, edge.copy()), FadeIn(node), run_time=0.35)
-        self.remove(moving)
-        self.add(edge)
-        self.graph.add(edge, node)
-        self.nodes[region] = node
-        self.edges[event["id"]] = edge
-        self.chord_shapes[event["id"]] = chord
-
     def snapshot(self, event):
         recorded = self.trace.submaps[event["seq"]]
         if event["name"] != "canonical":
             return
-        grade, index = self.chain["grade"], self.chain["index"]
+        grade, index = self.plan.chain_snapshots[event["seq"]]
         count = self.chains_per_grade[grade]
         x = -5.95 + (index + 0.5) * 11.9 / count
         y = -3.55 + grade * self.grade_spacing
@@ -596,9 +652,27 @@ class TriangulationScene(Scene):
             stroke_width=0.7,
         ).move_to((x, y, 0))
         thumbnail = VGroup(frame, curve, chords)
-        self.shelf.add(thumbnail)
+        branches = VGroup(
+            *(
+                Line(
+                    self.chain_thumbnail[child].get_top(),
+                    frame.get_bottom(),
+                    color=MUTED,
+                    stroke_width=1.8,
+                ).set_z_index(-1)
+                for child in self.plan.chain_children[(grade, index)]
+            )
+        )
+        self.shelf.add(branches, thumbnail)
+        self.chain_thumbnail[(grade, index)] = thumbnail
         self.map_thumbnail[recorded.metadata["map"]] = thumbnail
-        self.play(FadeIn(curve), FadeIn(frame), FadeIn(chords), run_time=0.2)
+        self.play(
+            FadeIn(curve),
+            FadeIn(frame),
+            FadeIn(chords),
+            *(Create(branch) for branch in branches),
+            run_time=0.6 if len(branches) else 0.2,
+        )
 
     def output_event(self, event):
         kind = event["kind"]
@@ -630,6 +704,7 @@ class TriangulationScene(Scene):
 
     def construct(self):
         config.background_color = BACKGROUND
+        replay = VisualReplay(self, Drawing, draw_chord, color, paths)
         components = []
         for a, b in zip(
             self.trace.vertices, self.trace.vertices[1:] + self.trace.vertices[:1], strict=True
@@ -671,6 +746,12 @@ class TriangulationScene(Scene):
             kind = event["kind"]
             old_colors = dict(self.colors.get(event.get("map"), {}))
             current = self.operations.apply(event)
+            if not self.plan.shows(event):
+                continue
+            if kind in {"chain", "build_begin", "merge_inputs", "copy_submap"}:
+                replay.hide_panel()
+            if kind != "ray" and replay.apply(event):
+                continue
             if kind == "boundary":
                 added = set(self.trace.boundary) - set(self.trace.vertices)
                 dots = VGroup(
@@ -687,7 +768,7 @@ class TriangulationScene(Scene):
                 self.geometry, self.graph, self.walk_arcs = VGroup(), VGroup(), VGroup()
                 self.show_curve(event["curve"])
             elif kind == "ray":
-                self.query(event)
+                self.query(event, change_curve=False)
             elif kind == "visibility_chord":
                 self.discover(event)
             elif kind == "merge":
@@ -717,13 +798,17 @@ class TriangulationScene(Scene):
             elif kind == "build_chord" and not current.complete:
                 self.edges[event["id"]] = self.pending_edges[chord_identity(event)]
             elif kind == "build_end":
-                self.end_build(current)
+                if current.identity in self.plan.detailed_builds:
+                    self.end_build(current)
+                else:
+                    replay.hide_panel()
+                    self.summarize_build(event, current)
             elif kind == "copy_submap":
                 self.copy_map(event, current)
             elif kind == "remove_chord":
-                self.contract(event, current)
+                replay.pending_change = event
             elif kind == "insert_chord":
-                self.split(event, current)
+                replay.pending_change = event
             elif kind == "reindex":
                 self.colors[event["map"]] = {
                     event["regions"][region]: tint
@@ -735,19 +820,14 @@ class TriangulationScene(Scene):
                 self.chord_shapes = {
                     event["chords"][index]: chord for index, chord in self.chord_shapes.items()
                 }
+                replay.relabel(event, current)
+            elif kind == "reindex_arcs":
+                replay.relabel(event, current)
             elif kind == "map_begin":
                 self.snapshot(event)
             elif kind == "checkpoint":
                 if event["name"] in {"split_end", "contract_end"}:
-                    self.refresh(current)
-                elif event["name"] in {"trapezoids", "unimonotone", "triangulate"}:
-                    self.clear(self.geometry, self.graph, self.active_curve, self.overlay)
-                    self.geometry, self.graph, self.active_curve, self.overlay = (
-                        VGroup() for _ in range(4)
-                    )
-                    if self.ring is not None:
-                        self.remove(self.ring)
-                        self.ring = None
+                    replay.settle(current)
             elif kind in {"trapezoid", "diagonal", "piece", "triangle"}:
                 self.output_event(event)
         self.wait(3)
